@@ -1,0 +1,4 @@
+interface:
+  display_name: "Attend Visualize"
+  short_description: "Build and hand off local evidence-backed views"
+  default_prompt: "Use $attend-visualize to answer this question with the smallest useful local visualization."

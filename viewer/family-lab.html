@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Attend map-family lab</title>
+    <link rel="stylesheet" href="./family-lab.css">
+  </head>
+  <body>
+    <div class="lab-shell">
+      <header class="lab-header">
+        <div class="identity">
+          <a class="wordmark" href="../">Attend</a>
+          <span class="local-badge">Map-family lab</span>
+        </div>
+        <nav class="mode-switcher" aria-label="Lab view">
+          <button class="mode-button is-active" type="button" data-mode="gallery" aria-pressed="true">Gallery</button>
+          <button class="mode-button" type="button" data-mode="pipeline" aria-pressed="false">Pipeline</button>
+          <button class="mode-button" type="button" data-mode="media" aria-pressed="false">Media policy</button>
+        </nav>
+      </header>
+
+      <div class="mobile-family-picker">
+        <label for="family-select">Map family</label>
+        <select id="family-select"></select>
+      </div>
+
+      <div class="lab-workspace">
+        <aside class="family-rail" aria-label="Map families">
+          <div id="family-navigation"></div>
+        </aside>
+
+        <main class="lab-main">
+          <section id="gallery-view" class="lab-view">
+            <header class="family-heading">
+              <p id="family-kicker" class="kicker"></p>
+              <div class="family-title-row">
+                <div>
+                  <h1 id="family-title"></h1>
+                  <p id="family-question" class="family-question"></p>
+                </div>
+                <span id="family-status" class="status-badge"></span>
+              </div>
+              <p id="family-description" class="family-description"></p>
+            </header>
+
+            <section class="visual-stage" aria-labelledby="family-title">
+              <div id="family-visual" class="family-visual"></div>
+              <p id="visual-fallback" class="sr-only"></p>
+            </section>
+
+            <div class="inspection-row">
+              <label for="mark-select">Inspect a mark</label>
+              <select id="mark-select"></select>
+              <p id="selection-summary" class="selection-summary" role="status">Choose a mark to inspect its evidence.</p>
+            </div>
+
+            <details class="contract-details">
+              <summary>Family contract and media decisions</summary>
+              <div id="family-contract" class="contract-grid"></div>
+            </details>
+          </section>
+
+          <section id="pipeline-view" class="lab-view" hidden>
+            <header class="family-heading">
+              <p class="kicker">Compiler seam</p>
+              <h1>Source material becomes a validated family package</h1>
+              <p class="family-description">This mode compiles each fixture into the versioned package production renderers are intended to receive. The current visual specimens still use a fixture view model while that final package-to-renderer seam is designed family by family.</p>
+            </header>
+            <div id="pipeline-visual" class="pipeline-visual"></div>
+            <div class="pipeline-receipt">
+              <div>
+                <span>Active family</span>
+                <strong id="pipeline-family"></strong>
+              </div>
+              <div>
+                <span>Validated marks</span>
+                <strong id="pipeline-marks"></strong>
+              </div>
+              <div>
+                <span>Evidence references</span>
+                <strong id="pipeline-evidence"></strong>
+              </div>
+              <div>
+                <span>Package hash</span>
+                <strong id="pipeline-hash"></strong>
+              </div>
+            </div>
+            <details class="contract-details">
+              <summary>Validated package excerpt</summary>
+              <pre id="package-preview" class="package-preview"></pre>
+            </details>
+          </section>
+
+          <section id="media-view" class="lab-view" hidden>
+            <header class="family-heading">
+              <p class="kicker">Cross-family repeat policy</p>
+              <h1>One comparison rule, different readable units</h1>
+              <p class="family-description">The layout adapts to the medium and quantity before it repeats a family grammar. If no truthful, readable treatment exists, the policy abstains.</p>
+            </header>
+            <div class="media-controls">
+              <label for="media-select">Source medium
+                <select id="media-select"></select>
+              </label>
+              <label for="quantity-select">Specimen count
+                <select id="quantity-select">
+                  <option value="4">4</option>
+                  <option value="12" selected>12</option>
+                  <option value="36">36</option>
+                  <option value="120">120</option>
+                </select>
+              </label>
+            </div>
+            <div class="media-policy-line">
+              <span id="media-decision"></span>
+              <strong id="media-layout"></strong>
+            </div>
+            <section id="media-visual" class="media-visual" aria-label="Media-aware repeat specimen"></section>
+            <p id="media-note" class="media-note"></p>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="./vendor/d3.min.js"></script>
+    <script src="./vendor/topojson-client.min.js"></script>
+    <script type="module" src="./family-lab.js"></script>
+  </body>
+</html>

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Attend</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="identity">
+          <span class="wordmark">Attend</span>
+          <span class="local-badge">Local viewer</span>
+          <a class="library-return" href="../../">All views</a>
+        </div>
+        <div class="topbar-actions">
+          <p id="corpus-meta" class="meta" aria-live="polite">Loading the local analysis…</p>
+          <button
+            id="chat-toggle"
+            class="chat-toggle"
+            type="button"
+            aria-controls="chat-pane"
+            aria-expanded="false"
+          >
+            Ask
+            <span class="shortcut" aria-hidden="true">⌘/</span>
+          </button>
+        </div>
+      </header>
+
+      <main id="workspace" class="workspace" data-chat-open="false">
+        <section id="map-pane" class="map-pane" aria-labelledby="question-heading">
+          <header class="map-header">
+            <p class="eyebrow">Phrase recurrence</p>
+            <h1 id="question-heading">Loading question…</h1>
+            <p id="question-target" class="target"></p>
+          </header>
+
+          <div id="empty-state" class="empty" hidden>
+            No phrases meet this analysis threshold.
+          </div>
+          <ol id="phrase-list" class="phrase-list" aria-label="Recurring phrases"></ol>
+        </section>
+
+        <aside
+          id="chat-pane"
+          class="chat-pane"
+          aria-labelledby="chat-heading"
+          aria-hidden="true"
+          inert
+        >
+          <header class="chat-header">
+            <div>
+              <h2 id="chat-heading">Ask about this view</h2>
+            </div>
+            <div class="chat-header-actions">
+              <span id="state-revision" class="revision">v—</span>
+              <button id="chat-close" class="chat-close" type="button" aria-label="Close chat">Close</button>
+            </div>
+          </header>
+
+          <div id="chat-scroll" class="chat-scroll">
+            <div id="conversation" class="conversation" aria-live="polite"></div>
+          </div>
+
+          <form id="chat-form" class="composer">
+            <section id="selection-panel" class="selection-panel" aria-live="polite" hidden></section>
+            <div class="composer-field">
+              <div class="composer-input">
+                <label for="chat-input" class="sr-only">Ask a question about this view</label>
+                <textarea
+                  id="chat-input"
+                  rows="1"
+                  placeholder="Ask about this view"
+                ></textarea>
+                <div id="suggested-question" class="suggested-question" hidden>
+                  <span class="suggestion-key">Tab</span>
+                  <span id="suggested-question-text"></span>
+                </div>
+              </div>
+              <button id="chat-submit" class="chat-submit" type="submit" disabled>Ask</button>
+            </div>
+            <p id="status" class="status" role="status"></p>
+          </form>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

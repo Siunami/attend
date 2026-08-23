@@ -1,0 +1,1 @@
+This deliberately exceeds a tiny file-size ceiling used by the analyzer tests.
