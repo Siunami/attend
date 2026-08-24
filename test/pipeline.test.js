@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import {
+  catalogReceiptForMember,
+  executableCatalogMemberForFamily,
+  requireCatalogFamily,
+  requireCatalogMember,
+} from "../src/catalog/index.js";
 import { MAP_FAMILIES, requireMapFamily } from "../src/map-families/registry.js";
 import {
   PipelineContractError,
@@ -75,7 +81,7 @@ const VALUES = {
     { source: "Request", target: "Worker", relation: "dispatches to", stage: "Runtime" },
   ],
   "region-map": [
-    { region: "TZ-01", value: 4, label: "North" },
+    { region: "06", value: 4, label: "California" },
   ],
   "point-map": [
     { latitude: -6.7924, longitude: 39.2083, label: "Dar es Salaam", value: 4 },
@@ -128,12 +134,22 @@ function sourceBundle(familyId, { medium = "structured", reverse = false, media 
   };
 }
 
-test("all nineteen family transforms compile normalized records into canonical v2 packages", async () => {
+test("all eighteen executable family transforms compile normalized records into canonical v2 packages", async () => {
   assert.equal(compileMapPackage, compileMap);
-  for (const manifest of MAP_FAMILIES) {
+  const executableManifests = MAP_FAMILIES.filter(
+    (manifest) => requireCatalogFamily(manifest.id).executableMemberId !== null,
+  );
+  const unavailableManifests = MAP_FAMILIES.filter(
+    (manifest) => requireCatalogFamily(manifest.id).executableMemberId === null,
+  );
+  assert.equal(executableManifests.length, 18);
+  assert.deepEqual(unavailableManifests.map((manifest) => manifest.id), ["annotated-specimen"]);
+
+  for (const manifest of executableManifests) {
     const bundle = sourceBundle(manifest.id);
     assert.equal(validateNormalizedSourceBundle(bundle), bundle);
     const dataPackage = await compileMap({
+      catalog: catalogReceiptForMember(manifest.id, executableCatalogMemberForFamily(manifest.id).id),
       familyId: manifest.id,
       question: { text: manifest.questions.examples[0], target: `${manifest.title} fixture` },
       sourceBundle: bundle,
@@ -159,6 +175,7 @@ test("all nineteen family transforms compile normalized records into canonical v
 
 test("compilation is deterministic across repeated calls", async () => {
   const input = {
+    catalog: catalogReceiptForMember("rank", "bar-list"),
     familyId: "rank",
     question: "Which items rank highest?",
     sourceBundle: sourceBundle("rank"),
@@ -175,6 +192,7 @@ test("input media adaptation is explicit and abstention fails closed", async () 
   const video = sourceBundle("passage-comparison", { medium: "video" });
   await assert.rejects(
     compileMap({
+      catalog: catalogReceiptForMember("passage-comparison", "parallel-text"),
       familyId: "passage-comparison",
       question: "Compare these passages",
       sourceBundle: video,
@@ -183,21 +201,23 @@ test("input media adaptation is explicit and abstention fails closed", async () 
     (error) => error instanceof PipelineContractError && error.code === "FAMILY_ABSTAINS",
   );
 
-  const directImages = sourceBundle("annotated-specimen", { medium: "image", media: true });
-  const imagePackage = await compileMap({
-    familyId: "annotated-specimen",
-    question: "What should I notice?",
-    sourceBundle: directImages,
-    roleMapping: roleMapping("annotated-specimen"),
-    options: { mediaType: "image", availableWidth: 700, variant: "callout-overlay" },
-  });
-  assert.equal(imagePackage.scope.mediaAdapterDecision, "direct");
-  assert.equal(imagePackage.presentation.multiples.profile, "image");
-  assert.equal(imagePackage.quality.media.previewCount, 1);
+  const annotatedMember = requireCatalogMember("annotated-specimen", "callout-overlay");
+  assert.equal(annotatedMember.status, "unavailable");
+  assert.match(annotatedMember.unavailableReason, /cannot bind and display the visible specimen/);
+  assert.throws(
+    () => executableCatalogMemberForFamily("annotated-specimen"),
+    (error) => error.code === "NO_EXECUTABLE_CATALOG_MEMBER",
+  );
+  assert.throws(
+    () => catalogReceiptForMember("annotated-specimen", "callout-overlay"),
+    (error) => error.code === "UNAVAILABLE_CATALOG_MEMBER"
+      && error.message.includes(annotatedMember.unavailableReason),
+  );
 });
 
 test("bounded accepted enrichment changes presentation metadata but never role values", async () => {
   const input = {
+    catalog: catalogReceiptForMember("rank", "bar-list"),
     familyId: "rank",
     question: "Which items rank highest?",
     sourceBundle: sourceBundle("rank"),
@@ -245,6 +265,7 @@ test("bounded accepted enrichment changes presentation metadata but never role v
 test("role, family, and structural validation reject misleading packages", async () => {
   await assert.rejects(
     compileMap({
+      catalog: catalogReceiptForMember("rank", "bar-list"),
       familyId: "rank",
       question: "Rank these",
       sourceBundle: sourceBundle("rank"),
@@ -257,6 +278,7 @@ test("role, family, and structural validation reject misleading packages", async
   badCoordinates.records[0].fields.latitude = 100;
   await assert.rejects(
     compileMap({
+      catalog: catalogReceiptForMember("point-map", "exact-points"),
       familyId: "point-map",
       question: "Where?",
       sourceBundle: badCoordinates,
@@ -269,6 +291,7 @@ test("role, family, and structural validation reject misleading packages", async
   cycle.records[0].fields.parentId = "child";
   await assert.rejects(
     compileMap({
+      catalog: catalogReceiptForMember("hierarchy", "tidy"),
       familyId: "hierarchy",
       question: "How is this nested?",
       sourceBundle: cycle,

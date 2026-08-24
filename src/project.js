@@ -21,26 +21,34 @@ export const MANAGED_MARKER = "attend-managed";
 const PROJECT_DIRECTORY = ".attend";
 const PROJECT_FILE = `${PROJECT_DIRECTORY}/project.json`;
 const PROJECT_GITIGNORE = `${PROJECT_DIRECTORY}/.gitignore`;
-
-/**
- * Where the managed skill is installed, one entry per host-agent convention.
- * `agents` is the cross-agent location; `claude` is the only place Claude Code
- * discovers a project skill.
- */
 const SKILL_TARGETS = Object.freeze([
-  Object.freeze({ id: "agents", path: ".agents/skills/attend-visualize/SKILL.md" }),
-  Object.freeze({ id: "claude", path: ".claude/skills/attend-visualize/SKILL.md" }),
+  Object.freeze({
+    id: "agents",
+    path: ".agents/skills/attend-visualize/SKILL.md",
+  }),
+  Object.freeze({
+    id: "claude",
+    path: ".claude/skills/attend-visualize/SKILL.md",
+  }),
 ]);
 
-export const SKILL_TARGET_IDS = Object.freeze(SKILL_TARGETS.map((target) => target.id));
+export const SKILL_TARGET_IDS = Object.freeze(
+  SKILL_TARGETS.map((target) => target.id),
+);
 
 function selectedSkillTargets(agents) {
   if (agents === undefined || agents === null) return SKILL_TARGETS;
-  if (!Array.isArray(agents)) throw new TypeError("agents must be an array of skill target ids");
+  if (!Array.isArray(agents)) {
+    throw new TypeError("agents must be an array of skill target ids");
+  }
   const unknown = agents.filter((id) => !SKILL_TARGET_IDS.includes(id));
   if (unknown.length) {
     const error = new Error(
-      `Unknown agent target(s): ${unknown.join(", ")}. Known targets: ${SKILL_TARGET_IDS.join(", ")}.`,
+      "Unknown agent target(s): " +
+        unknown.join(", ") +
+        ". Known targets: " +
+        SKILL_TARGET_IDS.join(", ") +
+        ".",
     );
     error.code = "UNKNOWN_AGENT_TARGET";
     throw error;
@@ -131,7 +139,11 @@ function inferredManagedRoot(path) {
   const parts = absolute.slice(filesystemRoot.length).split(sep).filter(Boolean);
   let marker = -1;
   for (let index = 0; index < parts.length; index += 1) {
-    if (parts[index] === ".attend" || parts[index] === ".agents" || parts[index] === ".claude") {
+    if (
+      parts[index] === ".attend" ||
+      parts[index] === ".agents" ||
+      parts[index] === ".claude"
+    ) {
       marker = index;
     }
   }
@@ -331,14 +343,23 @@ function setupResult(root, dryRun, planned) {
  * The complete plan is computed before the first write. Differing unmarked
  * files stop a real setup without leaving a partial installation behind.
  */
-export async function setupProject({ root, dryRun = false, skillSource, agents } = {}) {
+export async function setupProject({
+  root,
+  dryRun = false,
+  skillSource,
+  agents,
+} = {}) {
   if (typeof root !== "string" || root.length === 0) {
     throw new TypeError("setupProject requires a project root");
   }
 
   const projectRoot = resolve(root);
   await assertDirectory(projectRoot);
-  const files = await desiredFiles({ root: projectRoot, skillSource, agents });
+  const files = await desiredFiles({
+    root: projectRoot,
+    skillSource,
+    agents,
+  });
   const planned = await Promise.all(files.map((file) => planFile(file, projectRoot)));
   const result = setupResult(projectRoot, Boolean(dryRun), planned);
 

@@ -3,7 +3,15 @@ import { readdir, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 
-import { buildSelection } from "./selection.js";
+import {
+  artifactAdapterFor,
+  buildArtifactSelection,
+  libraryMetadataForArtifact,
+  publicArtifactForBrowser,
+  renderModelForArtifact,
+  selectableIdsForArtifact,
+  validateArtifactPackage,
+} from "./artifacts/index.js";
 import {
   appendQueuedQuestion,
   loadSession as loadStoredSession,
@@ -13,6 +21,7 @@ import {
   sessionPaths,
   updateSession,
 } from "./session-store.js";
+import { PACKAGE_VERSION } from "./constants.js";
 
 const MAX_JSON_BYTES = 64 * 1024;
 const MAX_CHAT_CHARS = 4_000;
@@ -24,6 +33,17 @@ const VIEWER_STATIC_ASSETS = new Map([
   ["index.html", { file: "index.html", type: "text/html; charset=utf-8" }],
   ["app.js", { file: "app.js", type: "text/javascript; charset=utf-8" }],
   ["styles.css", { file: "styles.css", type: "text/css; charset=utf-8" }],
+  // Package-native Atlas rendering is a closed set of bundled, self-hosted
+  // modules. A package can record a renderer receipt, but never a module path,
+  // stylesheet, CDN URL, or vendor asset to serve.
+  ["package-model.js", { file: "package-model.js", type: "text/javascript; charset=utf-8" }],
+  ["package-renderer.js", { file: "package-renderer.js", type: "text/javascript; charset=utf-8" }],
+  ["family-renderers.js", { file: "family-renderers.js", type: "text/javascript; charset=utf-8" }],
+  ["vendor/d3.min.js", { file: "vendor/d3.min.js", type: "text/javascript; charset=utf-8" }],
+  ["vendor/topojson-client.min.js", { file: "vendor/topojson-client.min.js", type: "text/javascript; charset=utf-8" }],
+  ["vendor/us-states.json", { file: "vendor/us-states.json", type: "application/json; charset=utf-8" }],
+  ["vendor/us-counties.json", { file: "vendor/us-counties.json", type: "application/json; charset=utf-8" }],
+  ["vendor/world-countries.json", { file: "vendor/world-countries.json", type: "application/json; charset=utf-8" }],
 ]);
 
 const LIBRARY_STATIC_ASSETS = new Map([
@@ -40,21 +60,31 @@ const FAMILY_LAB_STATIC_ASSETS = new Map([
   ["family-lab.css", { file: "family-lab.css", type: "text/css; charset=utf-8" }],
   ["family-datasets.js", { file: "family-datasets.js", type: "text/javascript; charset=utf-8" }],
   ["family-compiler-adapter.js", { file: "family-compiler-adapter.js", type: "text/javascript; charset=utf-8" }],
+  ["package-model.js", { file: "package-model.js", type: "text/javascript; charset=utf-8" }],
+  ["package-renderer.js", { file: "package-renderer.js", type: "text/javascript; charset=utf-8" }],
   ["family-renderers.js", { file: "family-renderers.js", type: "text/javascript; charset=utf-8" }],
   ["core/map-families/registry.js", { file: "../src/map-families/registry.js", type: "text/javascript; charset=utf-8" }],
   ["core/map-families/index.js", { file: "../src/map-families/index.js", type: "text/javascript; charset=utf-8" }],
+  ["core/geography.js", { file: "../src/geography.js", type: "text/javascript; charset=utf-8" }],
   ["core/pipeline/data-package.js", { file: "../src/pipeline/data-package.js", type: "text/javascript; charset=utf-8" }],
   ["core/pipeline/compile.js", { file: "../src/pipeline/compile.js", type: "text/javascript; charset=utf-8" }],
   ["core/pipeline/index.js", { file: "../src/pipeline/index.js", type: "text/javascript; charset=utf-8" }],
-  ["vendor/d3.min.js", { file: "../node_modules/d3/dist/d3.min.js", type: "text/javascript; charset=utf-8" }],
-  ["vendor/topojson-client.min.js", { file: "../node_modules/topojson-client/dist/topojson-client.min.js", type: "text/javascript; charset=utf-8" }],
-  ["vendor/us-states.json", { file: "../node_modules/us-atlas/states-10m.json", type: "application/json; charset=utf-8" }],
-  ["vendor/us-counties.json", { file: "../node_modules/us-atlas/counties-10m.json", type: "application/json; charset=utf-8" }],
-  ["vendor/world-countries.json", { file: "../node_modules/world-atlas/countries-110m.json", type: "application/json; charset=utf-8" }],
+  ["vendor/d3.min.js", { file: "vendor/d3.min.js", type: "text/javascript; charset=utf-8" }],
+  ["vendor/topojson-client.min.js", { file: "vendor/topojson-client.min.js", type: "text/javascript; charset=utf-8" }],
+  ["vendor/us-states.json", { file: "vendor/us-states.json", type: "application/json; charset=utf-8" }],
+  ["vendor/us-counties.json", { file: "vendor/us-counties.json", type: "application/json; charset=utf-8" }],
+  ["vendor/world-countries.json", { file: "vendor/world-countries.json", type: "application/json; charset=utf-8" }],
 ]);
 
+export const PACKAGED_ATLAS_ASSET_FILES = Object.freeze(
+  [...new Set(
+    [...VIEWER_STATIC_ASSETS.values(), ...FAMILY_LAB_STATIC_ASSETS.values()]
+      .map((asset) => asset.file),
+  )].sort((left, right) => left.localeCompare(right)),
+);
+
 const SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
-const LIBRARY_PROTOCOL_VERSION = 1;
+const LIBRARY_PROTOCOL_VERSION = 2;
 
 const SECURITY_HEADERS = Object.freeze({
   "Cache-Control": "no-store",
@@ -126,7 +156,13 @@ function sendJson(response, status, value, extraHeaders) {
 }
 
 async function sendAsset(response, requestMethod, assetRoot, asset) {
-  const contents = await readFile(resolve(assetRoot, asset.file));
+  let contents;
+  try {
+    contents = await readFile(resolve(assetRoot, asset.file));
+  } catch (error) {
+    if (error?.code === "ENOENT") throw new HttpError(404, "not_found", "not found");
+    throw error;
+  }
   response.statusCode = 200;
   setHeaders(response, {
     "Content-Type": asset.type,
@@ -204,24 +240,16 @@ async function sessionIds(root) {
 
 function libraryEntry(session) {
   const dataPackage = dataPackageFor(session);
+  const metadata = libraryMetadataForArtifact(dataPackage);
   return {
     sessionId: session.id,
-    question:
-      typeof dataPackage.question?.text === "string"
-        ? dataPackage.question.text
-        : "Untitled question",
-    target:
-      typeof dataPackage.question?.target === "string"
-        ? dataPackage.question.target
-        : "",
-    view: {
-      id: session.view?.id ?? dataPackage.map?.id,
-      version: session.view?.version ?? dataPackage.map?.version,
+    question: metadata.question,
+    target: metadata.target,
+    view: session.view ?? {
+      id: dataPackage.map?.id,
+      version: dataPackage.map?.version,
     },
-    counts: {
-      phrases: dataPackage.rows.length,
-      sources: dataPackage.sources.length,
-    },
+    counts: metadata.counts,
     updatedAt: session.updatedAt,
     href: `s/${session.id}/`,
   };
@@ -230,13 +258,16 @@ function libraryEntry(session) {
 async function libraryPayload(root) {
   const ids = await sessionIds(root);
   const sessions = [];
+  let unavailableSessionCount = 0;
   for (const sessionId of ids) {
     try {
       sessions.push(libraryEntry(await loadSession(root, sessionId)));
     } catch (error) {
       // A session may be removed between directory discovery and its read.
       if (isMissing(error)) continue;
-      throw error;
+      // A stale or invalid package stays unavailable at its direct route, but
+      // cannot take healthy sessions out of the aggregate library with it.
+      unavailableSessionCount += 1;
     }
   }
   sessions.sort((left, right) => {
@@ -246,6 +277,7 @@ async function libraryPayload(root) {
   return {
     schemaVersion: 1,
     sessions,
+    unavailableSessionCount,
   };
 }
 
@@ -260,14 +292,19 @@ async function patchSession(root, analysisId, revision, patch) {
 
 function dataPackageFor(session) {
   const dataPackage = session?.dataPackage ?? session?.analysis ?? null;
-  if (!dataPackage || !Array.isArray(dataPackage.rows) || !Array.isArray(dataPackage.sources)) {
-    throw new HttpError(500, "invalid_analysis", "stored analysis is missing its rows or sources");
+  try {
+    return validateArtifactPackage(dataPackage);
+  } catch {
+    throw new HttpError(
+      500,
+      "invalid_analysis",
+      "stored analysis is not a supported Attend artifact package",
+    );
   }
-  return dataPackage;
 }
 
 function selectionFor(session) {
-  return buildSelection(dataPackageFor(session), session.state ?? {});
+  return buildArtifactSelection(dataPackageFor(session), session.state ?? {});
 }
 
 function publicSession(session) {
@@ -301,21 +338,37 @@ function publicConversationTurn(turn) {
   };
 }
 
-function validateSelection(body, dataPackage) {
-  assertOnlyKeys(body, new Set(["expectedRevision", "selectedIds"]));
-  const revision = expectedRevision(body.expectedRevision);
-  if (!Array.isArray(body.selectedIds) || body.selectedIds.length > MAX_SELECTIONS) {
-    throw new HttpError(400, "invalid_selection", `selectedIds must be an array of at most ${MAX_SELECTIONS} ids`);
-  }
-  const knownIds = new Set(dataPackage.rows.map((row) => row.id));
-  const selectedIds = [];
-  for (const id of body.selectedIds) {
-    if (typeof id !== "string" || !knownIds.has(id)) {
-      throw new HttpError(400, "invalid_selection", `unknown phrase row id: ${String(id)}`);
+function validateSelection(body, dataPackage, sessionId) {
+  const adapter = artifactAdapterFor(dataPackage);
+  if (adapter.artifactKind === "phrase-v1") {
+    assertOnlyKeys(body, new Set(["expectedRevision", "selectedIds"]));
+    const revision = expectedRevision(body.expectedRevision);
+    if (!Array.isArray(body.selectedIds) || body.selectedIds.length > MAX_SELECTIONS) {
+      throw new HttpError(400, "invalid_selection", `selectedIds must be an array of at most ${MAX_SELECTIONS} ids`);
     }
-    if (!selectedIds.includes(id)) selectedIds.push(id);
+    const knownIds = new Set(selectableIdsForArtifact(dataPackage));
+    const selectedIds = [];
+    for (const id of body.selectedIds) {
+      if (typeof id !== "string" || !knownIds.has(id)) {
+        throw new HttpError(400, "invalid_selection", `unknown phrase row id: ${String(id)}`);
+      }
+      if (!selectedIds.includes(id)) selectedIds.push(id);
+    }
+    return { revision, patch: { selectedIds } };
   }
-  return { revision, patch: { selectedIds } };
+
+  assertOnlyKeys(body, new Set(["sessionId", "revision", "markId"]));
+  if (body.sessionId !== sessionId) {
+    throw new HttpError(400, "invalid_selection", "Atlas selection sessionId does not match the routed session");
+  }
+  const revision = expectedRevision(body.revision);
+  if (body.markId !== null && (typeof body.markId !== "string" || body.markId.length === 0)) {
+    throw new HttpError(400, "invalid_selection", "markId must be a selectable mark id or null");
+  }
+  if (body.markId !== null && !new Set(selectableIdsForArtifact(dataPackage)).has(body.markId)) {
+    throw new HttpError(400, "invalid_selection", `unknown Atlas mark id: ${String(body.markId)}`);
+  }
+  return { revision, patch: { markIds: body.markId === null ? [] : [body.markId] } };
 }
 
 function validateSort(value, currentSort) {
@@ -368,6 +421,9 @@ function validateSourceScope(value, dataPackage) {
 }
 
 function validateViewState(body, dataPackage, state) {
+  if (artifactAdapterFor(dataPackage).artifactKind !== "phrase-v1") {
+    throw new HttpError(400, "invalid_view_state", "Atlas views do not accept phrase filter state");
+  }
   assertOnlyKeys(body, new Set(["expectedRevision", "query", "minCount", "sort", "sourceScope"]));
   const revision = expectedRevision(body.expectedRevision);
   const patch = {};
@@ -589,6 +645,7 @@ export async function createViewerServer({
             ok: true,
             service: "attend-library",
             protocolVersion: LIBRARY_PROTOCOL_VERSION,
+            packageVersion: PACKAGE_VERSION,
             instanceId,
             sessionCount: (await sessionIds(root)).length,
           });
@@ -621,7 +678,11 @@ export async function createViewerServer({
           return;
         }
         if (sessionRoute.route === "api/data") {
-          sendJson(response, 200, dataPackageFor(session));
+          sendJson(response, 200, publicArtifactForBrowser(dataPackageFor(session)));
+          return;
+        }
+        if (sessionRoute.route === "api/render-model") {
+          sendJson(response, 200, renderModelForArtifact(dataPackageFor(session)));
           return;
         }
         if (sessionRoute.route === "api/state") {
@@ -643,7 +704,7 @@ export async function createViewerServer({
         const dataPackage = dataPackageFor(session);
 
         if (sessionRoute.route === "api/selection") {
-          const { revision, patch } = validateSelection(body, dataPackage);
+          const { revision, patch } = validateSelection(body, dataPackage, routedSessionId);
           try {
             const updated = await patchSession(root, routedSessionId, revision, patch);
             sendJson(response, 200, publicSession(updated));

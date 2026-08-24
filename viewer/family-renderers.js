@@ -52,6 +52,7 @@ function label(record, dataset) {
 }
 
 function id(record, dataset) {
+  if (record?.markId !== undefined && record?.markId !== null) return String(record.markId);
   return String(record?.[role(dataset, "id", "id")] ?? record?.id ?? "");
 }
 
@@ -61,11 +62,54 @@ function linkedLabel(dataset, identifier) {
 }
 
 function formatNumber(number) {
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(number);
+  const normalized = Object.is(number, -0) ? 0 : number;
+  return new Intl.NumberFormat(undefined, { maximumSignificantDigits: 6 }).format(normalized);
+}
+
+function numericValue(record, field) {
+  const result = Number(record?.[field]);
+  return Number.isFinite(result) ? result : null;
+}
+
+function observedDomain(values, fallback = [0, 1]) {
+  const finite = values.filter(Number.isFinite);
+  if (!finite.length) return fallback;
+  return [Math.min(...finite), Math.max(...finite)];
+}
+
+function observedScale(domain, range) {
+  if (domain[0] === domain[1]) {
+    const middle = (range[0] + range[1]) / 2;
+    return () => middle;
+  }
+  return linear(domain, range);
+}
+
+function observedTicks(domain, count = 5) {
+  if (domain[0] === domain[1]) return [domain[0]];
+  return Array.from({ length: count }, (_, index) => (
+    domain[0] + ((domain[1] - domain[0]) * index) / (count - 1)
+  ));
+}
+
+function observedTicksWithZero(domain, count = 5) {
+  const ticks = observedTicks(domain, count);
+  if (domain[0] < 0 && domain[1] > 0) ticks.push(0);
+  return [...new Set(ticks)].sort((left, right) => left - right);
+}
+
+function countLabel(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function markClass(markId, selectedId, base = "mark-primary") {
-  return `${base}${markId === selectedId ? " is-selected" : ""}`;
+  return `${base}${isSelected(markId, selectedId) ? " is-selected" : ""}`;
+}
+
+function isSelected(markId, selectedId) {
+  if (selectedId instanceof Set) return selectedId.has(String(markId));
+  if (Array.isArray(selectedId)) return selectedId.some((value) => String(value) === String(markId));
+  return String(markId) === String(selectedId ?? "");
 }
 
 function appendText(parent, x, y, text, className, anchor) {
@@ -77,14 +121,6 @@ function appendText(parent, x, y, text, className, anchor) {
   }, text);
   parent.append(node);
   return node;
-}
-
-function extent(values, fallback = [0, 1]) {
-  const finite = values.filter(Number.isFinite);
-  if (!finite.length) return fallback;
-  const min = Math.min(...finite);
-  const max = Math.max(...finite);
-  return min === max ? [Math.min(0, min), max || 1] : [min, max];
 }
 
 function linear(domain, range) {
@@ -105,36 +141,51 @@ function evidenceCount(dataset) {
 function renderRank(root, dataset, selectedId) {
   const records = [...dataset.records];
   const valueField = role(dataset, "value", "value");
-  const values = records.map((record) => value(record, valueField));
-  const max = Math.max(...values, 1);
-  const svg = canvas(root, dataset.title, `${records.length} ranked items. The longest bar has value ${max}.`);
+  const values = records.map((record) => numericValue(record, valueField));
+  const observed = observedDomain(values);
+  const domain = [Math.min(0, observed[0]), Math.max(0, observed[1])];
+  const domainDescription = observed[0] === observed[1]
+    ? `Every supplied value is ${formatNumber(observed[0])}.`
+    : `The supplied value extent is ${formatNumber(observed[0])} to ${formatNumber(observed[1])}.`;
+  const svg = canvas(root, dataset.title, `${countLabel(records.length, "ranked item")}. ${domainDescription}`);
   const left = 220;
   const top = 26;
   const rowHeight = Math.min(58, 360 / Math.max(records.length, 1));
-  const x = linear([0, max], [left, 875]);
+  const x = observedScale(domain, [left, 875]);
+  const zero = x(0);
+  svg.setAttribute("data-value-domain", `${domain[0]},${domain[1]}`);
 
-  [0, 0.25, 0.5, 0.75, 1].forEach((fraction) => {
-    const px = left + (875 - left) * fraction;
+  observedTicks(domain).forEach((tick) => {
+    const px = x(tick);
     svg.append(element("line", { x1: px, x2: px, y1: top, y2: top + rowHeight * records.length, class: "grid-line" }));
-    appendText(svg, px, top + rowHeight * records.length + 25, formatNumber(max * fraction), "axis-label", "middle");
+    appendText(svg, px, top + rowHeight * records.length + 25, formatNumber(tick), "axis-label", "middle");
   });
 
   records.forEach((record, index) => {
     const markId = id(record, dataset);
+    const amount = numericValue(record, valueField);
+    const endpoint = x(amount);
     const y = top + index * rowHeight + rowHeight * 0.23;
     appendText(svg, left - 14, y + rowHeight * 0.29, label(record, dataset), undefined, "end");
     const bar = element("rect", {
-      x: left,
+      x: Math.min(zero, endpoint),
       y,
-      width: Math.max(2, x(value(record, valueField)) - left),
+      width: Math.max(2, Math.abs(endpoint - zero)),
       height: rowHeight * 0.46,
       rx: 2,
       class: markClass(markId, selectedId, index === 0 ? "mark-secondary" : "mark-primary"),
       "data-mark-id": markId,
-      "aria-label": `${label(record, dataset)}: ${value(record, valueField)}`,
+      "aria-label": `${label(record, dataset)}: ${formatNumber(amount)}`,
     });
     svg.append(bar);
-    appendText(svg, x(value(record, valueField)) + 9, y + rowHeight * 0.31, formatNumber(value(record, valueField)), undefined);
+    appendText(
+      svg,
+      endpoint + (amount < 0 ? -9 : 9),
+      y + rowHeight * 0.31,
+      formatNumber(amount),
+      undefined,
+      amount < 0 ? "end" : undefined,
+    );
   });
 }
 
@@ -142,38 +193,53 @@ function renderDistribution(root, dataset, selectedId) {
   const records = dataset.records;
   const valueField = role(dataset, "value", "value");
   const groupField = role(dataset, "group", "group");
-  const groups = [...new Set(records.map((record) => String(record[groupField])))];
-  const values = records.map((record) => value(record, valueField));
-  const domain = [0, Math.ceil(Math.max(...values, 1) / 20) * 20];
-  const x = linear(domain, [165, 900]);
-  const svg = canvas(root, dataset.title, `A grouped strip plot of ${records.length} observations across ${groups.length} work types.`);
-  const rowHeight = 100;
+  const groupName = (record) => String(record?.[groupField] ?? "All observations");
+  const groups = [...new Set(records.map(groupName))];
+  const values = records.map((record) => numericValue(record, valueField)).filter(Number.isFinite);
+  const domain = observedDomain(values);
+  const x = observedScale(domain, [165, 900]);
+  const rowHeight = 62;
+  const plotBottom = 42 + groups.length * rowHeight;
+  const chartHeight = Math.max(HEIGHT, plotBottom + 76);
+  const domainDescription = domain[0] === domain[1]
+    ? `Every supplied value is ${formatNumber(domain[0])}.`
+    : `The supplied value extent is ${formatNumber(domain[0])} to ${formatNumber(domain[1])}.`;
+  const svg = canvas(
+    root,
+    dataset.title,
+    `A grouped strip plot of ${countLabel(records.length, "observation")} across ${countLabel(groups.length, "group")}. ${domainDescription}`,
+    chartHeight,
+  );
 
-  for (let tick = 0; tick <= domain[1]; tick += 20) {
+  for (const tick of observedTicks(domain)) {
     const px = x(tick);
-    svg.append(element("line", { x1: px, x2: px, y1: 28, y2: 352, class: "grid-line" }));
-    appendText(svg, px, 378, tick, "axis-label", "middle");
+    svg.append(element("line", { x1: px, x2: px, y1: 28, y2: plotBottom, class: "grid-line" }));
+    appendText(svg, px, plotBottom + 24, formatNumber(tick), "axis-label", "middle");
   }
-  appendText(svg, 900, 408, "minutes", "axis-label", "end");
+  appendText(svg, 900, plotBottom + 52, "Observed value", "axis-label", "end");
 
   groups.forEach((group, groupIndex) => {
-    const cy = 75 + groupIndex * rowHeight;
-    const groupRecords = records.filter((record) => record[groupField] === group);
+    const cy = 58 + groupIndex * rowHeight;
+    const groupRecords = records.filter((record) => groupName(record) === group);
     appendText(svg, 142, cy + 4, group, undefined, "end");
     svg.append(element("line", { x1: 165, x2: 900, y1: cy, y2: cy, class: "baseline" }));
-    const sorted = groupRecords.map((record) => value(record, valueField)).sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
+    const sorted = groupRecords.map((record) => numericValue(record, valueField)).filter(Number.isFinite).sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 === 0
+      ? (sorted[middle - 1] + sorted[middle]) / 2
+      : sorted[middle];
     svg.append(element("line", { x1: x(median), x2: x(median), y1: cy - 23, y2: cy + 23, class: "median-line" }));
     groupRecords.forEach((record, recordIndex) => {
       const markId = id(record, dataset);
       const jitter = ((recordIndex % 3) - 1) * 13;
+      const observation = numericValue(record, valueField);
       svg.append(element("circle", {
-        cx: x(value(record, valueField)),
+        cx: x(observation),
         cy: cy + jitter,
         r: 7,
         class: markClass(markId, selectedId, seriesClass(groupIndex)),
         "data-mark-id": markId,
-        "aria-label": `${group}: ${value(record, valueField)} minutes`,
+        "aria-label": `${label(record, dataset)}: ${formatNumber(observation)}; group ${group}`,
       }));
     });
   });
@@ -186,104 +252,234 @@ function renderComposition(root, dataset, selectedId) {
   const valueField = role(dataset, "value", "value");
   const series = [...new Set(records.map((record) => String(record[seriesField])))];
   const parts = [...new Set(records.map((record) => String(record[partField])))];
-  const svg = canvas(root, dataset.title, `Two 100 percent bars compare ${parts.length} activity categories.`);
+  const rowPitch = 112;
+  const chartHeight = Math.max(HEIGHT, 70 + series.length * rowPitch);
+  const svg = canvas(
+    root,
+    dataset.title,
+    `${countLabel(series.length, "observed whole")} shown as normalized bars with ${countLabel(parts.length, "part")} and an explicit total for every whole.`,
+    chartHeight,
+  );
   const left = 150;
   const right = 900;
   const width = right - left;
 
-  parts.forEach((part, index) => {
-    const x = left + index * (width / parts.length);
-    svg.append(element("rect", { x, y: 394, width: 12, height: 12, class: seriesClass(index) }));
-    appendText(svg, x + 18, 405, part, "axis-label");
-  });
-
   series.forEach((seriesName, seriesIndex) => {
-    const y = 92 + seriesIndex * 150;
+    const y = 52 + seriesIndex * rowPitch;
     const selected = records.filter((record) => String(record[seriesField]) === seriesName);
-    const total = selected.reduce((sum, record) => sum + value(record, valueField), 0) || 1;
+    const total = selected.reduce((sum, record) => sum + value(record, valueField), 0);
     appendText(svg, left - 18, y + 34, seriesName, undefined, "end");
     let cursor = left;
-    selected.forEach((record, partIndex) => {
+    selected.forEach((record) => {
       const amount = value(record, valueField);
-      const segmentWidth = width * (amount / total);
+      const segmentWidth = total > 0 ? width * (amount / total) : 0;
       const markId = id(record, dataset);
-      svg.append(element("rect", {
-        x: cursor,
-        y,
-        width: segmentWidth,
-        height: 56,
-        class: markClass(markId, selectedId, seriesClass(partIndex)),
+      const part = String(record[partField]);
+      const className = seriesClass(parts.indexOf(part));
+      const attributes = {
+        class: markClass(markId, selectedId, className),
         "data-mark-id": markId,
-        "aria-label": `${record[partField]}: ${amount} of ${total}`,
-      }));
-      if (segmentWidth > 62) appendText(svg, cursor + segmentWidth / 2, y + 34, amount, "inside-label", "middle");
+        "aria-label": `${part}: ${formatNumber(amount)} of ${formatNumber(total)}`,
+      };
+      if (segmentWidth > 0) {
+        svg.append(element("rect", { x: cursor, y, width: segmentWidth, height: 56, ...attributes }));
+        if (segmentWidth >= 72) appendText(svg, cursor + segmentWidth / 2, y + 34, formatNumber(amount), "inside-label", "middle");
+        appendText(svg, cursor + segmentWidth / 2, y - 10, part, "axis-label", "middle");
+      } else {
+        svg.append(element("circle", { cx: cursor, cy: y + 28, r: 4, ...attributes }));
+        appendText(svg, cursor, y - 10, part, "axis-label", "middle");
+      }
       cursor += segmentWidth;
     });
-    appendText(svg, right, y + 82, `${total} hours`, "axis-label", "end");
+    appendText(
+      svg,
+      right,
+      y + 82,
+      total > 0 ? `Total ${formatNumber(total)}` : "Total 0; shares undefined",
+      "axis-label",
+      "end",
+    );
   });
 }
 
 function renderProfile(root, dataset, selectedId) {
   const records = dataset.records;
   const measures = role(dataset, "measures", []);
-  const svg = canvas(root, dataset.title, `${records.length} profiles compared on ${measures.length} shared measures.`);
   const left = 180;
   const right = 900;
-  const xFor = (index) => left + index * ((right - left) / Math.max(1, measures.length - 1));
-  const y = linear([0, 10], [370, 50]);
+  const xFor = (index) => measures.length === 1
+    ? (left + right) / 2
+    : left + index * ((right - left) / (measures.length - 1));
+
+  const entityField = role(dataset, "entity", "entity");
+  const dimensionField = role(dataset, "dimension", "dimension");
+  const isLongProfile = measures.length > 0 && records.some((record) => record[dimensionField] !== undefined);
+  const profiles = isLongProfile
+    ? [...new Map(records.map((record) => [String(record[entityField] ?? record.id), String(record[entityField] ?? record.id)])).keys()]
+      .map((entity) => ({
+        entity,
+        records: records.filter((record) => String(record[entityField] ?? record.id) === entity),
+      }))
+    : records.map((record) => ({ entity: label(record, dataset), records: [record] }));
+
+  const valueField = role(dataset, "value", "value");
+  const profileValue = (profile, measure) => {
+    if (isLongProfile) {
+      const record = profile.records.find((candidate) => String(candidate[dimensionField]) === String(measure));
+      return { record, number: numericValue(record, valueField) };
+    }
+    const record = profile.records[0];
+    return { record, number: numericValue(record, measure) };
+  };
+  const domains = new Map(measures.map((measure) => [measure, observedDomain(
+    profiles.map((profile) => profileValue(profile, measure).number).filter(Number.isFinite),
+  )]));
+  const scales = new Map(measures.map((measure) => [measure, observedScale(domains.get(measure), [370, 50])]));
+  const svg = canvas(
+    root,
+    dataset.title,
+    `${countLabel(profiles.length, "profile")} compared across ${countLabel(measures.length, "independently scaled measure")}. Missing measurements remain unconnected.`,
+  );
 
   measures.forEach((measure, index) => {
     const x = xFor(index);
+    const domain = domains.get(measure);
     svg.append(element("line", { x1: x, x2: x, y1: 50, y2: 370, class: "grid-line" }));
-    appendText(svg, x, 400, measure, "axis-label", "middle");
+    appendText(svg, x, 28, formatNumber(domain[1]), "axis-label", "middle");
+    if (domain[0] !== domain[1]) appendText(svg, x, 386, formatNumber(domain[0]), "axis-label", "middle");
+    appendText(svg, x, 416, measure, "axis-label", "middle");
   });
 
-  records.forEach((record, recordIndex) => {
-    const markId = id(record, dataset);
-    const points = measures.map((measure, index) => `${xFor(index)},${y(value(record, measure))}`).join(" ");
-    svg.append(element("polyline", {
-      points,
-      fill: "none",
-      class: markClass(markId, selectedId, `${seriesClass(recordIndex)} profile-line`),
-      "data-mark-id": markId,
-      "aria-label": `${label(record, dataset)} profile`,
-    }));
-    measures.forEach((measure, index) => {
+  profiles.forEach((profile, recordIndex) => {
+    const points = measures.map((measure, index) => {
+      const measurement = profileValue(profile, measure);
+      return measurement.record && Number.isFinite(measurement.number)
+        ? { ...measurement, index, measure, x: xFor(index), y: scales.get(measure)(measurement.number) }
+        : null;
+    });
+    let run = [];
+    const drawRun = () => {
+      if (run.length >= 2) {
+        svg.append(element("polyline", {
+          points: run.map((point) => `${point.x},${point.y}`).join(" "),
+          fill: "none",
+          class: `${seriesClass(recordIndex)} profile-line`,
+          "aria-label": `${profile.entity} profile`,
+        }));
+      }
+      run = [];
+    };
+    for (const point of [...points, null]) {
+      if (point) run.push(point);
+      else drawRun();
+    }
+    points.forEach((point) => {
+      if (!point) return;
+      const markId = id(point.record, dataset);
       svg.append(element("circle", {
-        cx: xFor(index),
-        cy: y(value(record, measure)),
+        cx: point.x,
+        cy: point.y,
         r: 4,
         class: markClass(markId, selectedId, seriesClass(recordIndex)),
         "data-mark-id": markId,
+        "aria-label": `${profile.entity}, ${point.measure}: ${formatNumber(point.number)}`,
       }));
     });
-    appendText(svg, 166, y(value(record, measures[0])) + 4, label(record, dataset), recordIndex > 3 ? "muted-label" : undefined, "end");
+    const firstPoint = points.find(Boolean);
+    if (firstPoint) appendText(svg, firstPoint.x - 12, firstPoint.y + 4, profile.entity, recordIndex > 3 ? "muted-label" : undefined, "end");
   });
 }
 
 function renderPassageComparison(root, dataset, selectedId) {
   root.replaceChildren();
-  const list = htmlElement("ol", "passage-columns");
   const textField = role(dataset, "text", "text");
-  const sourceField = role(dataset, "source", "source");
   const versionField = role(dataset, "version", "version");
-  dataset.records.forEach((record) => {
-    const item = htmlElement("li", id(record, dataset) === selectedId ? "passage-row is-selected" : "passage-row");
-    item.dataset.markId = id(record, dataset);
-    const metadata = htmlElement("div", "passage-meta");
-    const time = htmlElement("time", undefined, record.date);
-    time.setAttribute("datetime", String(record.date));
-    metadata.append(
-      htmlElement("strong", undefined, record[versionField]),
-      htmlElement("span", undefined, record[sourceField]),
-      time,
+  const labelField = role(dataset, "label", "label");
+  const orderField = role(dataset, "order", "order");
+  const versions = [...new Set(dataset.records.map((record) => String(record[versionField])))];
+  if (versions.length > 2) {
+    const notice = htmlElement("div", "aggregate-message");
+    notice.setAttribute("data-render-state", "abstained");
+    notice.append(
+      htmlElement("strong", undefined, "Passage comparison abstained"),
+      htmlElement("p", undefined, `The fixed parallel-text renderer requires exactly two witnesses; ${versions.length} were supplied.`),
     );
-    const quote = document.createElement("blockquote");
-    quote.textContent = record[textField];
-    item.append(metadata, quote);
-    list.append(item);
+    root.append(notice);
+    return;
+  }
+  const witnesses = versions.length === 2 ? versions : [versions[0], "Witness not supplied"];
+  const rows = new Map();
+  dataset.records.forEach((record, index) => {
+    const order = numericValue(record, orderField);
+    const suppliedLabel = record?.[labelField];
+    const alignmentLabel = suppliedLabel === undefined || suppliedLabel === null || suppliedLabel === ""
+      ? null
+      : String(suppliedLabel);
+    const explicit = Number.isFinite(order)
+      ? { key: `order:${order}`, sort: [0, order], label: alignmentLabel ?? `Order ${formatNumber(order)}` }
+      : alignmentLabel
+        ? { key: `label:${alignmentLabel}`, sort: [1, alignmentLabel], label: alignmentLabel }
+        : { key: `unaligned:${id(record, dataset)}`, sort: [2, index], label: "Alignment key unavailable" };
+    const row = rows.get(explicit.key) ?? { ...explicit, recordsByWitness: new Map() };
+    const witness = String(record[versionField]);
+    const records = row.recordsByWitness.get(witness) ?? [];
+    records.push(record);
+    row.recordsByWitness.set(witness, records);
+    rows.set(explicit.key, row);
   });
-  root.append(list);
+  const orderedRows = [...rows.values()].sort((left, right) => {
+    if (left.sort[0] !== right.sort[0]) return left.sort[0] - right.sort[0];
+    if (typeof left.sort[1] === "number" && typeof right.sort[1] === "number") return left.sort[1] - right.sort[1];
+    return String(left.sort[1]).localeCompare(String(right.sort[1]));
+  });
+  const table = htmlElement("table", "passage-columns");
+  table.setAttribute("data-layout", "parallel-witnesses");
+  table.setAttribute("data-witness-columns", "2");
+  const caption = htmlElement("caption", "passage-comparison-caption", `${countLabel(orderedRows.length, "aligned passage row")} across two witness columns.`);
+  const head = htmlElement("thead");
+  const headingRow = htmlElement("tr");
+  witnesses.forEach((witness) => {
+    const heading = htmlElement("th", "passage-witness-heading", witness);
+    heading.setAttribute("scope", "col");
+    headingRow.append(heading);
+  });
+  head.append(headingRow);
+  const rowGroups = [];
+  orderedRows.forEach((row) => {
+    const rowGroup = htmlElement("tbody", "passage-alignment-group");
+    const labelRow = htmlElement("tr", "passage-alignment-label");
+    const rowHeading = htmlElement("th", undefined, row.label);
+    rowHeading.setAttribute("colspan", "2");
+    rowHeading.setAttribute("scope", "rowgroup");
+    labelRow.append(rowHeading);
+    const witnessRow = htmlElement("tr", "passage-alignment-row");
+    witnesses.forEach((witness) => {
+      const cell = htmlElement("td", "passage-witness-column");
+      const records = row.recordsByWitness.get(witness) ?? [];
+      if (!records.length) {
+        cell.append(htmlElement("div", "passage-missing", "Not supplied for this witness."));
+      } else {
+        records.forEach((record) => {
+          const item = htmlElement("article", markClass(id(record, dataset), selectedId, "passage-row"));
+          item.dataset.markId = id(record, dataset);
+          const metadata = htmlElement("div", "passage-meta");
+          metadata.append(
+            htmlElement("strong", undefined, record[versionField] ?? "Unversioned"),
+            htmlElement("span", undefined, row.label),
+          );
+          const quote = document.createElement("blockquote");
+          quote.textContent = record[textField] ?? "No passage supplied";
+          item.append(metadata, quote);
+          cell.append(item);
+        });
+      }
+      witnessRow.append(cell);
+    });
+    rowGroup.append(labelRow, witnessRow);
+    rowGroups.push(rowGroup);
+  });
+  table.append(caption, head, ...rowGroups);
+  root.append(table);
 }
 
 function renderTrend(root, dataset, selectedId) {
@@ -291,37 +487,51 @@ function renderTrend(root, dataset, selectedId) {
   const xField = role(dataset, "x", "x");
   const yField = role(dataset, "y", "y");
   const seriesField = role(dataset, "series", "series");
-  const dates = [...new Set(records.map((record) => String(record[xField])))].sort();
-  const series = [...new Set(records.map((record) => String(record[seriesField])))];
-  const max = Math.ceil(Math.max(...records.map((record) => value(record, yField)), 1) / 5) * 5;
+  const compareTime = (left, right) => {
+    const leftNumber = typeof left === "number" ? left : Date.parse(left);
+    const rightNumber = typeof right === "number" ? right : Date.parse(right);
+    if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber - rightNumber;
+    return String(left).localeCompare(String(right));
+  };
+  const dates = [...new Map(records.map((record) => [String(record[xField]), record[xField]])).values()].sort(compareTime);
+  const dateIndex = new Map(dates.map((date, index) => [String(date), index]));
+  const seriesName = (record) => String(record?.[seriesField] ?? "Series 1");
+  const series = [...new Set(records.map(seriesName))];
+  const yDomain = observedDomain(records.map((record) => numericValue(record, yField)));
   const x = linear([0, Math.max(dates.length - 1, 1)], [90, 890]);
-  const y = linear([0, max], [370, 40]);
-  const svg = canvas(root, dataset.title, `${series.length} weekly series shown on one shared time scale.`);
+  const y = observedScale(yDomain, [370, 40]);
+  const svg = canvas(
+    root,
+    dataset.title,
+    `${countLabel(series.length, "series")} shown on one shared time scale and the supplied value extent ${formatNumber(yDomain[0])} to ${formatNumber(yDomain[1])}.`,
+  );
+  svg.setAttribute("data-value-domain", `${yDomain[0]},${yDomain[1]}`);
 
-  for (let tick = 0; tick <= max; tick += 5) {
+  for (const tick of observedTicksWithZero(yDomain)) {
     svg.append(element("line", { x1: 90, x2: 890, y1: y(tick), y2: y(tick), class: "grid-line" }));
-    appendText(svg, 75, y(tick) + 4, tick, "axis-label", "end");
+    appendText(svg, 75, y(tick) + 4, formatNumber(tick), "axis-label", "end");
   }
   dates.forEach((date, index) => {
-    if (index % 2 === 0 || dates.length < 7) appendText(svg, x(index), 405, date.slice(5), "axis-label", "middle");
+    if (index % 2 === 0 || dates.length < 7) appendText(svg, x(index), 405, String(date), "axis-label", "middle");
   });
 
-  series.forEach((seriesName, seriesIndex) => {
-    const lineRecords = records.filter((record) => record[seriesField] === seriesName).sort((a, b) => String(a[xField]).localeCompare(String(b[xField])));
-    const points = lineRecords.map((record) => `${x(dates.indexOf(String(record[xField])))},${y(value(record, yField))}`).join(" ");
-    svg.append(element("polyline", { points, fill: "none", class: `${seriesClass(seriesIndex)} trend-line` }));
+  series.forEach((name, seriesIndex) => {
+    const lineRecords = records.filter((record) => seriesName(record) === name).sort((a, b) => compareTime(a[xField], b[xField]));
+    const points = lineRecords.map((record) => `${x(dateIndex.get(String(record[xField])))},${y(numericValue(record, yField))}`).join(" ");
+    svg.append(element("polyline", { points, fill: "none", class: `${seriesClass(seriesIndex)} trend-line`, "aria-label": `${name} observed trend` }));
     lineRecords.forEach((record) => {
       const markId = id(record, dataset);
       svg.append(element("circle", {
-        cx: x(dates.indexOf(String(record[xField]))),
-        cy: y(value(record, yField)),
+        cx: x(dateIndex.get(String(record[xField]))),
+        cy: y(numericValue(record, yField)),
         r: 5,
         class: markClass(markId, selectedId, seriesClass(seriesIndex)),
         "data-mark-id": markId,
+        "aria-label": `${name}, ${String(record[xField])}: ${formatNumber(numericValue(record, yField))}`,
       }));
     });
     const last = lineRecords.at(-1);
-    appendText(svg, 901, y(value(last, yField)) + 4, seriesName, undefined);
+    appendText(svg, 901, y(numericValue(last, yField)) + 4, name, undefined);
   });
 }
 
@@ -352,7 +562,7 @@ function renderTimeline(root, dataset, selectedId) {
       rx: 4,
       class: markClass(markId, selectedId, seriesClass(index)),
       "data-mark-id": markId,
-      "aria-label": `${label(record, dataset)}, ${record[startField]} to ${record[endField]}`,
+      "aria-label": `${label(record, dataset)}, ${record[startField]} to ${record[endField] ?? record[startField]}`,
     }));
     appendText(svg, 915, y + 8, record[groupField], "axis-label");
   });
@@ -360,30 +570,37 @@ function renderTimeline(root, dataset, selectedId) {
 
 function renderSequence(root, dataset, selectedId) {
   const records = [...dataset.records].sort((a, b) => value(a, role(dataset, "order", "order")) - value(b, role(dataset, "order", "order")));
-  const svg = canvas(root, dataset.title, `A storyboard of ${records.length} changes, each retaining a source frame or page.`);
+  const rows = Math.ceil(records.length / 4);
+  const svg = canvas(
+    root,
+    dataset.title,
+    `${countLabel(records.length, "categorical step")} in supplied order. Equal spacing shows succession only; it does not imply duration or causality.`,
+    Math.max(HEIGHT, 42 + rows * 116),
+  );
+  svg.setAttribute("data-layout", "step-strip");
   const columns = 4;
   const tileWidth = 200;
-  const tileHeight = 160;
+  const tileHeight = 72;
   records.forEach((record, index) => {
     const column = index % columns;
     const row = Math.floor(index / columns);
     const x = 55 + column * 225;
-    const y = 32 + row * 205;
+    const y = 28 + row * 116;
     const markId = id(record, dataset);
-    const previewClass = record.mediaType === "video" ? "mark-quaternary" : seriesClass(index);
     svg.append(element("rect", {
       x,
       y,
       width: tileWidth,
-      height: 105,
+      height: tileHeight,
       rx: 3,
-      class: markClass(markId, selectedId, `${previewClass} sequence-frame`),
+      class: markClass(markId, selectedId, `${seriesClass(index)} sequence-step`),
       "data-mark-id": markId,
+      "aria-label": `Step ${index + 1}: ${label(record, dataset)}`,
     }));
-    appendText(svg, x, y + 126, `${index + 1}. ${label(record, dataset)}`);
-    appendText(svg, x, y + 145, record.date, "axis-label");
+    appendText(svg, x + 14, y + 28, `Step ${index + 1}`, "axis-label");
+    appendText(svg, x + 14, y + 52, label(record, dataset));
     if (column < columns - 1 && index < records.length - 1) {
-      svg.append(element("line", { x1: x + tileWidth + 7, x2: x + tileWidth + 18, y1: y + 52, y2: y + 52, class: "sequence-arrow" }));
+      svg.append(element("line", { x1: x + tileWidth + 7, x2: x + tileWidth + 18, y1: y + tileHeight / 2, y2: y + tileHeight / 2, class: "sequence-arrow" }));
     }
   });
 }
@@ -392,34 +609,45 @@ function renderRelationship(root, dataset, selectedId) {
   const records = dataset.records;
   const xField = role(dataset, "x", "x");
   const yField = role(dataset, "y", "y");
-  const xDomain = extent(records.map((record) => value(record, xField)));
-  const yDomain = extent(records.map((record) => value(record, yField)));
-  const x = linear([Math.min(0, xDomain[0]), xDomain[1]], [100, 890]);
-  const y = linear([Math.min(0, yDomain[0]), yDomain[1]], [370, 40]);
-  const svg = canvas(root, dataset.title, `${records.length} observations compare ${xField} with ${yField}.`);
+  const xDomain = observedDomain(records.map((record) => numericValue(record, xField)));
+  const yDomain = observedDomain(records.map((record) => numericValue(record, yField)));
+  const x = observedScale(xDomain, [100, 890]);
+  const y = observedScale(yDomain, [370, 40]);
+  const svg = canvas(
+    root,
+    dataset.title,
+    `${countLabel(records.length, "paired observation")} compare ${xField} from ${formatNumber(xDomain[0])} to ${formatNumber(xDomain[1])} with ${yField} from ${formatNumber(yDomain[0])} to ${formatNumber(yDomain[1])}.`,
+  );
+  svg.setAttribute("data-x-domain", `${xDomain[0]},${xDomain[1]}`);
+  svg.setAttribute("data-y-domain", `${yDomain[0]},${yDomain[1]}`);
 
-  for (let step = 0; step <= 4; step += 1) {
-    const px = 100 + step * (790 / 4);
-    const py = 370 - step * (330 / 4);
+  for (const tick of observedTicksWithZero(xDomain)) {
+    const px = x(tick);
     svg.append(element("line", { x1: px, x2: px, y1: 40, y2: 370, class: "grid-line" }));
+    appendText(svg, px, 400, formatNumber(tick), "axis-label", "middle");
+  }
+  for (const tick of observedTicksWithZero(yDomain)) {
+    const py = y(tick);
     svg.append(element("line", { x1: 100, x2: 890, y1: py, y2: py, class: "grid-line" }));
-    appendText(svg, px, 400, formatNumber((xDomain[1] * step) / 4), "axis-label", "middle");
-    appendText(svg, 84, py + 4, formatNumber((yDomain[1] * step) / 4), "axis-label", "end");
+    appendText(svg, 84, py + 4, formatNumber(tick), "axis-label", "end");
   }
   appendText(svg, 890, 430, xField, "axis-label", "end");
   appendText(svg, 100, 24, yField, "axis-label");
 
   records.forEach((record, index) => {
     const markId = id(record, dataset);
+    const xValue = numericValue(record, xField);
+    const yValue = numericValue(record, yField);
     svg.append(element("circle", {
-      cx: x(value(record, xField)),
-      cy: y(value(record, yField)),
+      cx: x(xValue),
+      cy: y(yValue),
       r: 9,
       class: markClass(markId, selectedId, seriesClass(index)),
       "data-mark-id": markId,
+      "aria-label": `${label(record, dataset)}: ${xField} ${formatNumber(xValue)}, ${yField} ${formatNumber(yValue)}`,
     }));
-    if (index === 0 || index === records.length - 1 || markId === selectedId) {
-      appendText(svg, x(value(record, xField)) + 12, y(value(record, yField)) - 10, label(record, dataset), undefined);
+    if (index === 0 || index === records.length - 1 || isSelected(markId, selectedId)) {
+      appendText(svg, x(xValue) + 12, y(yValue) - 10, label(record, dataset), undefined);
     }
   });
 }
@@ -462,9 +690,12 @@ function renderMatrix(root, dataset, selectedId) {
 
 function renderHierarchy(root, dataset, selectedId) {
   const d3 = globalThis.d3;
+  const nodeIdField = role(dataset, "nodeId", "id");
   const parentField = role(dataset, "parent", "parentId");
   const valueField = role(dataset, "value", "value");
-  const stratify = d3.stratify().id((record) => id(record, dataset)).parentId((record) => record[parentField]);
+  const stratify = d3.stratify()
+    .id((record) => String(record[nodeIdField] ?? record.id))
+    .parentId((record) => record[parentField]);
   const hierarchy = stratify(dataset.records);
   d3.tree().size([360, 690])(hierarchy);
   const svg = canvas(root, dataset.title, `A tree of ${dataset.records.length} nested collection sections.`);
@@ -535,7 +766,7 @@ function renderNetwork(root, dataset, selectedId) {
 
 function stagePositions(records, dataset) {
   const stageField = role(dataset, "stage", "stage");
-  const stages = [...new Set(records.map((record) => value(record, stageField)))].sort((a, b) => a - b);
+  const stages = [...new Set(records.map((record) => value(record, stageField, 0)))].sort((a, b) => a - b);
   const map = new Map();
   stages.forEach((stage, stageIndex) => {
     const nodes = records.filter((record) => value(record, stageField) === stage);
@@ -552,7 +783,19 @@ function stagePositions(records, dataset) {
 function renderFlow(root, dataset, selectedId) {
   const positions = stagePositions(dataset.records, dataset);
   const max = Math.max(...dataset.links.map((link) => value(link, "items", value(link, "value", 1))), 1);
-  const svg = canvas(root, dataset.title, `${dataset.links.length} proportional flows connect ${dataset.records.length} stages.`);
+  const stages = new Set(dataset.records.map((record) => value(record, role(dataset, "stage", "stage"), 0)));
+  const intermediateGaps = dataset.records.filter((record) => (
+    value(record, "inflow", 0) > 0
+    && value(record, "outflow", 0) > 0
+    && Math.abs(value(record, "balanceGap", 0)) > 1e-9
+  ));
+  const svg = canvas(
+    root,
+    dataset.title,
+    `${countLabel(dataset.links.length, "evidence-bearing directed flow")} cross ${countLabel(stages.size, "derived topological stage")}. Node labels report supplied inflow, outflow, and any intermediate conservation gap.`,
+  );
+  svg.setAttribute("data-stage-derivation", "topological-depth");
+  svg.setAttribute("data-conservation-gaps", String(intermediateGaps.length));
   dataset.links.forEach((link) => {
     const source = positions.get(String(link.source));
     const target = positions.get(String(link.target));
@@ -565,31 +808,39 @@ function renderFlow(root, dataset, selectedId) {
       class: markClass(markId, selectedId, "flow-link"),
       "stroke-width": 2 + (amount / max) * 16,
       "data-mark-id": markId,
-      "aria-label": `${linkedLabel(dataset, link.source)} to ${linkedLabel(dataset, link.target)}: ${formatNumber(amount)} items`,
+      "aria-label": `${linkedLabel(dataset, link.source)} to ${linkedLabel(dataset, link.target)}: value ${formatNumber(amount)}`,
     }));
   });
   dataset.records.forEach((record, index) => {
     const position = positions.get(id(record, dataset));
-    const markId = id(record, dataset);
+    const inflow = value(record, "inflow", 0);
+    const outflow = value(record, "outflow", 0);
+    const balanceGap = value(record, "balanceGap", 0);
+    const balanceLabel = inflow === 0
+      ? `source · out ${formatNumber(outflow)}`
+      : outflow === 0
+        ? `sink · in ${formatNumber(inflow)}`
+        : `in ${formatNumber(inflow)} · out ${formatNumber(outflow)}${Math.abs(balanceGap) > 1e-9 ? ` · gap ${balanceGap > 0 ? "+" : ""}${formatNumber(balanceGap)}` : ""}`;
     svg.append(element("rect", {
       x: position.x - 54,
       y: position.y,
       width: 108,
       height: 36,
       rx: 3,
-      class: markClass(markId, selectedId, seriesClass(index)),
-      "data-mark-id": markId,
+      class: seriesClass(index),
+      "data-balance-gap": balanceGap,
     }));
-    appendText(svg, position.x, position.y + 58, label(record, dataset), "axis-label", "middle");
+    appendText(svg, position.x, position.y + 55, label(record, dataset), undefined, "middle");
+    appendText(svg, position.x, position.y + 72, balanceLabel, "axis-label", "middle");
   });
 }
 
 function renderMechanism(root, dataset, selectedId) {
   const layerField = role(dataset, "group", "layer");
-  const layers = [...new Set(dataset.records.map((record) => String(record[layerField])))];
+  const layers = [...new Set(dataset.records.map((record) => String(record[layerField] ?? "Layer")))];
   const positions = new Map();
   layers.forEach((layer, layerIndex) => {
-    const records = dataset.records.filter((record) => record[layerField] === layer);
+    const records = dataset.records.filter((record) => String(record[layerField] ?? "Layer") === layer);
     records.forEach((record, recordIndex) => {
       positions.set(id(record, dataset), {
         x: 100 + layerIndex * (760 / Math.max(layers.length - 1, 1)),
@@ -597,7 +848,8 @@ function renderMechanism(root, dataset, selectedId) {
       });
     });
   });
-  const svg = canvas(root, dataset.title, `A typed mechanism diagram with ${dataset.records.length} components and ${dataset.links.length} evidential links.`);
+  const svg = canvas(root, dataset.title, `An evidence flowchart with ${dataset.records.length} named components and ${dataset.links.length} verb-labelled links. Layout shows topological reading order, not causal strength.`);
+  svg.setAttribute("data-layout", "evidence-flowchart");
   const marker = element("marker", { id: `arrow-${chartCounter}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" });
   marker.append(element("path", { d: "M 0 0 L 10 5 L 0 10 z", class: "arrow-head" }));
   const defs = element("defs");
@@ -616,24 +868,31 @@ function renderMechanism(root, dataset, selectedId) {
       "data-mark-id": markId,
       "aria-label": `${linkedLabel(dataset, link.source)} ${String(link.type ?? "connects")} ${linkedLabel(dataset, link.target)}`,
     }));
+    appendText(
+      svg,
+      (source.x + target.x) / 2,
+      (source.y + target.y) / 2 + 12,
+      String(link.type ?? "connects"),
+      "axis-label",
+      "middle",
+    );
   });
   dataset.records.forEach((record, index) => {
     const position = positions.get(id(record, dataset));
-    const markId = id(record, dataset);
     svg.append(element("rect", {
       x: position.x - 58,
       y: position.y,
       width: 116,
       height: 50,
       rx: 3,
-      class: markClass(markId, selectedId, seriesClass(index)),
-      "data-mark-id": markId,
+      class: seriesClass(index),
     }));
     appendText(svg, position.x, position.y + 72, label(record, dataset), undefined, "middle");
   });
 }
 
 let usGeographyPromise;
+let worldGeographyPromise;
 
 async function loadUsGeography() {
   usGeographyPromise ??= Promise.all([
@@ -652,10 +911,19 @@ async function loadUsGeography() {
   return usGeographyPromise;
 }
 
+async function loadWorldGeography() {
+  worldGeographyPromise ??= fetch("./vendor/world-countries.json").then(async (response) => {
+    if (!response.ok) throw new Error("World geography failed to load");
+    const topology = await response.json();
+    return globalThis.topojson.feature(topology, topology.objects.land);
+  });
+  return worldGeographyPromise;
+}
+
 function geographyFailure(root, message) {
   root.replaceChildren();
   const notice = htmlElement("div", "aggregate-message");
-  notice.append(htmlElement("strong", undefined, "Published geometry unavailable"), htmlElement("p", undefined, message));
+  notice.append(htmlElement("strong", undefined, "Geography view abstained"), htmlElement("p", undefined, message));
   root.append(notice);
 }
 
@@ -664,29 +932,59 @@ async function renderRegionMap(root, dataset, selectedId) {
     const d3 = globalThis.d3;
     const { states } = await loadUsGeography();
     const featureCollection = { type: "FeatureCollection", features: states };
-    const projection = d3.geoAlbersUsa().fitExtent([[45, 30], [910, 415]], featureCollection);
+    const projection = d3.geoAlbersUsa().fitExtent([[45, 30], [910, 360]], featureCollection);
     const path = d3.geoPath(projection);
     const regionField = role(dataset, "region", "geoId");
     const regionLabelField = role(dataset, "regionLabel", "stateId");
+    const stateFeatureIds = new Set(states.map((feature) => String(feature.id).padStart(2, "0")));
+    const unsupported = dataset.records
+      .map((record) => String(record[regionField]).padStart(2, "0"))
+      .filter((featureId) => !stateFeatureIds.has(featureId));
+    if (unsupported.length) {
+      throw new Error(`Only bundled US state feature IDs are supported in this release; unsupported IDs: ${[...new Set(unsupported)].join(", ")}.`);
+    }
     const recordById = new Map(dataset.records.map((record) => [String(record[regionField]).padStart(2, "0"), record]));
     const valueField = role(dataset, "value", "value");
-    const max = Math.max(...dataset.records.map((record) => value(record, valueField)), 1);
-    const svg = canvas(root, dataset.title, `A projected United States region map. ${dataset.records.length} states carry values.`);
+    const baselineField = role(dataset, "baseline", "baseline");
+    const observed = observedDomain(dataset.records.map((record) => numericValue(record, valueField)));
+    const svg = canvas(
+      root,
+      dataset.title,
+      `A United States choropleth with ${dataset.records.length} observed regions. Normalized values span ${formatNumber(observed[0] * 100)}% to ${formatNumber(observed[1] * 100)}% and use five fixed equal intervals from 0% to 100%. Unobserved regions retain the no-data fill. Boundaries: us-atlas 3.0.1 states-10m.`,
+    );
+    svg.setAttribute("data-classification", "five-equal-intervals-0-1");
+    svg.setAttribute("data-boundary-version", "us-atlas-3.0.1-states-10m");
+    svg.setAttribute("data-observed-range", `${observed[0]},${observed[1]}`);
     states.forEach((feature) => {
       const featureId = String(feature.id).padStart(2, "0");
       const record = recordById.get(featureId);
-      const level = record ? Math.max(1, Math.ceil((value(record, valueField) / max) * 5)) : 0;
+      const measured = record ? value(record, valueField) : null;
+      const level = record ? Math.min(5, Math.floor(measured * 5) + 1) : 0;
       const markId = record ? id(record, dataset) : null;
       svg.append(element("path", {
         d: path(feature),
         class: record ? markClass(markId, selectedId, `map-region level-${level}`) : "map-land",
-        ...(markId ? { "data-mark-id": markId, "aria-label": `${label(record, dataset)}: ${value(record, valueField)}` } : {}),
+        ...(markId ? {
+          "data-mark-id": markId,
+          "aria-label": `${label(record, dataset)}: ${formatNumber(measured * 100)}%; denominator ${formatNumber(value(record, baselineField))}`,
+        } : {}),
       }));
       if (record) {
         const centroid = path.centroid(feature);
         appendText(svg, centroid[0], centroid[1] + 4, record[regionLabelField] ?? label(record, dataset), "map-label", "middle");
       }
     });
+    const legendX = 420;
+    const legendY = 390;
+    appendText(svg, 45, legendY + 12, `Observed ${formatNumber(observed[0] * 100)}%–${formatNumber(observed[1] * 100)}%`, "axis-label");
+    for (let index = 0; index < 5; index += 1) {
+      const x = legendX + index * 78;
+      svg.append(element("rect", { x, y: legendY, width: 18, height: 14, class: `map-region level-${index + 1}` }));
+      appendText(svg, x + 23, legendY + 12, `${index * 20}–${(index + 1) * 20}%`, "axis-label");
+    }
+    svg.append(element("rect", { x: 810, y: 420, width: 18, height: 14, class: "map-land" }));
+    appendText(svg, 833, 432, "No data", "axis-label");
+    appendText(svg, 45, 432, "US state boundaries · us-atlas 3.0.1", "axis-label");
   } catch (error) {
     geographyFailure(root, error.message);
   }
@@ -695,31 +993,54 @@ async function renderRegionMap(root, dataset, selectedId) {
 async function renderPointMap(root, dataset, selectedId) {
   try {
     const d3 = globalThis.d3;
-    const { counties } = await loadUsGeography();
-    const bayCountyIds = new Set(["06001", "06013", "06041", "06055", "06075", "06081", "06085", "06095", "06097"]);
-    const features = counties.filter((feature) => bayCountyIds.has(String(feature.id).padStart(5, "0")));
-    const featureCollection = { type: "FeatureCollection", features };
-    const projection = d3.geoMercator().fitExtent([[55, 28], [905, 420]], featureCollection);
+    const worldLand = await loadWorldGeography();
+    const latitudeField = role(dataset, "latitude", "latitude");
+    const longitudeField = role(dataset, "longitude", "longitude");
+    const points = dataset.records.map((record) => {
+      const latitude = Number(record[latitudeField]);
+      const longitude = Number(record[longitudeField]);
+      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+        throw new Error("Point map abstained: every point needs a finite latitude between -90 and 90 and longitude between -180 and 180.");
+      }
+      return { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [longitude, latitude] } };
+    });
+    if (!points.length) throw new Error("Point map abstained: no bounded latitude/longitude records were supplied.");
+    const projection = d3.geoNaturalEarth1().fitExtent([[35, 24], [925, 410]], { type: "Sphere" });
     const path = d3.geoPath(projection);
     const valueField = role(dataset, "value", "value");
-    const radius = linear([0, Math.max(...dataset.records.map((record) => Math.sqrt(value(record, valueField))), 1)], [3, 19]);
-    const svg = canvas(root, dataset.title, `A published Bay Area county basemap with ${dataset.records.length} exact point records.`);
-    features.forEach((feature) => svg.append(element("path", { d: path(feature), class: "map-land map-county" })));
-    dataset.records.forEach((record) => {
-      const point = projection([value(record, role(dataset, "longitude", "longitude")), value(record, role(dataset, "latitude", "latitude"))]);
-      if (!point) return;
+    const magnitudes = dataset.records.map((record) => numericValue(record, valueField));
+    const svg = canvas(
+      root,
+      dataset.title,
+      `${countLabel(dataset.records.length, "exact point record")} on one fixed Natural Earth world projection. Every observation uses the same visible mark size; optional values remain available in evidence but do not change this exact-point design.`,
+    );
+    svg.setAttribute("data-projection", "natural-earth-1-world");
+    svg.setAttribute("data-size-encoding", "constant");
+    svg.append(element("path", { d: path(worldLand), class: "map-land" }));
+    dataset.records.forEach((record, index) => {
+      const point = projection([
+        Number(record[longitudeField]),
+        Number(record[latitudeField]),
+      ]);
+      if (!point?.every(Number.isFinite)) return;
       const markId = id(record, dataset);
+      const magnitude = magnitudes[index];
+      const pointLabel = Number.isFinite(magnitude)
+        ? `${label(record, dataset)}: ${formatNumber(Number(record[latitudeField]))}, ${formatNumber(Number(record[longitudeField]))}; supplied value ${formatNumber(magnitude)} is not size-encoded`
+        : `${label(record, dataset)}: ${formatNumber(Number(record[latitudeField]))}, ${formatNumber(Number(record[longitudeField]))}`;
       svg.append(element("circle", {
         cx: point[0],
         cy: point[1],
-        r: radius(Math.sqrt(value(record, valueField))),
+        r: 7,
         class: markClass(markId, selectedId, "map-point"),
         "data-mark-id": markId,
-        "aria-label": `${label(record, dataset)}: ${value(record, valueField)} sessions`,
+        "aria-label": pointLabel,
       }));
-      if (value(record, valueField) >= 9 || markId === selectedId) appendText(svg, point[0] + 12, point[1] - 9, label(record, dataset), "map-label");
+      if (dataset.records.length <= 12 || isSelected(markId, selectedId)) {
+        appendText(svg, point[0] + 12, point[1] - 9, label(record, dataset), "map-label");
+      }
     });
-    appendText(svg, 55, 438, "Published county boundaries · points retain source coordinates", "axis-label");
+    appendText(svg, 45, 438, "Natural Earth projection · world-atlas 2.0.2 · equal-size exact points", "axis-label");
   } catch (error) {
     geographyFailure(root, error.message);
   }
@@ -730,19 +1051,30 @@ function renderField(root, dataset, selectedId) {
   const xField = role(dataset, "x", "x");
   const yField = role(dataset, "y", "y");
   const valueField = role(dataset, "value", "value");
-  const xs = [...new Set(records.map((record) => value(record, xField)))].sort((a, b) => a - b);
-  const ys = [...new Set(records.map((record) => value(record, yField)))].sort((a, b) => a - b);
-  const max = Math.max(...records.map((record) => value(record, valueField)), 1);
+  const xs = [...new Set(records.map((record) => numericValue(record, xField)))].sort((a, b) => a - b);
+  const ys = [...new Set(records.map((record) => numericValue(record, yField)))].sort((a, b) => a - b);
+  const values = records.map((record) => numericValue(record, valueField));
+  const valueDomain = observedDomain(values);
   const left = 155;
   const top = 38;
   const cellWidth = 720 / xs.length;
   const cellHeight = 330 / ys.length;
-  const svg = canvas(root, dataset.title, `A ${ys.length} by ${xs.length} measured field. Color shows attention value.`);
+  const svg = canvas(
+    root,
+    dataset.title,
+    `A ${ys.length} by ${xs.length} raster of supplied samples. The observed value range is ${formatNumber(valueDomain[0])} to ${formatNumber(valueDomain[1])}; unsupplied cells remain blank.`,
+  );
   records.forEach((record) => {
     const markId = id(record, dataset);
-    const column = xs.indexOf(value(record, xField));
-    const row = ys.indexOf(value(record, yField));
-    const level = Math.max(1, Math.ceil((value(record, valueField) / max) * 5));
+    const xValue = numericValue(record, xField);
+    const yValue = numericValue(record, yField);
+    const measuredValue = numericValue(record, valueField);
+    const column = xs.indexOf(xValue);
+    const row = ys.indexOf(yValue);
+    const normalized = valueDomain[0] === valueDomain[1]
+      ? 0.5
+      : (measuredValue - valueDomain[0]) / (valueDomain[1] - valueDomain[0]);
+    const level = Math.max(1, Math.min(5, Math.floor(normalized * 5) + 1));
     svg.append(element("rect", {
       x: left + column * cellWidth + 1,
       y: top + row * cellHeight + 1,
@@ -750,13 +1082,24 @@ function renderField(root, dataset, selectedId) {
       height: cellHeight - 2,
       class: markClass(markId, selectedId, `field-cell level-${level}`),
       "data-mark-id": markId,
+      "aria-label": `${label(record, dataset)}: x ${formatNumber(xValue)}, y ${formatNumber(yValue)}, value ${formatNumber(measuredValue)}`,
     }));
   });
-  xs.forEach((hour, index) => appendText(svg, left + index * cellWidth + cellWidth / 2, 395, `${hour}:00`, "axis-label", "middle"));
-  ys.forEach((weekday, index) => {
-    const record = records.find((candidate) => value(candidate, yField) === weekday);
-    appendText(svg, left - 14, top + index * cellHeight + cellHeight / 2 + 4, record?.weekday ?? weekday, undefined, "end");
-  });
+  xs.forEach((coordinate, index) => appendText(svg, left + index * cellWidth + cellWidth / 2, 395, formatNumber(coordinate), "axis-label", "middle"));
+  ys.forEach((coordinate, index) => appendText(svg, left - 14, top + index * cellHeight + cellHeight / 2 + 4, formatNumber(coordinate), undefined, "end"));
+  appendText(svg, 875, 424, xField, "axis-label", "end");
+  appendText(svg, 104, 25, yField, "axis-label", "middle");
+  appendText(svg, 155, 424, `Value ${formatNumber(valueDomain[0])} to ${formatNumber(valueDomain[1])}`, "axis-label");
+}
+
+function safePreviewUrl(preview) {
+  const source = preview?.poster ?? preview?.src;
+  if (typeof source !== "string" || source.length === 0 || /[\u0000-\u001f\u007f]/u.test(source)) return null;
+  if (/^data:image\/(?:avif|gif|jpeg|png|webp);base64,[a-z0-9+/=]+$/iu.test(source)) return source;
+  if (source.includes("\\") || source.startsWith("//") || source.startsWith("#") || /^[a-z][a-z0-9+.-]*:/iu.test(source)) return null;
+  const path = source.split(/[?#]/u, 1)[0].replaceAll("\\", "/");
+  if (!path || path.split("/").includes("..")) return null;
+  return source;
 }
 
 function renderAnnotatedSpecimen(root, dataset, selectedId) {
@@ -768,74 +1111,119 @@ function renderAnnotatedSpecimen(root, dataset, selectedId) {
   const imageHeight = imageWidth / aspectRatio;
   const imageX = (WIDTH - imageWidth) / 2;
   const imageY = 30;
-  const svg = canvas(root, dataset.title, `${dataset.specimen?.preview?.alt ?? "A source image"} with ${dataset.records.length} evidence-bearing normalized regions.`);
+  const preview = dataset.specimen?.preview;
+  const previewUrl = safePreviewUrl(preview);
+  const description = previewUrl
+    ? `${preview?.alt ?? "The supplied specimen preview"} with ${countLabel(dataset.records.length, "evidence-bearing normalized annotation")}.`
+    : `No renderable specimen preview was supplied. ${countLabel(dataset.records.length, "evidence-bearing normalized annotation")} remain positioned on a neutral coordinate frame; no specimen features are fabricated.`;
+  const svg = canvas(root, dataset.title, description);
+  svg.setAttribute("data-preview-state", previewUrl ? "supplied" : "unavailable");
   svg.append(element("rect", { x: imageX, y: imageY, width: imageWidth, height: imageHeight, class: "specimen-ground" }));
-  const horizontalStep = (imageWidth - 48) / 8;
-  const verticalStep = (imageHeight - 54) / 4;
-  for (let column = 0; column < 8; column += 1) {
-    for (let row = 0; row < 4; row += 1) {
-      const width = horizontalStep * (0.58 + ((column + row) % 3) * 0.12);
-      svg.append(element("rect", {
-        x: imageX + 24 + column * horizontalStep,
-        y: imageY + 27 + row * verticalStep,
-        width,
-        height: Math.max(18, verticalStep * 0.62),
-        rx: 1,
-        class: `specimen-note ${seriesClass(column + row)}`,
-      }));
-    }
+  if (previewUrl) {
+    svg.append(element("image", {
+      x: imageX,
+      y: imageY,
+      width: imageWidth,
+      height: imageHeight,
+      href: previewUrl,
+      preserveAspectRatio: "xMidYMid meet",
+      "aria-label": preview?.alt ?? "Supplied specimen preview",
+    }));
+  } else {
+    appendText(svg, WIDTH / 2, imageY + imageHeight / 2 - 8, "Specimen preview unavailable", "axis-label", "middle");
+    appendText(svg, WIDTH / 2, imageY + imageHeight / 2 + 16, "Annotations use supplied normalized coordinates on a neutral frame.", "axis-label", "middle");
   }
   [...dataset.records]
     .sort((left, right) => value(right, role(dataset, "width", "width")) * value(right, role(dataset, "height", "height")) - value(left, role(dataset, "width", "width")) * value(left, role(dataset, "height", "height")))
     .forEach((record) => {
     const markId = id(record, dataset);
-    svg.append(element("rect", {
-      x: imageX + value(record, role(dataset, "x", "x")) * imageWidth,
-      y: imageY + value(record, role(dataset, "y", "y")) * imageHeight,
-      width: value(record, role(dataset, "width", "width")) * imageWidth,
-      height: value(record, role(dataset, "height", "height")) * imageHeight,
+    const x = imageX + value(record, role(dataset, "x", "x")) * imageWidth;
+    const y = imageY + value(record, role(dataset, "y", "y")) * imageHeight;
+    const width = Number(record[role(dataset, "width", "width")]);
+    const height = Number(record[role(dataset, "height", "height")]);
+    const attributes = {
       class: markClass(markId, selectedId, "annotation-region"),
       "data-mark-id": markId,
       "aria-label": label(record, dataset),
-    }));
+    };
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+      svg.append(element("rect", {
+        ...attributes,
+        x,
+        y,
+        width: width * imageWidth,
+        height: height * imageHeight,
+      }));
+    } else {
+      // Width/height are optional in the catalog schema. A required-only
+      // annotation still needs a visible, selectable evidence anchor.
+      svg.append(element("circle", {
+        ...attributes,
+        cx: x,
+        cy: y,
+        r: 8,
+        class: markClass(markId, selectedId, "annotation-anchor"),
+      }));
+    }
     });
 }
 
 function renderCollectionAtlas(root, dataset, selectedId) {
-  const xField = role(dataset, "x", "x");
-  const yField = role(dataset, "y", "y");
-  const sizeField = role(dataset, "value", "size");
-  const x = linear([0, 100], [45, 915]);
-  const y = linear([0, 100], [25, 420]);
-  const size = linear(extent(dataset.records.map((record) => value(record, sizeField))), [6, 17]);
-  const categories = [...new Set(dataset.records.map((record) => record.category))];
-  const svg = canvas(root, dataset.title, `A mixed-media atlas of ${dataset.records.length} items arranged by similarity.`);
-  categories.forEach((category, index) => {
-    const group = dataset.records.filter((record) => record.category === category);
-    const cx = group.reduce((sum, record) => sum + x(value(record, xField)), 0) / group.length;
-    const cy = group.reduce((sum, record) => sum + y(value(record, yField)), 0) / group.length;
-    appendText(svg, cx, cy - 38, category, "atlas-cluster-label", "middle");
+  const categoryField = role(dataset, "category", "category");
+  const mediaTypeField = role(dataset, "mediaType", "mediaType");
+  const categories = [...new Set(dataset.records.map((record) => String(record[categoryField] ?? "Uncategorized")))];
+  const tileWidth = 104;
+  const tileHeight = 42;
+  const columnGap = 10;
+  const rowGap = 22;
+  const columns = Math.max(1, Math.floor((WIDTH - 90 + columnGap) / (tileWidth + columnGap)));
+  const facets = categories.map((category) => {
+    const group = dataset.records
+      .filter((record) => String(record[categoryField] ?? "Uncategorized") === category)
+      .map((record, index) => ({ record, index }))
+      .sort((left, right) => {
+        const leftOrder = numericValue(left.record, "order");
+        const rightOrder = numericValue(right.record, "order");
+        if (Number.isFinite(leftOrder) && Number.isFinite(rightOrder) && leftOrder !== rightOrder) return leftOrder - rightOrder;
+        return left.index - right.index;
+      })
+      .map(({ record }) => record);
+    return { category, records: group, rows: Math.ceil(group.length / columns) };
   });
-  dataset.records.forEach((record, index) => {
-    const markId = id(record, dataset);
-    const radius = size(value(record, sizeField));
-    const className = record.mediaType === "video" ? "mark-quaternary" : record.mediaType === "audio" ? "mark-secondary" : seriesClass(categories.indexOf(record.category));
-    svg.append(element(record.mediaType === "image" ? "rect" : "circle", record.mediaType === "image" ? {
-      x: x(value(record, xField)) - radius,
-      y: y(value(record, yField)) - radius,
-      width: radius * 2,
-      height: radius * 2,
-      rx: 2,
-      class: markClass(markId, selectedId, className),
-      "data-mark-id": markId,
-    } : {
-      cx: x(value(record, xField)),
-      cy: y(value(record, yField)),
-      r: radius,
-      class: markClass(markId, selectedId, record.mediaType === "text" ? `${className} atlas-text-mark` : className),
-      "data-mark-id": markId,
-    }));
-    if (radius >= 15 || markId === selectedId) appendText(svg, x(value(record, xField)), y(value(record, yField)) + radius + 14, label(record, dataset), "atlas-item-label", "middle");
+  const chartHeight = Math.max(HEIGHT, 28 + facets.reduce((height, facet) => height + 34 + facet.rows * (tileHeight + rowGap), 0));
+  const svg = canvas(
+    root,
+    dataset.title,
+    `A faceted atlas of ${countLabel(dataset.records.length, "item")} in ${countLabel(facets.length, "observed category")}. Every item uses the same tile size; facet names and counts precede their items.`,
+    chartHeight,
+  );
+  svg.setAttribute("data-layout", "faceted-strips");
+  let facetTop = 26;
+  facets.forEach((facet, facetIndex) => {
+    appendText(svg, 45, facetTop, facet.category, "atlas-cluster-label");
+    appendText(svg, 915, facetTop, countLabel(facet.records.length, "item"), "axis-label", "end");
+    facet.records.forEach((record, recordIndex) => {
+      const column = recordIndex % columns;
+      const row = Math.floor(recordIndex / columns);
+      const x = 45 + column * (tileWidth + columnGap);
+      const y = facetTop + 16 + row * (tileHeight + rowGap);
+      const markId = id(record, dataset);
+      const mediaType = String(record[mediaTypeField] ?? "text");
+      const className = markClass(markId, selectedId, seriesClass(facetIndex));
+      svg.append(element("rect", {
+        x,
+        y,
+        width: tileWidth,
+        height: tileHeight,
+        rx: 2,
+        class: className,
+        "data-mark-id": markId,
+        "aria-label": `${label(record, dataset)}; ${facet.category}; ${mediaType}`,
+      }));
+      const itemLabel = label(record, dataset);
+      appendText(svg, x + tileWidth / 2, y + tileHeight + 14, itemLabel.length > 18 ? `${itemLabel.slice(0, 17)}…` : itemLabel, "atlas-item-label", "middle");
+    });
+    facetTop += 34 + facet.rows * (tileHeight + rowGap);
   });
 }
 
@@ -863,14 +1251,51 @@ const RENDERERS = Object.freeze({
 
 export const RENDERER_IDS = Object.freeze(Object.keys(RENDERERS));
 
-export async function renderFamily({ root, dataset, selectedId = null }) {
+function decorateSelectableMarks(root, { selectedIds = [], selectableMarkIds, onSelect } = {}) {
+  const allowed = Array.isArray(selectableMarkIds) ? new Set(selectableMarkIds.map(String)) : null;
+  const selected = new Set(Array.isArray(selectedIds) ? selectedIds.map(String) : []);
+  for (const mark of root.querySelectorAll("[data-mark-id]")) {
+    const markId = String(mark.getAttribute("data-mark-id") ?? "");
+    if (!markId || (allowed && !allowed.has(markId))) {
+      mark.removeAttribute("data-mark-id");
+      mark.removeAttribute("tabindex");
+      mark.removeAttribute("role");
+      mark.removeAttribute("aria-pressed");
+      continue;
+    }
+    mark.setAttribute("tabindex", "0");
+    mark.setAttribute("role", "button");
+    mark.setAttribute("aria-pressed", String(selected.has(markId)));
+    if (!mark.getAttribute("aria-label")) mark.setAttribute("aria-label", markId);
+    mark.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      if (typeof onSelect === "function") onSelect(markId, event);
+      else mark.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: globalThis.window }));
+    });
+    if (typeof onSelect === "function") mark.addEventListener("click", () => onSelect(markId));
+  }
+}
+
+export async function renderFamily({
+  root,
+  dataset,
+  selectedId = null,
+  selectedIds = selectedId === null ? [] : [selectedId],
+  selectableMarkIds,
+  onSelect,
+}) {
   if (!(root instanceof HTMLElement)) throw new TypeError("renderer root must be an HTMLElement");
   const renderer = RENDERERS[dataset?.familyId];
   if (!renderer) throw new Error(`No renderer registered for ${String(dataset?.familyId)}`);
-  await renderer(root, dataset, selectedId);
+  const activeSelectedIds = Array.isArray(selectedIds) ? selectedIds : [selectedIds];
+  const rendererSelection = activeSelectedIds.length > 0 ? activeSelectedIds : selectedId;
+  await renderer(root, dataset, rendererSelection);
+  decorateSelectableMarks(root, { selectedIds: activeSelectedIds, selectableMarkIds, onSelect });
   return {
     familyId: dataset.familyId,
     markCount: dataset.records.length,
     evidenceCount: evidenceCount(dataset),
+    selectableMarkIds: [...root.querySelectorAll("[data-mark-id]")].map((mark) => mark.getAttribute("data-mark-id")),
   };
 }

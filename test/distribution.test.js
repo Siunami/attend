@@ -1,0 +1,405 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import test from "node:test";
+import { pathToFileURL } from "node:url";
+
+const PACKAGE_ROOT = new URL("..", import.meta.url);
+const STAGE_SCRIPT = new URL("../distribution/stage-release.mjs", import.meta.url);
+
+function stageProcess(output, { retainFrom } = {}) {
+  const args = [STAGE_SCRIPT.pathname, "--output", output];
+  if (retainFrom) args.push("--retain-from", retainFrom);
+  return spawnSync(
+    process.execPath,
+    args,
+    {
+      cwd: PACKAGE_ROOT,
+      encoding: "utf8",
+      env: process.env,
+    },
+  );
+}
+
+function stage(output, options = {}) {
+  const result = stageProcess(output, options);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return JSON.parse(result.stdout);
+}
+
+async function digest(path) {
+  return createHash("sha256").update(await readFile(path)).digest("hex");
+}
+
+async function seedRetainedRelease(root, version = "0.1.0") {
+  const directory = join(root, "releases", version);
+  const filename = `attend-local-${version}.tgz`;
+  const archive = Buffer.from("previous immutable Attend release\n", "utf8");
+  const archiveDigest = createHash("sha256").update(archive).digest("hex");
+  const baseUrl = "https://attend-cli.matthewwilsonsiu.workers.dev";
+  const prompt = `Install Attend Local ${version} from its immutable release.\n`;
+  const manifest = {
+    schemaVersion: 1,
+    kind: "attend-cli-release",
+    package: "attend-local",
+    version,
+    engines: { node: ">=22.0.0" },
+    tarball: {
+      filename,
+      url: `${baseUrl}/releases/${version}/${filename}`,
+      sha256: archiveDigest,
+      bytes: archive.length,
+      integrity: "sha512-retained-test-fixture",
+    },
+    installPromptUrl: `${baseUrl}/releases/${version}/install-prompt.txt`,
+    installScriptUrl: `${baseUrl}/releases/${version}/install.sh`,
+  };
+  const installer = "#!/bin/sh\nprintf '%s\\n' 'retained installer'\n";
+  await mkdir(directory, { recursive: true });
+  await Promise.all([
+    writeFile(join(directory, filename), archive),
+    writeFile(join(directory, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n"),
+    writeFile(join(directory, "SHA256SUMS"), `${archiveDigest}  ${filename}\n`),
+    writeFile(join(directory, "install-prompt.txt"), prompt),
+    writeFile(join(directory, "install.sh"), installer),
+  ]);
+  return { version, filename, archiveDigest, prompt, installer };
+}
+
+async function writeExecutable(path, contents) {
+  await writeFile(path, contents);
+  await chmod(path, 0o755);
+}
+
+test("vendored browser assets match their pinned upstream files", async () => {
+  const expected = {
+    "d3.min.js": "f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539",
+    "topojson-client.min.js": "25cd02ae486cc5063e0215a4e4cfb15de83700c87ac48bac4d57dc6aaf3ebb89",
+    "us-states.json": "d76b391ccfa8bff601d51e3e3da5d43a89fa46cd5caca72ce731b383be5596d0",
+    "us-counties.json": "145aaf5d1433352a6a1d8e86b5f149c7c653f9171baf14aaf75ee66575def1b0",
+    "world-countries.json": "2516c915867c7baf18ddec727aec46c315541a07cfb3d79a6559b05d5e94eee8",
+  };
+  for (const [filename, expectedDigest] of Object.entries(expected)) {
+    assert.equal(await digest(new URL(`viewer/vendor/${filename}`, PACKAGE_ROOT)), expectedDigest);
+  }
+  const notice = await readFile(new URL("viewer/vendor/THIRD_PARTY_NOTICES.md", PACKAGE_ROOT), "utf8");
+  for (const expectedDigest of Object.values(expected)) assert.match(notice, new RegExp(expectedDigest, "u"));
+});
+
+test("release staging produces a reproducible, private-data-free package and pinned prompt", async (t) => {
+  const temporary = await mkdtemp(join(tmpdir(), "attend-distribution-test-"));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+
+  const first = stage(join(temporary, "first"));
+  const second = stage(join(temporary, "second"));
+  const version = first.manifest.version;
+  const filename = first.manifest.tarball.filename;
+  const firstArchive = join(temporary, "first", "releases", version, filename);
+  const secondArchive = join(temporary, "second", "releases", version, filename);
+
+  assert.equal(await digest(firstArchive), first.manifest.tarball.sha256);
+  assert.equal(await digest(secondArchive), first.manifest.tarball.sha256);
+  assert.deepEqual(second.manifest, first.manifest);
+  assert.deepEqual(first.retainedVersions, []);
+  assert.equal(
+    first.manifest.installPromptUrl,
+    `https://attend-cli.matthewwilsonsiu.workers.dev/releases/${version}/install-prompt.txt`,
+  );
+  assert.equal(
+    first.manifest.installScriptUrl,
+    `https://attend-cli.matthewwilsonsiu.workers.dev/releases/${version}/install.sh`,
+  );
+  assert.deepEqual(first.manifest.catalog.counts, {
+    families: 19,
+    approved: 106,
+    documented: 87,
+    executable: 18,
+    unavailable: 1,
+    rejected: 38,
+  });
+
+  const prompt = await readFile(join(temporary, "first", "install-prompt.txt"), "utf8");
+  assert.equal(
+    await readFile(join(temporary, "first", "releases", version, "install-prompt.txt"), "utf8"),
+    prompt,
+  );
+  assert.match(prompt, new RegExp(first.manifest.tarball.sha256, "u"));
+  assert.match(prompt, /npm install --global/u);
+  assert.match(prompt, /attend setup --json/u);
+  assert.match(prompt, /attend doctor --json/u);
+  assert.match(prompt, /attend families --json/u);
+  assert.match(prompt, /19 families, 18 executable, 1 unavailable/u);
+  assert.match(prompt, /\.agents\/skills\/ and \.claude\/skills\//u);
+  assert.match(prompt, /codex login status/u);
+  assert.match(prompt, /codex-chat check passes/u);
+  assert.match(prompt, /Never generate custom chart code/u);
+
+  const installer = await readFile(join(temporary, "first", "install.sh"), "utf8");
+  assert.equal(
+    await readFile(join(temporary, "first", "releases", version, "install.sh"), "utf8"),
+    installer,
+  );
+  assert.match(installer, /^#!\/bin\/sh\nset -eu\n/u);
+  assert.doesNotMatch(installer, /\{\{[A-Z0-9_]+\}\}/u);
+  assert.match(installer, new RegExp(first.manifest.tarball.sha256, "u"));
+  assert.match(installer, /mktemp -d/u);
+  assert.match(installer, /trap cleanup 0/u);
+  assert.match(installer, /shasum -a 256/u);
+  assert.match(installer, /sha256sum/u);
+  assert.match(installer, /npm install --global/u);
+  assert.match(installer, /attend setup --json/u);
+  assert.match(installer, /attend doctor --json/u);
+  assert.match(installer, /attend families --json/u);
+  assert.doesNotMatch(installer, /\bjq\b/u);
+  const shellCheck = spawnSync("sh", ["-n", join(temporary, "first", "install.sh")], {
+    encoding: "utf8",
+  });
+  assert.equal(shellCheck.status, 0, shellCheck.stderr || shellCheck.stdout);
+
+  const index = await readFile(join(temporary, "first", "index.html"), "utf8");
+  assert.doesNotMatch(index, /\{\{[A-Z0-9_]+\}\}/u);
+  assert.match(index, /Designed visualizations for a compatible coding agent/u);
+  assert.match(index, /Private preview/u);
+  assert.match(index, /invited collaborators/u);
+  assert.match(index, /eighteen designs executable/u);
+  assert.match(index, /one explicit capability abstention/u);
+  assert.match(index, /data-copy-prompt/u);
+  assert.match(index, /Evidence selected for a sidebar answer is sent through the user's signed-in Codex provider/u);
+  assert.match(await readFile(join(temporary, "first", "copy.js"), "utf8"), /navigator\.clipboard\.writeText/u);
+  const headers = await readFile(join(temporary, "first", "_headers"), "utf8");
+  assert.match(headers, /\/releases\/:version\/install\.sh\n  Content-Type: text\/x-shellscript; charset=utf-8/u);
+  assert.match(headers, /\/install\.sh\n  Cache-Control: no-store/u);
+
+  const archive = spawnSync("tar", ["-tzf", firstArchive], { encoding: "utf8" });
+  assert.equal(archive.status, 0, archive.stderr);
+  assert.doesNotMatch(
+    archive.stdout,
+    /(^|\/)(?:\.attend|\.context|\.git|distribution|test|node_modules)(?:\/|$)/mu,
+  );
+  for (const required of [
+    "package/bin/attend.js",
+    "package/agent-skill/attend-visualize/SKILL.md",
+    "package/viewer/index.html",
+    "package/viewer/vendor/d3.min.js",
+    "package/viewer/vendor/topojson-client.min.js",
+    "package/viewer/vendor/us-states.json",
+    "package/viewer/vendor/us-counties.json",
+    "package/viewer/vendor/world-countries.json",
+    "package/viewer/vendor/THIRD_PARTY_NOTICES.md",
+    "package/viewer/vendor/licenses/d3-7.9.0.txt",
+    "package/viewer/vendor/licenses/topojson-client-3.1.0.txt",
+    "package/viewer/vendor/licenses/us-atlas-3.0.1.txt",
+    "package/viewer/vendor/licenses/world-atlas-2.0.2.txt",
+  ]) {
+    assert.match(archive.stdout, new RegExp("^" + required.replaceAll(".", "\\.") + "$", "mu"));
+  }
+
+  const extracted = join(temporary, "extracted");
+  await mkdir(extracted);
+  const unpack = spawnSync("tar", ["-xzf", firstArchive, "-C", extracted], {
+    encoding: "utf8",
+  });
+  assert.equal(unpack.status, 0, unpack.stderr);
+  const installedCatalog = spawnSync(
+    process.execPath,
+    [join(extracted, "package", "bin", "attend.js"), "families", "--json"],
+    { cwd: extracted, encoding: "utf8", env: process.env },
+  );
+  assert.equal(
+    installedCatalog.status,
+    0,
+    `The packed CLI must run without files from the source checkout.\n${installedCatalog.stderr || installedCatalog.stdout}`,
+  );
+  const catalog = JSON.parse(installedCatalog.stdout);
+  assert.deepEqual(catalog.counts, {
+    families: 19,
+    approved: 106,
+    documented: 87,
+    executable: 18,
+    unavailable: 1,
+    rejected: 38,
+  });
+
+  const project = join(temporary, "packed-project");
+  await mkdir(join(project, ".git"), { recursive: true });
+  const fakeBin = join(temporary, "fake-bin");
+  const familiesPath = join(temporary, "families.json");
+  const doctorPath = join(temporary, "doctor.json");
+  const npmLog = join(temporary, "npm.log");
+  await mkdir(fakeBin);
+  await writeFile(familiesPath, installedCatalog.stdout);
+  await writeFile(doctorPath, JSON.stringify({
+    ok: true,
+    checks: [
+      { id: "project", status: "pass", detail: "fixture" },
+      { id: "agent-skill-agents", status: "pass", detail: "fixture" },
+      { id: "agent-skill-claude", status: "pass", detail: "fixture" },
+      { id: "codex-chat", status: "warn", detail: "fixture provider is not signed in" },
+    ],
+  }));
+  await Promise.all([
+    writeExecutable(join(fakeBin, "curl"), `#!/bin/sh
+set -eu
+output=''
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output" ]; then
+    shift
+    output=$1
+  fi
+  shift
+done
+[ -n "$output" ]
+cp "$ATTEND_TEST_ARCHIVE" "$output"
+`),
+    writeExecutable(join(fakeBin, "npm"), `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >"$ATTEND_TEST_NPM_LOG"
+`),
+    writeExecutable(join(fakeBin, "attend"), `#!/bin/sh
+set -eu
+case "\${1:-}" in
+  --version) printf '%s\\n' '${version}' ;;
+  setup) printf '%s\\n' '{"ok":true,"conflicts":[]}' ;;
+  doctor) cat "$ATTEND_TEST_DOCTOR_JSON" ;;
+  families) cat "$ATTEND_TEST_FAMILIES_JSON" ;;
+  *) exit 2 ;;
+esac
+`),
+  ]);
+  const installerEnvironment = {
+    ...process.env,
+    PATH: `${fakeBin}:${process.env.PATH}`,
+    ATTEND_TEST_ARCHIVE: firstArchive,
+    ATTEND_TEST_NPM_LOG: npmLog,
+    ATTEND_TEST_DOCTOR_JSON: doctorPath,
+    ATTEND_TEST_FAMILIES_JSON: familiesPath,
+  };
+  const installRun = spawnSync("sh", [join(temporary, "first", "install.sh")], {
+    cwd: project,
+    encoding: "utf8",
+    env: installerEnvironment,
+  });
+  assert.equal(installRun.status, 0, installRun.stderr || installRun.stdout);
+  assert.match(installRun.stdout, /Attend 0\.2\.0 installed: 19 families, 18 executable, 1 unavailable/u);
+  assert.match(await readFile(npmLog, "utf8"), /^install --global \/.+attend-local-0\.2\.0\.tgz\n$/u);
+
+  const tamperedArchive = join(temporary, "tampered.tgz");
+  await writeFile(tamperedArchive, "not the release archive\n");
+  await writeFile(npmLog, "not-called\n");
+  const rejectedInstall = spawnSync("sh", [join(temporary, "first", "install.sh")], {
+    cwd: project,
+    encoding: "utf8",
+    env: { ...installerEnvironment, ATTEND_TEST_ARCHIVE: tamperedArchive },
+  });
+  assert.notEqual(rejectedInstall.status, 0);
+  assert.match(rejectedInstall.stderr, /failed SHA-256 verification/u);
+  assert.equal(await readFile(npmLog, "utf8"), "not-called\n");
+
+  const packedPackage = JSON.parse(await readFile(join(extracted, "package", "package.json"), "utf8"));
+  assert.equal(packedPackage.license, "UNLICENSED");
+  assert.equal(packedPackage.dependencies, undefined);
+  assert.deepEqual(packedPackage.repository, {
+    type: "git",
+    url: "git+https://github.com/Siunami/attend-local.git",
+  });
+
+  const packedBin = join(extracted, "package", "bin", "attend.js");
+  const setup = spawnSync(process.execPath, [packedBin, "setup", "--root", project, "--json"], {
+    cwd: project,
+    encoding: "utf8",
+    env: process.env,
+  });
+  assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+  const doctor = spawnSync(process.execPath, [packedBin, "doctor", "--root", project, "--json"], {
+    cwd: project,
+    encoding: "utf8",
+    env: process.env,
+  });
+  assert.equal(doctor.status, 0, doctor.stderr || doctor.stdout);
+  const doctorResult = JSON.parse(doctor.stdout);
+  const viewerChecks = doctorResult.checks.filter((check) => check.id.startsWith("viewer-"));
+  assert.ok(viewerChecks.length >= 20, "doctor must inspect every Atlas module and vendor asset");
+  assert.ok(viewerChecks.every((check) => check.status === "pass"));
+  for (const expected of ["d3.min.js", "topojson-client.min.js", "us-states.json", "us-counties.json", "world-countries.json"]) {
+    assert.ok(viewerChecks.some((check) => check.detail.endsWith(expected)), `doctor must check ${expected}`);
+  }
+
+  const packedServer = await import(pathToFileURL(join(extracted, "package", "src", "server.js")));
+  const library = await packedServer.createLibraryServer({
+    root: project,
+    assetsDir: join(extracted, "package", "viewer"),
+    token: "packed-release-asset-test-token",
+    instanceId: "packed-release-asset-test-instance",
+  });
+  t.after(() => library.close());
+  for (const asset of [
+    "d3.min.js",
+    "topojson-client.min.js",
+    "us-states.json",
+    "us-counties.json",
+    "world-countries.json",
+  ]) {
+    const response = await fetch(new URL(`families/vendor/${asset}`, library.url));
+    assert.equal(response.status, 200, `packed server must serve ${asset} without node_modules`);
+    assert.ok((await response.arrayBuffer()).byteLength > 0);
+  }
+});
+
+test("release retention keeps two immutable versions and their versioned prompts", async (t) => {
+  const temporary = await mkdtemp(join(tmpdir(), "attend-retention-test-"));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+
+  const previous = join(temporary, "previous");
+  const old = await seedRetainedRelease(previous);
+  const firstOutput = join(temporary, "first-output");
+  const first = stage(firstOutput, { retainFrom: previous });
+  assert.deepEqual(first.retainedVersions, [old.version]);
+
+  const currentVersion = first.manifest.version;
+  const currentPrompt = await readFile(
+    join(firstOutput, "releases", currentVersion, "install-prompt.txt"),
+    "utf8",
+  );
+  assert.equal(await readFile(join(firstOutput, "install-prompt.txt"), "utf8"), currentPrompt);
+  assert.equal(
+    await digest(join(firstOutput, "releases", old.version, old.filename)),
+    old.archiveDigest,
+  );
+  assert.equal(
+    await readFile(join(firstOutput, "releases", old.version, "install-prompt.txt"), "utf8"),
+    old.prompt,
+  );
+  assert.equal(
+    await readFile(join(firstOutput, "releases", old.version, "install.sh"), "utf8"),
+    old.installer,
+  );
+
+  const secondOutput = join(temporary, "second-output");
+  const second = stage(secondOutput, { retainFrom: firstOutput });
+  assert.deepEqual(second.retainedVersions, [old.version, currentVersion]);
+  assert.equal(
+    await digest(join(secondOutput, "releases", old.version, old.filename)),
+    old.archiveDigest,
+  );
+  assert.equal(
+    await readFile(join(secondOutput, "releases", currentVersion, "install-prompt.txt"), "utf8"),
+    currentPrompt,
+  );
+  assert.equal(
+    await readFile(join(secondOutput, "releases", old.version, "install.sh"), "utf8"),
+    old.installer,
+  );
+
+  await writeFile(
+    join(secondOutput, "releases", currentVersion, "install-prompt.txt"),
+    "mutated same-version prompt\n",
+  );
+  const rejected = stageProcess(join(temporary, "rejected-output"), {
+    retainFrom: secondOutput,
+  });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /already exists with different contents; bump the package version/u);
+});

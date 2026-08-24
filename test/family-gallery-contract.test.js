@@ -6,8 +6,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createLibraryServer } from "../src/server.js";
-import { compileMap } from "../src/pipeline/compile.js";
-import { canonicalJson, verifyDataPackageHashes } from "../src/pipeline/data-package.js";
+import { compileMap, compileMapWithEvidence } from "../src/pipeline/compile.js";
+import {
+  canonicalJson,
+  isOpaqueEvidenceReferenceId,
+  verifyDataPackageHashes,
+} from "../src/pipeline/data-package.js";
 import {
   CANONICAL_INPUT_MEDIA,
   MAP_FAMILIES,
@@ -59,9 +63,12 @@ const FAMILY_HTTP_ASSETS = Object.freeze([
   ["family-lab.css", "text/css; charset=utf-8"],
   ["family-datasets.js", "text/javascript; charset=utf-8"],
   ["family-compiler-adapter.js", "text/javascript; charset=utf-8"],
+  ["package-model.js", "text/javascript; charset=utf-8"],
+  ["package-renderer.js", "text/javascript; charset=utf-8"],
   ["family-renderers.js", "text/javascript; charset=utf-8"],
   ["core/map-families/registry.js", "text/javascript; charset=utf-8"],
   ["core/map-families/index.js", "text/javascript; charset=utf-8"],
+  ["core/geography.js", "text/javascript; charset=utf-8"],
   ["core/pipeline/data-package.js", "text/javascript; charset=utf-8"],
   ["core/pipeline/compile.js", "text/javascript; charset=utf-8"],
   ["core/pipeline/index.js", "text/javascript; charset=utf-8"],
@@ -183,7 +190,7 @@ test("every gallery fixture compiles through the canonical pipeline deterministi
   for (const manifest of MAP_FAMILIES) {
     const dataset = SAMPLE_SOURCES[manifest.id];
     const request = await toCompilerRequest(dataset, manifest, { availableWidth: 1_024 });
-    const first = await compileMap(request);
+    const { dataPackage: first, evidenceReferences } = await compileMapWithEvidence(request);
     const second = await compileMap(request);
     assert.equal(first.kind, "attend-data-package", `${manifest.id} must use the canonical package kind`);
     assert.equal(first.schemaVersion, 2, `${manifest.id} must use schema version 2`);
@@ -191,14 +198,16 @@ test("every gallery fixture compiles through the canonical pipeline deterministi
     assert.equal(first.marks.length, request.sourceBundle.records.length);
     assert.equal(first.hashes.package, second.hashes.package, `${manifest.id} fixture compilation must be deterministic`);
     assert.equal(await verifyDataPackageHashes(first), true, `${manifest.id} package hashes must verify`);
-    const compiledEvidence = first.marks.flatMap((mark) => mark.evidenceRefs);
+    const compiledEvidence = new Set(first.marks.flatMap((mark) => mark.evidenceRefs));
+    assert.ok([...compiledEvidence].every(isOpaqueEvidenceReferenceId), `${manifest.id} must expose only opaque evidence reference ids`);
     for (const evidence of dataset.evidence) {
-      assert.ok(compiledEvidence.some((reference) =>
+      assert.ok(evidenceReferences.some((reference) =>
         reference.sourceId === evidence.sourceId
         && canonicalJson(reference.locator) === canonicalJson(evidence.locator)
-        && reference.excerpt === evidence.excerpt
-      ), `${manifest.id}/${evidence.id} must survive fixture compilation`);
+        && reference.quote === evidence.excerpt
+      ), `${manifest.id}/${evidence.id} must remain available in the private evidence store`);
     }
+    assert.doesNotMatch(JSON.stringify(first.marks), /"(?:sourceId|recordId|locator|excerpt|quote)"/u, `${manifest.id} public marks cannot disclose evidence linkage`);
   }
 });
 
@@ -430,19 +439,63 @@ test("the library serves the complete family lab surface with strict HTTP semant
   }
 });
 
+test("the family lab browser module graph resolves every published static import", async (t) => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "attend-family-gallery-graph-"));
+  let library;
+  t.after(async () => {
+    try {
+      await library?.close();
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+  library = await createLibraryServer({
+    root: projectRoot,
+    assetsDir: VIEWER_ROOT,
+    token: "family-gallery-graph-test-token",
+    instanceId: "family-gallery-graph-test-instance",
+  });
+
+  const pending = ["family-lab.js"];
+  const visited = new Set();
+  const importPattern = /\b(?:import|export)\s+(?:[^"'()]*?\sfrom\s+)?["']([^"']+)["']/gu;
+  while (pending.length) {
+    const route = pending.pop();
+    if (visited.has(route)) continue;
+    visited.add(route);
+    const moduleUrl = new URL(`families/${route}`, library.url);
+    const response = await fetch(moduleUrl);
+    assert.equal(response.status, 200, `static module ${route} must resolve`);
+    const source = await response.text();
+    for (const match of source.matchAll(importPattern)) {
+      const specifier = match[1];
+      if (!specifier.startsWith(".")) continue;
+      const importedUrl = new URL(specifier, moduleUrl);
+      assert.equal(importedUrl.origin, moduleUrl.origin, `${route} may only import same-origin modules`);
+      const prefix = new URL("families/", library.url).pathname;
+      assert.ok(importedUrl.pathname.startsWith(prefix), `${route} import ${specifier} must stay within /families`);
+      pending.push(importedUrl.pathname.slice(prefix.length));
+    }
+  }
+  assert.ok(visited.has("package-model.js"), "module graph must include browser package-model authority");
+  assert.ok(visited.has("package-renderer.js"), "module graph must include package renderer");
+  assert.ok(visited.has("core/pipeline/compile.js"), "module graph must include canonical compiler");
+});
+
 test("geographic views load published topology routes instead of hand-drawn outlines", async () => {
   const [renderers, app, server, statesRaw, countiesRaw, countriesRaw] = await Promise.all([
     readFile(`${VIEWER_ROOT}/family-renderers.js`, "utf8"),
     readFile(`${VIEWER_ROOT}/family-lab.js`, "utf8"),
     readFile(`${ATTEND_ROOT}/src/server.js`, "utf8"),
-    readFile(`${ATTEND_ROOT}/node_modules/us-atlas/states-10m.json`, "utf8"),
-    readFile(`${ATTEND_ROOT}/node_modules/us-atlas/counties-10m.json`, "utf8"),
-    readFile(`${ATTEND_ROOT}/node_modules/world-atlas/countries-110m.json`, "utf8"),
+    readFile(`${VIEWER_ROOT}/vendor/us-states.json`, "utf8"),
+    readFile(`${VIEWER_ROOT}/vendor/us-counties.json`, "utf8"),
+    readFile(`${VIEWER_ROOT}/vendor/world-countries.json`, "utf8"),
   ]);
 
-  assert.match(server, /"vendor\/us-states\.json"[^\n]+us-atlas\/states-10m\.json/u);
-  assert.match(server, /"vendor\/us-counties\.json"[^\n]+us-atlas\/counties-10m\.json/u);
-  assert.match(server, /"vendor\/world-countries\.json"[^\n]+world-atlas\/countries-110m\.json/u);
+  assert.match(server, /"vendor\/us-states\.json"[^\n]+file: "vendor\/us-states\.json"/u);
+  assert.match(server, /"vendor\/us-counties\.json"[^\n]+file: "vendor\/us-counties\.json"/u);
+  assert.match(server, /"vendor\/world-countries\.json"[^\n]+file: "vendor\/world-countries\.json"/u);
+  assert.doesNotMatch(server, /node_modules\/(?:us-atlas|world-atlas)/u);
   assert.match(renderers, /fetch\("\.\/vendor\/us-states\.json"\)/u);
   assert.match(renderers, /fetch\("\.\/vendor\/us-counties\.json"\)/u);
 

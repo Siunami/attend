@@ -21,9 +21,10 @@ import {
 import { createCodexAgentRunner } from "./agent-runner.js";
 import { createQuestionWorker } from "./question-worker.js";
 import { createLibraryServer } from "./server.js";
+import { PACKAGE_VERSION } from "./constants.js";
 
 const SERVICE_SCHEMA_VERSION = 1;
-const SERVICE_PROTOCOL_VERSION = 1;
+const SERVICE_PROTOCOL_VERSION = 2;
 const START_TIMEOUT_MS = 8_000;
 const STOP_TIMEOUT_MS = 5_000;
 const HEALTH_TIMEOUT_MS = 500;
@@ -113,6 +114,11 @@ function validateRuntime(value, config) {
     ...runtime,
     ...(agent ? { agent } : {}),
   };
+}
+
+function currentRuntime(value) {
+  return value?.protocolVersion === SERVICE_PROTOCOL_VERSION
+    && value?.packageVersion === PACKAGE_VERSION;
 }
 
 function safeAgentCapability(value) {
@@ -216,7 +222,7 @@ function processExists(pid) {
   }
 }
 
-async function healthAt(url) {
+async function readHealthAt(url) {
   try {
     const response = await fetch(new URL("api/health", url), {
       cache: "no-store",
@@ -224,17 +230,26 @@ async function healthAt(url) {
     });
     if (!response.ok) return null;
     const health = await response.json();
-    if (
-      health?.ok !== true ||
-      health.service !== "attend-library" ||
-      health.protocolVersion !== SERVICE_PROTOCOL_VERSION
-    ) {
-      return null;
-    }
-    return health;
+    return health?.ok === true && health.service === "attend-library"
+      ? health
+      : null;
   } catch {
     return null;
   }
+}
+
+function currentHealth(value) {
+  return value?.protocolVersion === SERVICE_PROTOCOL_VERSION
+    && value?.packageVersion === PACKAGE_VERSION;
+}
+
+function refuseUnverifiedLiveService(status) {
+  if (status?.state !== "stale" || !status.pidAlive || status.verifiedStale) return;
+  const error = new Error(
+    "Attend found a live process in its runtime record but could not verify the tokenized service identity. The runtime record was preserved and no process was signaled; retry after the service is responsive or stop that process explicitly.",
+  );
+  error.code = "SERVICE_IDENTITY_UNVERIFIED";
+  throw error;
 }
 
 export async function serviceStatus({ root }) {
@@ -254,12 +269,14 @@ export async function serviceStatus({ root }) {
 
   const storedRuntime = await readOptionalJson(paths.runtime);
   const runtime = validateRuntime(storedRuntime, config);
-  const health = runtime ? await healthAt(runtime.url) : null;
-  const healthy = Boolean(
+  const health = runtime ? await readHealthAt(runtime.url) : null;
+  const identityMatches = Boolean(
     runtime &&
     health &&
     health.instanceId === runtime.instanceId,
   );
+  const healthy = identityMatches && currentRuntime(runtime) && currentHealth(health);
+  const verifiedStale = identityMatches && !healthy;
   const pidAlive = runtime ? processExists(runtime.pid) : false;
 
   return {
@@ -272,8 +289,42 @@ export async function serviceStatus({ root }) {
     preferredPort: config.preferredPort,
     ...(healthy ? { pid: runtime.pid, instanceId: runtime.instanceId, health } : {}),
     ...(healthy && runtime.agent ? { agent: runtime.agent } : {}),
-    ...(storedRuntime && !healthy ? { stalePid: runtime?.pid ?? null, pidAlive } : {}),
+    ...(storedRuntime && !healthy ? {
+      stalePid: runtime?.pid ?? null,
+      staleInstanceId: runtime?.instanceId ?? null,
+      pidAlive,
+      verifiedStale,
+      ...(verifiedStale ? { staleHealth: health } : {}),
+    } : {}),
   };
+}
+
+async function stopVerifiedStaleService({ root, status, timeoutMs = STOP_TIMEOUT_MS }) {
+  if (!status?.verifiedStale || !status.pidAlive || !status.stalePid || !status.staleInstanceId) {
+    return false;
+  }
+  const confirmed = await serviceStatus({ root });
+  if (
+    !confirmed.verifiedStale ||
+    confirmed.stalePid !== status.stalePid ||
+    confirmed.staleInstanceId !== status.staleInstanceId
+  ) {
+    throw new Error("Attend's stale service identity changed before it could be replaced; no process was signaled.");
+  }
+  try {
+    process.kill(status.stalePid, "SIGTERM");
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!processExists(status.stalePid)) {
+      await removeIfInstance(servicePaths(root).runtime, status.staleInstanceId);
+      return true;
+    }
+    await delay(POLL_MS);
+  }
+  throw new Error("Attend's verified stale service did not stop after SIGTERM; it was not force-killed.");
 }
 
 async function removeIfInstance(path, instanceId) {
@@ -373,10 +424,29 @@ async function waitForStart({ root, instanceId, child, deadline }) {
   throw new Error("Timed out waiting for Attend's local service to become healthy.");
 }
 
+async function stopFailedLaunch({ root, instanceId, child }) {
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGTERM");
+    const deadline = Date.now() + STOP_TIMEOUT_MS;
+    while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) {
+      await delay(POLL_MS);
+    }
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+    }
+  }
+  await removeIfInstance(servicePaths(root).runtime, instanceId).catch(() => {});
+}
+
 async function launchOnce({ root, binPath, deadline }) {
   const instanceId = randomUUID().replaceAll("-", "_");
   const child = await spawnDaemon({ root, instanceId, binPath });
-  return waitForStart({ root, instanceId, child, deadline });
+  try {
+    return await waitForStart({ root, instanceId, child, deadline });
+  } catch (error) {
+    await stopFailedLaunch({ root, instanceId, child });
+    throw error;
+  }
 }
 
 export async function startService({
@@ -394,6 +464,7 @@ export async function startService({
 
   const existing = await serviceStatus({ root: projectRoot });
   if (existing.running) return { ...existing, reused: true };
+  refuseUnverifiedLiveService(existing);
 
   const deadline = Date.now() + timeoutMs;
   const release = await acquireStartLock(projectRoot, deadline);
@@ -404,15 +475,22 @@ export async function startService({
   }
 
   try {
-    const afterLock = await serviceStatus({ root: projectRoot });
+    let afterLock = await serviceStatus({ root: projectRoot });
     if (afterLock.running) return { ...afterLock, reused: true };
+    refuseUnverifiedLiveService(afterLock);
+    if (afterLock.verifiedStale && afterLock.pidAlive) {
+      await stopVerifiedStaleService({ root: projectRoot, status: afterLock });
+      afterLock = await serviceStatus({ root: projectRoot });
+      if (afterLock.running) return { ...afterLock, reused: true };
+    }
 
     await unlink(servicePaths(projectRoot).runtime).catch((error) => {
       if (error?.code !== "ENOENT") throw error;
     });
     const config = await ensureConfig(projectRoot, { host, port });
+    const launchDeadline = Date.now() + timeoutMs;
     try {
-      const started = await launchOnce({ root: projectRoot, binPath, deadline });
+      const started = await launchOnce({ root: projectRoot, binPath, deadline: launchDeadline });
       return { ...started, reused: false };
     } catch (error) {
       if (error?.code === "EADDRINUSE" && config.preferredPort !== 0) {
@@ -434,10 +512,12 @@ export async function stopService({ root, timeoutMs = STOP_TIMEOUT_MS } = {}) {
   const paths = servicePaths(projectRoot);
   const status = await serviceStatus({ root: projectRoot });
   if (!status.running) {
+    refuseUnverifiedLiveService(status);
+    const stopped = await stopVerifiedStaleService({ root: projectRoot, status, timeoutMs });
     await unlink(paths.runtime).catch((error) => {
       if (error?.code !== "ENOENT") throw error;
     });
-    return { ...status, state: "stopped", running: false, stopped: false };
+    return { ...status, state: "stopped", running: false, stopped };
   }
 
   // Recheck the tokenized, per-launch identity immediately before signaling.
@@ -512,6 +592,8 @@ export async function runForegroundService({ root, assetsDir, instanceId }) {
     await writeConfig(projectRoot, { ...config, preferredPort: library.port });
     await writeJsonAtomic(paths.runtime, {
       schemaVersion: SERVICE_SCHEMA_VERSION,
+      protocolVersion: SERVICE_PROTOCOL_VERSION,
+      packageVersion: PACKAGE_VERSION,
       pid: process.pid,
       instanceId,
       host: config.host,

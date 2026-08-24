@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import {
   mkdir,
@@ -10,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { once } from "node:events";
 
 import {
   projectPaths,
@@ -73,7 +75,7 @@ test("service startup refuses a symlinked local-state directory", async (t) => {
   assert.deepEqual(await import("node:fs/promises").then(({ readdir }) => readdir(outside)), []);
 });
 
-test("stop never signals a stale PID without matching tokenized health", async (t) => {
+test("start and stop preserve a live runtime they cannot verify", async (t) => {
   const root = await fixture(t);
   const started = await startService({ root, port: 0 });
   await stopService({ root });
@@ -94,10 +96,76 @@ test("stop never signals a stale PID without matching tokenized health", async (
   const stale = await serviceStatus({ root });
   assert.equal(stale.state, "stale");
   assert.equal(stale.pidAlive, true);
-  const stopped = await stopService({ root });
-  assert.equal(stopped.stopped, false);
-  assert.equal(stopped.running, false);
+  await assert.rejects(
+    stopService({ root }),
+    { code: "SERVICE_IDENTITY_UNVERIFIED" },
+  );
+  await assert.rejects(
+    startService({ root }),
+    { code: "SERVICE_IDENTITY_UNVERIFIED" },
+  );
+  assert.equal((await readJson(join(paths.local, "service-runtime.json"))).pid, process.pid);
   assert.doesNotThrow(() => process.kill(process.pid, 0));
+});
+
+test("an upgrade replaces only a token-verified older Attend service with a fresh launch budget", async (t) => {
+  const root = await fixture(t);
+  const initial = await startService({ root, port: 0 });
+  await stopService({ root });
+  const paths = projectPaths(root);
+  const config = await readJson(join(paths.local, "service.json"));
+  const port = Number(new URL(initial.url).port);
+  const instanceId = "legacy_instance_0001";
+  const legacyProgram = `
+    import { createServer } from "node:http";
+    const prefix = "/v/" + process.env.ATTEND_TEST_TOKEN + "/api/health";
+    const server = createServer((request, response) => {
+      if (request.url !== prefix) { response.statusCode = 404; response.end(); return; }
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({
+        ok: true,
+        service: "attend-library",
+        protocolVersion: 1,
+        instanceId: process.env.ATTEND_TEST_INSTANCE,
+        sessionCount: 0,
+      }));
+    });
+    server.listen(Number(process.env.ATTEND_TEST_PORT), "127.0.0.1", () => process.stdout.write("ready\\n"));
+    process.on("SIGTERM", () => setTimeout(() => server.close(() => process.exit(0)), 1200));
+  `;
+  const legacy = spawn(process.execPath, ["--input-type=module", "--eval", legacyProgram], {
+    env: {
+      ...process.env,
+      ATTEND_TEST_TOKEN: config.token,
+      ATTEND_TEST_INSTANCE: instanceId,
+      ATTEND_TEST_PORT: String(port),
+    },
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  t.after(() => {
+    if (legacy.exitCode === null) legacy.kill("SIGTERM");
+  });
+  await once(legacy.stdout, "data");
+  await writeJsonAtomic(join(paths.local, "service-runtime.json"), {
+    schemaVersion: 1,
+    pid: legacy.pid,
+    instanceId,
+    host: config.host,
+    port,
+    url: initial.url,
+    startedAt: new Date().toISOString(),
+  }, { root });
+
+  const stale = await serviceStatus({ root });
+  assert.equal(stale.verifiedStale, true);
+  assert.equal(stale.staleHealth.protocolVersion, 1);
+  const upgraded = await startService({ root, timeoutMs: 1000 });
+  assert.equal(upgraded.running, true);
+  assert.equal(upgraded.reused, false);
+  assert.equal(upgraded.health.protocolVersion, 2);
+  assert.equal(upgraded.health.packageVersion, "0.2.0");
+  assert.notEqual(upgraded.pid, legacy.pid);
+  if (legacy.exitCode === null) await once(legacy, "exit");
 });
 
 test("an occupied persisted port fails instead of silently changing the stable URL", async (t) => {

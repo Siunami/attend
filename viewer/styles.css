@@ -252,6 +252,134 @@ h2 {
   list-style: none;
 }
 
+.atlas-view {
+  width: min(1120px, 100%);
+  min-height: 260px;
+}
+
+.atlas-visual {
+  min-height: 280px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 18px 0;
+}
+
+.atlas-visual [data-mark-id]:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.atlas-abstention {
+  margin: 18px 0 0;
+  color: var(--error);
+}
+
+/* The production viewer owns the same family grammar rules as the lab. */
+.atlas-visual svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.atlas-visual text {
+  fill: var(--foreground);
+  font-size: 12px;
+}
+
+.atlas-visual .muted-label,
+.atlas-visual .axis-label {
+  fill: var(--muted);
+}
+
+.atlas-visual .grid-line,
+.atlas-visual .axis-line,
+.atlas-visual .connector {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.atlas-visual .baseline {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+.atlas-visual .mark-primary { fill: #477d6d; stroke: #477d6d; }
+.atlas-visual .mark-secondary { fill: #b8784a; stroke: #b8784a; }
+.atlas-visual .mark-tertiary { fill: #6c78a5; stroke: #6c78a5; }
+.atlas-visual .mark-quaternary { fill: #9b617e; stroke: #9b617e; }
+
+.atlas-visual .inside-label,
+.atlas-visual .matrix-value,
+.atlas-visual .map-label {
+  fill: var(--foreground);
+  paint-order: stroke;
+  pointer-events: none;
+  stroke: var(--surface);
+  stroke-linejoin: round;
+  stroke-width: 3px;
+}
+
+.atlas-visual .median-line { stroke: var(--foreground); stroke-width: 2; }
+.atlas-visual .profile-line,
+.atlas-visual .trend-line { fill: none; stroke-width: 2; opacity: 0.72; }
+.atlas-visual .hierarchy-link,
+.atlas-visual .mechanism-link { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.atlas-visual .network-link { stroke: var(--line); stroke-width: 1; }
+.atlas-visual .network-link.strength-4,
+.atlas-visual .network-link.strength-5 { stroke: var(--line-strong); stroke-width: 2; }
+.atlas-visual .flow-link { fill: none; stroke: var(--accent); opacity: 0.32; }
+.atlas-visual .arrow-head { fill: var(--line-strong); }
+.atlas-visual .sequence-frame { fill-opacity: 0.22; stroke-width: 1; }
+.atlas-visual .sequence-arrow { stroke: var(--line-strong); stroke-width: 1.5; }
+
+.atlas-visual .matrix-cell,
+.atlas-visual .field-cell,
+.atlas-visual .map-region { stroke: var(--background); stroke-width: 2; }
+.atlas-visual .level-1 { fill: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
+.atlas-visual .level-2 { fill: color-mix(in srgb, var(--accent) 30%, var(--surface)); }
+.atlas-visual .level-3 { fill: color-mix(in srgb, var(--accent) 48%, var(--surface)); }
+.atlas-visual .level-4 { fill: color-mix(in srgb, var(--accent) 68%, var(--surface)); }
+.atlas-visual .level-5 { fill: var(--accent); }
+.atlas-visual .map-land { fill: color-mix(in srgb, var(--line) 55%, var(--surface)); stroke: var(--background); stroke-width: 1; }
+.atlas-visual .map-point { fill: color-mix(in srgb, #b8784a 78%, transparent); stroke: #b8784a; stroke-width: 2; }
+.atlas-visual .specimen-ground { fill: color-mix(in srgb, var(--line) 42%, var(--surface)); stroke: var(--line); }
+.atlas-visual .specimen-note { fill-opacity: 0.22; stroke: none; }
+.atlas-visual .annotation-region { fill: color-mix(in srgb, var(--accent) 8%, transparent); stroke: var(--accent); stroke-width: 1.5; }
+.atlas-visual .annotation-anchor { fill: var(--accent); stroke: var(--surface); stroke-width: 3; }
+.atlas-visual .atlas-cluster-label { fill: var(--muted); font-size: 15px; }
+.atlas-visual .atlas-item-label { fill: var(--muted); font-size: 11px; }
+.atlas-visual .atlas-text-mark { fill: var(--surface); stroke-width: 2; }
+.atlas-visual [data-mark-id] { cursor: pointer; }
+.atlas-visual [data-mark-id]:hover,
+.atlas-visual [data-mark-id].is-selected { filter: brightness(0.9); stroke: var(--foreground); }
+
+.atlas-visual .passage-columns {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 16px 0 28px;
+  list-style: none;
+}
+
+.atlas-visual .passage-row {
+  display: grid;
+  grid-template-columns: 145px minmax(0, 1fr);
+  gap: 30px;
+  padding: 19px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.atlas-visual .passage-row:hover,
+.atlas-visual .passage-row.is-selected { background: var(--accent-soft); }
+.atlas-visual .passage-meta { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 0.74rem; }
+.atlas-visual .passage-meta strong { color: var(--foreground); font-weight: 500; }
+.atlas-visual .passage-row blockquote { margin: 0; font-family: ui-serif, Georgia, serif; font-size: 1.03rem; line-height: 1.55; }
+.atlas-visual .aggregate-message { display: grid; min-height: 350px; place-content: center; max-width: 620px; margin: 0 auto; text-align: center; }
+.atlas-visual .aggregate-message strong { display: block; margin-bottom: 10px; font-size: 2rem; font-weight: 400; }
+.atlas-visual .aggregate-message p { color: var(--muted); line-height: 1.55; }
+
 .phrase-item {
   border-top: 1px solid var(--line);
 }

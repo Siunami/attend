@@ -182,6 +182,8 @@ test("Codex adapter sends untrusted context only over stdin with fixed safe argv
   assert.match(call.input, /"mode": "inherited"/u);
   assert.match(call.input, /latest relevant visualization selection/u);
   assert.match(call.input, /synthesize across those sources/u);
+  assert.match(call.input, /mark counts or isolated locators/u);
+  assert.doesNotMatch(call.input, /phrase counts or matching lines/u);
   assert.match(call.input, /Use lightweight Markdown that will scan well in a narrow chat drawer/u);
   assert.match(call.input, /Do not use Markdown tables/u);
   assert.match(call.input, /replyToTurnId/u);

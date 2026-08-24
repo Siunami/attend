@@ -1,246 +1,212 @@
 # Attend Local
 
-Attend Local is the first working slice of an agent-native visualization
-harness. It turns an explicitly named local corpus into a fixed, locally hosted
-visual instrument whose interaction state is readable by both a browser sidebar
-and a local, authenticated Codex response worker.
+Attend Local turns evidence from explicitly authorized files into a designed visualization in a private local artifact view with selection-aware chat.
 
-This alpha answers one question well: **which multi-word phrases recur across
-these notes?** Extraction, normalization, counting, ranking, hashing, and source
-references are deterministic. By default, a phrase must appear in at least two
-distinct notes, and source breadth ranks before raw repetition. Use
-`--min-sources 1` only when repetition within a single note is intentional. The
-analyzer itself makes no model or network call.
+## Install in this project
 
-## Try it from this repository
-
-Requires Node.js 22 or later.
+From the project root, paste this one command into a terminal or compatible coding agent:
 
 ```sh
-npm install --global ./attend-cli
-
-attend setup
-attend phrases path/to/notes \
-  --question "Which phrases recur across my notes about Apple?" \
-  --target "Apple notes"
-attend view --open
+curl -fsSL https://attend-cli.matthewwilsonsiu.workers.dev/releases/0.2.0/install.sh | sh
 ```
 
-`attend view` starts or reuses this project's detached, loopback-only service,
-waits for it to become healthy, prints both the project library URL and the
-current visualization URL, and exits. `--open` opens the current visualization.
-The same unguessable `127.0.0.1` library URL remains stable across new analyses
-and stop/restart cycles because its port and capability token are stored in the
-project's local Attend state. Every visualization saved in this project appears
-in that library and has a stable session URL beneath it.
+It installs the pinned `0.2.0` release, configures the current project for both `.agents` and `.claude`, and verifies the CLI, catalog, local viewer, and Codex chat capability. Node.js 22 or newer and npm are required.
 
-The library is project-scoped: a different project gets its own URL and local
-service. Attend does not yet provide a global registry spanning projects.
-`attend setup` only writes project configuration, local-state exclusions, and
-the managed agent skill; it never starts background work.
+The host agent does not write chart code. It asks Attend for the installed Family Atlas catalog, selects an executable member for the analytic job, transforms source-backed facts into that member's declared roles, and submits a data-only request. Attend reopens the sources, verifies exact quotes, compiles a canonical package, resolves a fixed bundled renderer, and serves the result on loopback.
 
-The library also links to an experimental **Map-family lab**. It presents
-nineteen executable family contracts and fixture-backed renderer specimens,
-with evidence-linked dummy data for comparison, time,
-relationship, geography, specimen, and collection views. Its Media policy mode
-shows why small multiples are a cross-family system rather than one chart:
-numeric series, passages, images, video, audio, documents, maps, and mixed
-collections keep different minimum readable units and may aggregate or abstain
-at different quantities. Its Pipeline mode compiles every fixture through the
-same canonical `compileMap()` path used by the executable registry, then exposes
-the validated `attend-data-package` receipt, evidence coverage, and content hash.
+This release includes all 19 visualization families. The catalog records every authored form and rejection from the [Family Atlas](https://storytelling-family-atlas.matthewwilsonsiu.workers.dev/), but it is intentionally honest about runtime coverage: 18 families have one tested executable member. Annotated specimen is marked `unavailable` because the text-only request contract cannot bind its required visible specimen yet. Other approved designs remain `documented`; rejected designs remain `rejected`. Attend never falls back to an unimplemented member or generates a substitute chart.
 
-Open a visualization to get a viewport-sized workspace: the phrase list scrolls
-inside its own frame, while the Ask button opens an independently scrolling chat
-drawer. Selecting a phrase attaches its exact count and source breadth to the
-composer. A contextual question suggestion can be accepted with Tab, then sent
-with Enter. Sending atomically saves the question with that exact selection id
-and view revision, then consumes the staged phrase from the composer. The sent
-message keeps its immutable visual-context attachment while query, source scope,
-threshold, and sort controls remain unchanged. The sidebar does not pretend that
-a model answered synchronously: it commits the question immediately, shows a
-normal `Thinking…` response, and fills in the linked answer when the background
-worker finishes. The composer attachment is one-shot, like an image attached to
-a message, but the conversation is not: a later message with no new attachment
-inherits the latest relevant visual context. Attaching another phrase changes
-the active visual topic for subsequent turns.
+## Install with one prompt
 
-The analyzer accepts `.md`, `.mdx`, and `.txt` files, directories containing
-them, and normalized `.jsonl` notes with `text` plus optional `title`, `id`,
-`date`, `sourcePath`, and `sourceSha256` fields.
+Open [the Attend Local release page](https://attend-cli.matthewwilsonsiu.workers.dev/) and paste its installation prompt into a coding agent from the project where Attend should run. The prompt pins the release tarball by SHA-256, installs it globally, configures the project, installs the managed agent skill for both `.agents` and `.claude`, and verifies the local Codex chat dependency.
 
-Recursive scans skip hidden and dependency directories. A hidden source remains
-available when the user names that directory or file explicitly.
-Unsupported or oversized inputs are listed by relative path and reason. Attend
-fails clearly when every requested input is skipped instead of opening an empty,
-misleading view. JSONL containers and the aggregate source corpus each have a
-32 MiB hard read ceiling in this alpha.
+Requirements:
 
-## Local Codex chat
+- macOS or Linux
+- Node.js 22 or newer and npm
+- Codex CLI signed in for automatic artifact-sidebar answers
 
-The local service exposes a provider-neutral response interface internally:
+The visualization, library, and manual host-agent bridge work without automatic chat. The installer does not call chat ready unless `attend doctor --json` reports the `codex-chat` check passing.
+
+For development from a checkout, run these commands in the directory containing this README:
+
+```sh
+npm install --global .
+attend setup --json
+attend doctor --json
+```
+
+## Agent workflow
+
+The installed `attend-visualize` skill directs a compatible host agent through this sequence:
 
 ```text
-respond({ question, conversation, selection, contextBinding, evidence }) -> { answer }
+user question
+  -> attend families --json
+  -> exact executable family/member
+  -> evidence-backed map request
+  -> attend map request.json --json
+  -> attend view --json
+  -> local artifact + selected-mark chat
 ```
 
-The default adapter implements that interface by starting a separate,
-ephemeral `codex exec` worker. It uses the user's existing Codex/ChatGPT sign-in,
-so no `OPENAI_API_KEY` is required. User and project Codex configuration are
-deliberately ignored: this adapter uses the default OpenAI Codex route associated
-with that sign-in, not a custom provider, model, hook, plugin, or MCP route from
-the user's ordinary coding-agent configuration. The browser request is not held
-open while Codex works: the exact question and visual attachment are persisted
-first, a background scheduler claims the job, and the sidebar polls the local
-state until the linked answer arrives. A failed or timed-out answer can be
-retried without resending the user message or changing its historical
-attachment. A service restart never silently repeats an in-flight provider
-call: interrupted work becomes an explicit Retry instead.
+The family is chosen by the question, not by visual taste:
 
-This is equivalent to calling an answer service from the viewer, but it is not
-an RPC into the currently open Conductor conversation. Each answer is a fresh,
-read-only Codex run with bounded conversation history and the exact active
-selection, whether newly attached or inherited from an earlier turn. The runner
-uses low reasoning by default, never hardcodes a model,
-has a two-minute timeout, and permits only one active answer per visualization.
-Up to two different visualizations can answer concurrently, so one slow Codex
-process does not block the entire project library.
-That isolation keeps answers reproducible and prevents a slow coding harness
-from blocking the chat request, but a cold Codex process will still usually be
-slower than a direct model API. The adapter boundary leaves room for a warm
-Codex service or direct API adapter later without changing viewer or session
-contracts.
+- Compare: rank, distribution, composition, profile, passage comparison
+- Time: trend, timeline, sequence
+- Relate: relationship, matrix, hierarchy, network, flow, mechanism
+- Space and inspect: region map, point map, field, annotated specimen, collection atlas
 
-The runner is launched without a shell, with fixed arguments, an ephemeral
-session, a read-only sandbox, a strict non-secret environment allowlist, and no
-filesystem, search, app, plugin, hook, or MCP tools. It runs from a fresh private
-directory outside the project, so repository `AGENTS.md`, `.codex` configuration,
-skills, and rules cannot join the response. Attend validates the local analysis
-and a private, hash-linked evidence snapshot, then supplies only the question,
-bounded recent conversation, immutable selection, and the implicated source
-contents over stdin. Full selected source bodies are used when the bounded packet
-fits; otherwise every selected source receives deterministic head, middle, and
-tail segments with explicit coverage metadata. The worker receives no project
-root or data-package path and cannot browse the corpus.
+Run `attend families --json` for each governed member, required roles, field types, structured requirements, availability, abstention guidance, and the documented and rejected alternatives.
 
-Questions and the contents of selected sources needed to answer them are sent to
-the OpenAI Codex service using the user's existing Codex sign-in. They are not
-uploaded to an Attend service, and
-Attend has no account or telemetry, but “locally hosted” does not mean the model
-inference is on-device.
+## Map request contract
 
-## Manual agent bridge
+`attend map` accepts one declarative JSON request. For example:
 
-Setup also installs the bundled `attend-visualize` skill. The following commands
-remain available for diagnostics, manual recovery, or mirroring an answer from
-the current host-agent conversation. They are not required for ordinary sidebar
-chat. `attend context` returns the oldest unanswered question across the
-project's saved sessions together with its exact historical selection:
+```json
+{
+  "version": 1,
+  "question": "How do results differ by region?",
+  "family": "rank",
+  "member": "bar-list",
+  "sources": [
+    { "path": "notes/results.md", "textProjection": "utf8" }
+  ],
+  "records": [
+    { "key": "north", "label": "North", "value": 42 },
+    { "key": "south", "label": "South", "value": 31 },
+    { "key": "east", "label": "East", "value": 27 }
+  ],
+  "evidence": [
+    {
+      "source": { "path": "notes/results.md", "textProjection": "utf8" },
+      "quote": "North: 42",
+      "recordKey": "north",
+      "field": "label"
+    },
+    {
+      "source": { "path": "notes/results.md", "textProjection": "utf8" },
+      "quote": "North: 42",
+      "recordKey": "north",
+      "field": "value"
+    },
+    {
+      "source": { "path": "notes/results.md", "textProjection": "utf8" },
+      "quote": "South: 31",
+      "recordKey": "south",
+      "field": "label"
+    },
+    {
+      "source": { "path": "notes/results.md", "textProjection": "utf8" },
+      "quote": "South: 31",
+      "recordKey": "south",
+      "field": "value"
+    },
+    {
+      "source": { "path": "notes/results.md", "textProjection": "utf8" },
+      "quote": "East: 27",
+      "recordKey": "east",
+      "field": "label"
+    },
+    {
+      "source": { "path": "notes/results.md", "textProjection": "utf8" },
+      "quote": "East: 27",
+      "recordKey": "east",
+      "field": "value"
+    }
+  ],
+  "options": { "title": "Results by region" }
+}
+```
+
+Then compile and open it:
+
+```sh
+attend map request.json --json
+attend view --open --json
+```
+
+`question` is required and carries the user's literal question into the compiled artifact. `options.title` is an optional display label; it does not replace or rewrite the question.
+
+The invocation determines the project root. A request cannot supply or enlarge it. Source paths must resolve inside that root. Attend supports explicit UTF-8 text and normalized-text projections in this release; it abstains from raw binary or remote URL input.
+
+Every required field in every record needs at least one exact source quote. If a quote occurs more than once, the claim must include its one-based `occurrence`. Attend derives file hashes, stable source and record identifiers, text locators, mark IDs, package hashes, and the catalog renderer receipt. Requests cannot provide renderer modules, asset URLs, hashes, locators, source bodies, or executable code.
+
+The compiler rejects unknown families, unavailable or non-executable members, missing roles, invalid types, unsupported media, ambiguous or absent quotes, geographic values outside valid bounds, malformed graph shapes, incomplete grids, hierarchy errors, and family-specific size violations. It validates and stages the public package and private evidence store before updating `current.json`, so a failed request leaves the prior current artifact intact.
+
+The canonical package stored on the local machine includes source-integrity receipts such as stable IDs, display paths, and hashes, but no source bodies or private evidence claims. The package projection sent to the browser contains only the fields needed to draw the view, the visible role values, and opaque evidence IDs; it omits source metadata, provenance, locators, record IDs, source bodies, and private quote claims. A visible role such as a passage may intentionally contain source-derived text when that text is the designed mark. Private source snapshots and evidence linkage are hash-bound, gitignored, and available only through the local evidence boundary.
+
+## Artifact view and chat
+
+`attend view` starts or reuses a detached loopback-only service, waits for it to become healthy, prints the project `libraryUrl` and current `viewerUrl`, then exits. The capability-bearing library URL remains stable across new artifacts and stop/start cycles. Each saved artifact has its own session URL.
+
+The production viewer consumes a closed projection of the canonical package emitted by `attend map`. It resolves that package through the installed catalog and the fixed renderer assigned to its executable member. The package and browser cannot choose a module or remote asset. Every interactive visual mark uses the canonical package mark ID.
+
+Selecting a mark updates server-owned, revisioned state. The server re-derives the selection and implicated evidence rather than accepting evidence from the browser. A selected mark can be attached to the next sidebar question; later messages inherit the latest relevant attachment until the user selects a new visual topic.
+
+Automatic sidebar responses use a separate ephemeral `codex exec` worker and the user's existing Codex sign-in. No `OPENAI_API_KEY` is required. Attend deliberately ignores project and user Codex instructions, hooks, plugins, MCP servers, and custom provider configuration for this worker. It launches without a shell, uses a read-only sandbox and a fixed environment allowlist, and receives no project path or package path.
+
+Attend sends the worker only the question, bounded recent conversation, immutable selection, and implicated private evidence. Full source bodies are included when the 1 MiB packet fits; otherwise each selected source receives deterministic head, middle, and tail segments with explicit coverage metadata. The viewer and state are local, but the selected evidence used for an answer follows the user's OpenAI Codex sign-in route. Attend has no hosted account or telemetry.
+
+The browser persists the question before the worker starts, displays a real pending state, and polls for the linked answer. Failed and timed-out calls can be retried without resending the question or changing its historical attachment. A service restart marks interrupted work for an explicit retry instead of silently repeating an external call.
+
+## Phrase recurrence shortcut
+
+The original deterministic phrase analysis remains as a specialized shortcut:
+
+```sh
+attend phrases notes/ \
+  --question "Which phrases recur across these notes?" \
+  --target "Project notes" \
+  --json
+attend view --open --json
+```
+
+It accepts `.md`, `.mdx`, `.txt`, and normalized `.jsonl` sources. By default, a phrase must occur at least twice across at least two distinct sources, and distinct-source breadth ranks before raw repetition. Use `--min-sources 1` only when repetition inside one source is intentional. Do not use this shortcut for a different analytic job.
+
+## Manual host-agent bridge
+
+The sidebar works without the current coding-agent conversation. Use the bridge only when the user explicitly asks that conversation to inspect a click, troubleshoot, or recover an answer:
 
 ```sh
 attend context --json
-attend reply \
-  --question-id turn_01234567-89ab-cdef-0123-456789abcdef \
-  --expected-revision 3 \
-  --selection-id selection_0123456789abcdef \
-  --message "The selected phrase is concentrated in two notes…"
+attend context --include-excerpts --json
 ```
 
-For a pending sidebar question, use `pendingQuestion.id` as `--question-id`,
-`pendingQuestion.viewState.revision` as `--expected-revision`, and
-`pendingQuestion.selection.id` as `--selection-id`. The pending object also
-identifies its owning `sessionId` and `dataPackagePath`. The owning session's
-revision guards against concurrent writes; the historical selection id prevents
-an answer to phrase A from being attached to phrase B. The saved assistant turn
-records `replyToTurnId` and reuses the question's authoritative stored
-selection.
+`attend context` returns the exact current or oldest unanswered historical selection with its package ID, view revision, mark IDs, and evidence links. It omits excerpts by default because command output consumed by a host agent follows that agent's configured provider route.
 
-When `pendingQuestion` is `null`, an agent answering in its host chat can still
-mirror that answer into the sidebar by omitting `--question-id` and using the
-current `selection.id`.
+To save a manual response to a pending question:
 
-The click is not silently injected into the currently open Codex or Claude
-conversation. Ordinary sidebar chat is answered by the separate local Codex
-worker described above; a host agent uses `attend context` and `attend reply`
-only when the user explicitly wants that conversation involved.
+```sh
+attend reply \
+  --question-id <pendingQuestion.id> \
+  --expected-revision <pendingQuestion.viewState.revision> \
+  --selection-id <pendingQuestion.selection.id> \
+  --message "<answer>"
+```
 
-`attend context` omits note excerpts by default while preserving the exact
-selection id and revision. `--include-excerpts` adds them when they are needed.
-The viewer and its stored state stay on the local machine, but selected phrase
-metadata, paths, and the implicated source contents sent to the automatic Codex
-worker follow the OpenAI Codex sign-in route. Source text opened by a host agent
-follows that agent's configured provider route.
+The revision prevents concurrent overwrites. The immutable selection ID prevents an answer to one mark from being attached to another.
 
 ## Commands
 
-- `attend setup [--agent <id>] [--dry-run] [--json]` — preview or create project
-  configuration, local state exclusions, and the managed agent skill. The skill
-  is installed once per host-agent convention (`agents`, `claude`); repeat
-  `--agent` to install a subset.
-- `attend phrases <paths...>` — produce a provenance-bearing phrase-list data
-  package and make it current.
-- `attend view [--port 0] [--open] [--json]` — start or reuse the detached,
-  loopback-only project library, print its stable URL and the current session's
-  visualization URL, then exit.
-- `attend status [--json]` — report whether this project's verified local
-  library service is running and show its stable URL.
-- `attend stop [--json]` — stop this project's verified service without
-  deleting its analyses, conversations, capability token, or preferred port.
-- `attend context [--include-excerpts] [--json]` — return the exact current
-  selection and view state plus the oldest unanswered sidebar question across
-  saved project sessions, omitting note excerpts by default.
-- `attend reply --message <text> --expected-revision <n> --selection-id <id>
-  [--question-id <turn-id>]` — link an answer to a pending sidebar question, or
-  mirror a host-chat answer, only if the context is still current.
-- `attend doctor [--json]` — check runtime, setup, state, skill, and viewer assets.
+- `attend setup [--agent <agents|claude>]... [--dry-run] [--json]` configures the project and managed skill. Without `--agent`, it installs both targets.
+- `attend families [--json]` returns the governed Atlas catalog.
+- `attend map <request.json> [--json]` verifies sources and compiles a canonical Atlas artifact.
+- `attend phrases <paths...> --question <text> [options]` runs the specialized recurrence analyzer.
+- `attend view [--port 0] [--open] [--json]` starts or reuses the local artifact library.
+- `attend status [--json]` reports the service and stable URLs.
+- `attend stop [--json]` stops the service without deleting artifacts or configuration.
+- `attend context [--include-excerpts] [--json]` reads exact visual and pending-question state.
+- `attend reply ...` commits a guarded manual answer.
+- `attend doctor [--json]` checks runtime, setup, catalog, current artifact, viewer assets, and automatic chat readiness.
 
-Run `attend <command> --help` for options.
+Run `attend <command> --help` for all options.
 
-## Local state and ownership
+## Local state
 
-Shared project configuration lives in `.attend/project.json`. Derived data and
-conversation state live under `.attend/local/` and are ignored by the nested
-`.attend/.gitignore`. The installed skill is a managed file, written once per
-host-agent convention: `.agents/skills/attend-visualize/SKILL.md` for agents that
-read the cross-agent location, and `.claude/skills/attend-visualize/SKILL.md`,
-which is the only place Claude Code discovers a project skill. Both copies are
-identical and carry the `attend-managed` marker, so rerunning setup repairs them
-and refuses to touch an unmarked file of the same name.
+Shared configuration lives at `.attend/project.json`. Derived packages, private evidence, sessions, conversations, service identity, and the current pointer live below gitignored `.attend/local/`. The managed skill is installed at `.agents/skills/attend-visualize/SKILL.md` and `.claude/skills/attend-visualize/SKILL.md` unless setup is restricted with `--agent`.
 
-The source files are read-only. The Attend CLI and viewer do not scan outside
-the paths supplied to `attend phrases`, upload the corpus, collect telemetry, or
-silently fall back to a different paid API. `attend view` is the explicit action that starts the
-detached local service; `attend setup` and `attend phrases` do not. Data packages
-contain source-relative paths, hashes, line references, and short excerpts so
-every visible phrase remains one move from its evidence. A separate gitignored
-evidence store preserves the analyzer's verified source snapshot for synthesis;
-it is never served by the viewer. The automatic Codex runner hydrates only the
-sources implicated by the active selection through the user's Codex sign-in as
-described above.
-
-The visible selection includes at most 50 inline match references plus the exact
-total. That display limit does not limit synthesis coverage: the worker resolves
-all distinct source ids behind the selected marks and builds a packet of at most
-1 MiB. The local data-package and evidence-store paths are not exposed to that
-worker. Manual `attend context` can still return the data-package path to an
-explicitly invoked host agent.
-
-## What this proves—and what it does not
-
-This is a narrow vertical slice of the `QuestionSpec → DataPackage → MapSpec →
-Selection` contract. It proves an installable CLI, a deterministic transform, a
-fixed local renderer, server-owned versioned selection, and a view/context
-handoff seam. It also proves a durable asynchronous response job and a
-provider-neutral agent-runner seam.
-The map-family lab adds an executable registry, a versioned compiler seam,
-media-aware repetition policy, and a first renderer specimen for every family.
-Every fixture compiles through the canonical package, but the visual specimens
-still consume a fixture view model; package-native renderer ingestion remains a
-deliberate next seam rather than a compatibility shim that would silently drop
-family semantics. Those views are a design and contract test surface, not yet
-CLI commands over arbitrary real corpora. Attend is still not a general chart generator, MCP
-server, source connector system, automatic corpus watcher/updater, cross-project
-visualization registry, or visualization SDK.
+Attend reads source files but does not edit them. It does not scan paths that were not supplied, upload a corpus to an Attend service, watch files, or silently choose another visualization implementation. Regenerate an artifact from its explicit request when sources change; do not hand-edit packages or evidence stores.
 
 ## Verify
 
@@ -248,9 +214,4 @@ visualization registry, or visualization SDK.
 npm run verify
 ```
 
-The verification suite covers deterministic extraction, exact provenance,
-idempotent setup, optimistic state revisions, tokenized HTTP routes, saved-note
-context snapshots, detached-service lifecycle and identity checks, stable
-project URLs, persistent follow-up context, bounded source-content hydration,
-the nineteen-family registry and compiler, gallery fixture/evidence integrity,
-strict family-lab asset routes, and the npm package contents.
+The verification suite covers the 19-family catalog, all 18 available mappings, the explicit specimen abstention, exact evidence and hash checks, fixed package-native renderer contracts, browser selection and revision behavior, phrase compatibility, private evidence hydration, asynchronous chat jobs, idempotent cross-agent setup, loopback service lifecycle, release tarball allowlisting, SHA-pinned staging, and package contents.

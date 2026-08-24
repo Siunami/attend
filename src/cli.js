@@ -6,16 +6,18 @@ import { parseArgs } from "node:util";
 
 import { analyzePhrasesWithEvidence } from "./analyze.js";
 import { createCodexAgentRunner } from "./agent-runner.js";
+import { buildArtifactSelection, libraryMetadataForArtifact } from "./artifacts/index.js";
+import { CATALOG_COUNTS, CATALOG_VERSION, listCatalogFamilies } from "./catalog/index.js";
 import { PACKAGE_VERSION } from "./constants.js";
 import { writeEvidenceStore } from "./evidence.js";
+import { compileCatalogMapRequest } from "./map/index.js";
 import {
+  SKILL_TARGET_IDS,
   projectPaths,
   readJson,
   setupProject,
-  SKILL_TARGET_IDS,
   writeJsonAtomic,
 } from "./project.js";
-import { buildSelection } from "./selection.js";
 import {
   runForegroundService,
   serviceStatus,
@@ -28,6 +30,7 @@ import {
   loadSession,
   oldestUnansweredQuestionAcrossSessions,
 } from "./session-store.js";
+import { PACKAGED_ATLAS_ASSET_FILES } from "./server.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SKILL_SOURCE = fileURLToPath(
@@ -38,8 +41,10 @@ const VIEWER_ASSETS = fileURLToPath(new URL("../viewer", import.meta.url));
 const HELP = `Attend Local ${PACKAGE_VERSION}
 
 Usage:
-  attend setup [--root <path>] [--agent <id>] [--dry-run] [--json]
+  attend setup [--root <path>] [--agent <agents|claude>]... [--dry-run] [--json]
   attend phrases <path...> --question <text> [options]
+  attend families [--json]
+  attend map <request.json> [--root <path>] [--json]
   attend view [--root <path>] [--host <loopback>] [--port <number>] [--open] [--json]
   attend status [--root <path>] [--json]
   attend stop [--root <path>] [--json]
@@ -47,21 +52,19 @@ Usage:
   attend reply --message <text> --expected-revision <n> --selection-id <id> [--question-id <turn-id>] [options]
   attend doctor [--root <path>] [--json]
 
-The alpha supports one deterministic visual question: recurring phrases across
-explicitly named Markdown, text, or normalized JSONL sources.
+Governed local visualization for a bundled ${CATALOG_COUNTS.families}-family Atlas catalog plus the
+recurring-phrases shortcut. This release exposes ${CATALOG_COUNTS.executable} executable bundled members
+and ${CATALOG_COUNTS.unavailable} explicit capability abstention, with fixed renderers and strict map
+request contracts backed by exact quote evidence.
 `;
 
 const COMMAND_HELP = {
-  setup: `Usage: attend setup [--root <path>] [--agent <id>] [--dry-run] [--json]
+  setup: `Usage: attend setup [--root <path>] [--agent <agents|claude>]... [--dry-run] [--json]
 
 Create project-scoped configuration, local-state exclusions, and the managed
 attend-visualize agent skill. Setup is safe to rerun and refuses to overwrite
-unmanaged files.
-
-The skill is installed once per host-agent convention: \`agents\`
-(.agents/skills/) for agents that read the cross-agent location, and \`claude\`
-(.claude/skills/) for Claude Code, which reads only its own. Both are installed
-by default; repeat --agent to install a subset.
+unmanaged files. Without --agent, setup installs both the .agents and .claude
+skill copies.
 `,
   phrases: `Usage: attend phrases <path...> --question <text> [options]
 
@@ -75,6 +78,19 @@ Options:
   --max-file-bytes <n>     Per-file read ceiling (default: 2000000)
   --root <path>            Project root (normally detected from .git)
   --json                   Emit machine-readable output
+`,
+  families: `Usage: attend families [--json]
+
+Emit the governed ${CATALOG_COUNTS.families}-family Family Atlas catalog: ${CATALOG_COUNTS.executable} executable bundled
+members, ${CATALOG_COUNTS.unavailable} explicit capability abstention, and every documented or rejected
+alternative.
+`,
+  map: `Usage: attend map <request.json> [--root <path>] [--json]
+
+Validate a strict Family Atlas map request, re-read and verify exact source
+quotes inside the trusted project root, compile a canonical atlas-v2 package,
+persist its public package and private evidence, create or reuse a session, and
+update current.json last.
 `,
   view: `Usage: attend view [--root <path>] [--host <loopback>] [--port <number>] [--open] [--json]
 
@@ -195,6 +211,18 @@ function analysisPaths(root, analysisId) {
   };
 }
 
+function selectionNoun(selection) {
+  return selection.artifactKind === "atlas-v2" ? "mark" : "phrase";
+}
+
+function selectionLabel(mark) {
+  return typeof mark.phrase === "string"
+    ? `“${mark.phrase}”`
+    : typeof mark.label === "string"
+      ? `${mark.kind ?? "mark"} “${mark.label}”`
+      : mark.id;
+}
+
 async function requireSetup(root) {
   const paths = projectPaths(root);
   if (!(await exists(paths.project))) {
@@ -225,21 +253,12 @@ async function setupCommand(args, context) {
   });
   if (parsed.help) return output(context.stdout, parsed.help.trimEnd());
   if (parsed.positionals.length) throw new Error("setup does not accept positional arguments");
-  const agents = parsed.values.agent;
-  if (agents) {
-    const unknown = agents.filter((id) => !SKILL_TARGET_IDS.includes(id));
-    if (unknown.length) {
-      throw new Error(
-        `Unknown --agent value(s): ${unknown.join(", ")}. Known values: ${SKILL_TARGET_IDS.join(", ")}.`,
-      );
-    }
-  }
   const root = await detectedRoot(context.cwd, parsed.values.root);
   const result = await setupProject({
     root,
     dryRun: parsed.values["dry-run"] || false,
     skillSource: SKILL_SOURCE,
-    agents,
+    agents: parsed.values.agent ?? SKILL_TARGET_IDS,
   });
   if (parsed.values.json) return jsonOutput(context.stdout, { ok: true, ...result });
 
@@ -253,6 +272,24 @@ async function setupCommand(args, context) {
         : `Attend is already set up in ${root}; nothing changed.`,
   );
   for (const item of result.planned) output(context.stdout, `  ${item.action.padEnd(9)} ${item.path}`);
+}
+
+async function familiesCommand(args, context) {
+  const parsed = parse("families", args, {});
+  if (parsed.help) return output(context.stdout, parsed.help.trimEnd());
+  if (parsed.positionals.length) throw new Error("families does not accept positional arguments");
+  const families = listCatalogFamilies();
+  const result = {
+    ok: true,
+    catalogVersion: CATALOG_VERSION,
+    counts: CATALOG_COUNTS,
+    families,
+  };
+  if (parsed.values.json) return jsonOutput(context.stdout, result);
+  output(
+    context.stdout,
+    `Catalog ${CATALOG_VERSION}: ${CATALOG_COUNTS.families} families, ${CATALOG_COUNTS.executable} executable, ${CATALOG_COUNTS.documented} documented, ${CATALOG_COUNTS.rejected} rejected.`,
+  );
 }
 
 async function phrasesCommand(args, context) {
@@ -332,6 +369,58 @@ async function phrasesCommand(args, context) {
       `Skipped ${result.skippedInputCount} input${result.skippedInputCount === 1 ? "" : "s"}; inspect knownOmissions in the analysis for exact paths and reasons.`,
     );
   }
+  output(context.stdout, `Analysis: ${paths.analysis}`);
+  output(context.stdout, "Next: attend view");
+}
+
+async function mapCommand(args, context) {
+  const parsed = parse("map", args, {});
+  if (parsed.help) return output(context.stdout, parsed.help.trimEnd());
+  if (parsed.positionals.length !== 1) throw new Error("map requires exactly one request.json path");
+  const root = await detectedRoot(context.cwd, parsed.values.root);
+  await requireSetup(root);
+  const request = await readJson(resolve(context.cwd, parsed.positionals[0]));
+  const { dataPackage, evidenceStore, family, member } = await compileCatalogMapRequest({
+    root,
+    request,
+  });
+  const paths = analysisPaths(root, dataPackage.id);
+  await writeJsonAtomic(paths.analysis, dataPackage);
+  await writeEvidenceStore({ root, dataPackage, evidenceStore });
+
+  let session;
+  try {
+    session = await createSession({ root, id: dataPackage.id, dataPackage });
+  } catch (error) {
+    if (error?.code !== "SESSION_EXISTS") throw error;
+    session = await loadSession({ root, sessionId: dataPackage.id });
+  }
+  await writeJsonAtomic(paths.current, {
+    schemaVersion: 1,
+    analysisId: dataPackage.id,
+    sessionId: session.id,
+    dataHash: dataPackage.hashes.data,
+  });
+
+  const result = {
+    ok: true,
+    analysisId: dataPackage.id,
+    sessionId: session.id,
+    catalogVersion: dataPackage.catalog.version,
+    family: family.id,
+    member: member.id,
+    dataHash: dataPackage.hashes.data,
+    corpusHash: dataPackage.hashes.corpus,
+    markCount: dataPackage.marks.length,
+    sourceCount: dataPackage.sources.length,
+    analysisPath: paths.analysis,
+    next: "attend view",
+  };
+  if (parsed.values.json) return jsonOutput(context.stdout, result);
+  output(
+    context.stdout,
+    `Compiled ${family.title} / ${member.name} into ${dataPackage.marks.length} evidence-backed mark${dataPackage.marks.length === 1 ? "" : "s"}.`,
+  );
   output(context.stdout, `Analysis: ${paths.analysis}`);
   output(context.stdout, "Next: attend view");
 }
@@ -458,7 +547,7 @@ async function contextCommand(args, context) {
   if (parsed.positionals.length) throw new Error("context does not accept positional arguments");
   const root = await detectedRoot(context.cwd, parsed.values.root);
   const session = await currentSession(root);
-  const selection = buildSelection(session.dataPackage, session.state);
+  const selection = buildArtifactSelection(session.dataPackage, session.state);
   const includeExcerpts = parsed.values["include-excerpts"] || false;
   const redactSelection = (value) => includeExcerpts
     ? value
@@ -511,14 +600,15 @@ async function contextCommand(args, context) {
     );
   }
   if (!selection.selectedMarkIds.length) {
-    output(context.stdout, `No phrase is selected (state v${selection.stateRevision}).`);
+    output(context.stdout, `No ${selectionNoun(selection)} is selected (state v${selection.stateRevision}).`);
     return;
   }
+  const noun = selectionNoun(selection);
   output(
     context.stdout,
-    `Selected ${selection.marks.map((mark) => `“${mark.phrase}”`).join(", ")} at state v${selection.stateRevision}.`,
+    `Selected ${selection.marks.map(selectionLabel).join(", ")} at state v${selection.stateRevision}.`,
   );
-  output(context.stdout, `${selection.sourceRefs.length} exact evidence reference(s).`);
+  output(context.stdout, `${selection.sourceRefs.length} exact evidence reference(s) for the selected ${noun}${selection.marks.length === 1 ? "" : "s"}.`);
 }
 
 async function replyCommand(args, context) {
@@ -574,7 +664,7 @@ async function replyCommand(args, context) {
     }
     replySelection = pendingQuestion.selection;
   } else {
-    const currentSelection = buildSelection(session.dataPackage, session.state);
+    const currentSelection = buildArtifactSelection(session.dataPackage, session.state);
     if (
       session.state.revision !== expectedRevision ||
       currentSelection.id !== expectedSelectionId
@@ -663,37 +753,37 @@ async function doctorCommand(args, context) {
     }
   } else add("project", "fail", "Run `attend setup`.");
 
-  const { readFile: readSkill } = await import("node:fs/promises");
-  const installedSkills = [];
-  const missingSkills = [];
-  for (const target of paths.skills) {
-    const skillText = await readSkill(target.path, "utf8").catch(() => null);
-    const valid = skillText?.startsWith("---\n") && skillText.includes("attend-managed");
-    (valid ? installedSkills : missingSkills).push(target);
-  }
-  add(
-    "agent-skill",
-    installedSkills.length ? "pass" : "fail",
-    installedSkills.length
-      ? `${installedSkills.map((target) => target.relativePath).join(", ")}${
-          missingSkills.length
-            ? `; not installed for ${missingSkills.map((target) => target.agent).join(", ")}`
-            : ""
-        }`
-      : "Managed skill is missing. Run `attend setup`.",
-  );
-
-  for (const asset of ["index.html", "app.js", "styles.css"]) {
+  for (const skillPath of paths.skills) {
+    const skillText = await import("node:fs/promises")
+      .then(({ readFile }) => readFile(skillPath.path, "utf8"))
+      .catch(() => null);
     add(
-      `viewer-${asset}`,
-      await exists(join(VIEWER_ASSETS, asset)) ? "pass" : "fail",
-      join(VIEWER_ASSETS, asset),
+      `agent-skill-${skillPath.agent}`,
+      skillText?.startsWith("---\n") && skillText.includes("attend-managed") ? "pass" : "warn",
+      skillText ? skillPath.path : `Managed ${skillPath.agent} skill is missing.`,
+    );
+  }
+
+  for (const asset of PACKAGED_ATLAS_ASSET_FILES) {
+    const assetPath = resolve(VIEWER_ASSETS, asset);
+    const assetId = asset.replace(/^\.\.\/src\//u, "core/").replaceAll("/", "-");
+    add(
+      `viewer-${assetId}`,
+      await exists(assetPath) ? "pass" : "fail",
+      assetPath,
     );
   }
 
   try {
     const session = await currentSession(root);
-    add("analysis", "pass", `${session.dataPackage.rows.length} rows; ${session.dataPackage.id}`);
+    const metadata = libraryMetadataForArtifact(session.dataPackage);
+    const count = metadata.counts?.phrases
+      ?? metadata.counts?.marks
+      ?? metadata.counts?.rows
+      ?? session.dataPackage.rows?.length
+      ?? session.dataPackage.marks?.length
+      ?? 0;
+    add("analysis", "pass", `${count} items; ${session.dataPackage.id}`);
     add("session", "pass", `${session.id} at revision ${session.state.revision}`);
   } catch (error) {
     add("analysis", "warn", error.message);
@@ -746,6 +836,8 @@ export async function run(
   }
   if (command === "setup") return setupCommand(args, context);
   if (command === "phrases") return phrasesCommand(args, context);
+  if (command === "families") return familiesCommand(args, context);
+  if (command === "map") return mapCommand(args, context);
   if (command === "view") return viewCommand(args, context);
   if (command === "status") return statusCommand(args, context);
   if (command === "stop") return stopCommand(args, context);

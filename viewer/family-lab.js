@@ -1,6 +1,8 @@
 import SAMPLE_SOURCES from "./family-datasets.js";
-import { renderFamily, RENDERER_IDS } from "./family-renderers.js";
+import { RENDERER_IDS } from "./family-renderers.js";
 import { toCompilerRequest } from "./family-compiler-adapter.js";
+import { atlasPackageToRenderModel } from "./package-model.js";
+import { renderAtlasPackage } from "./package-renderer.js";
 import {
   CANONICAL_INPUT_MEDIA,
   MAP_FAMILIES,
@@ -69,7 +71,7 @@ function field(dataset, roleName, fallback) {
 }
 
 function recordId(dataset, record) {
-  return String(record?.[field(dataset, "id", "id")] ?? record?.id ?? "");
+  return String(record?.markId ?? record?.[field(dataset, "id", "id")] ?? record?.id ?? "");
 }
 
 function recordLabel(dataset, record) {
@@ -244,6 +246,7 @@ function renderContract(manifest) {
 }
 
 function evidenceForRecord(dataset, record) {
+  if (Array.isArray(record?.evidenceRefs)) return record.evidenceRefs;
   const refs = list(record?.[field(dataset, "evidence", "evidenceRefs")]);
   return refs.map((reference) => dataset.evidence.find((item) => item.id === reference)).filter(Boolean);
 }
@@ -321,19 +324,29 @@ async function renderGallery() {
   const revision = ++state.galleryRenderRevision;
   const dataset = SAMPLE_SOURCES[state.familyId];
   const manifest = manifestById.get(state.familyId) ?? { id: state.familyId, title: words(state.familyId) };
+  const request = await toCompilerRequest(dataset, manifest, {
+    availableWidth: Math.max(elements.visual.clientWidth || 0, 320),
+  });
+  const packageValue = await compileMap(request);
+  const renderModel = atlasPackageToRenderModel(packageValue);
+  if (state.familyId !== renderModel.familyId) return;
   elements.kicker.textContent = `${groupLabel(manifest)} family · ${dataset.mediaType} sample`;
-  elements.title.textContent = manifest.title ?? words(state.familyId);
-  elements.question.textContent = dataset.question;
+  elements.title.textContent = renderModel.title || manifest.title || words(state.familyId);
+  elements.question.textContent = renderModel.question || dataset.question;
   elements.description.textContent = familyDescription(manifest);
   elements.status.textContent = maturity(manifest);
-  elements.fallback.textContent = fallbackSummary(dataset);
+  elements.fallback.textContent = fallbackSummary(renderModel);
   renderContract(manifest);
-  updateMarkSelect(dataset);
-  updateSelection(dataset);
+  updateMarkSelect(renderModel);
+  updateSelection(renderModel);
   elements.visual.setAttribute("aria-busy", "true");
   const stagingRoot = document.createElement("div");
   try {
-    await renderFamily({ root: stagingRoot, dataset, selectedId: state.selectedId });
+    await renderAtlasPackage({
+      root: stagingRoot,
+      packageValue,
+      selectedMarkIds: state.selectedId ? [state.selectedId] : [],
+    });
     if (revision === state.galleryRenderRevision) elements.visual.replaceChildren(...stagingRoot.childNodes);
   } catch (error) {
     if (revision === state.galleryRenderRevision) {

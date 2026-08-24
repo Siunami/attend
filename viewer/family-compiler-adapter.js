@@ -1,3 +1,8 @@
+import {
+  catalogReceiptForFamily,
+  executableMemberIdForFamily,
+} from "./package-model.js";
+
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -77,14 +82,14 @@ const RECORD_PROJECTIONS = Object.freeze({
   rank: { label: "label", value: "value", group: "group" },
   distribution: { value: "value", label: "label", group: "group" },
   composition: { part: "part", value: "value", whole: "series" },
-  "passage-comparison": { passage: "text", version: "version", label: "source" },
+  "passage-comparison": { passage: "text", version: "version", label: "stance" },
   trend: { time: "x", value: "y", series: "series", label: "annotation" },
   timeline: { time: "start", endTime: "end", label: "label", lane: "group", status: "status" },
   sequence: { order: "order", label: "label", stage: "mediaType" },
   relationship: { x: "x", y: "y", label: "label", group: "group" },
   matrix: { row: "row", column: "column", value: "value", label: "annotation" },
   hierarchy: { id: "id", parentId: "parent", label: "label", value: "value" },
-  "region-map": { region: "region", value: "value", label: "label" },
+  "region-map": { region: "region", value: "value", label: "label", baseline: "baseline" },
   "point-map": { latitude: "latitude", longitude: "longitude", label: "label", value: "value", group: "category" },
   field: { x: "x", y: "y", value: "value", label: "yLabel" },
   "collection-atlas": { x: "x", y: "y", label: "label", cluster: "category" },
@@ -139,9 +144,14 @@ function recordsForFamily(dataset) {
   if (["network", "flow", "mechanism"].includes(dataset.familyId)) return recordsForLinks(dataset);
   const projection = RECORD_PROJECTIONS[dataset.familyId];
   if (!projection) throw new TypeError(`${dataset.familyId}: no gallery compiler projection is registered`);
+  const passageOrderByVersion = new Map();
   return dataset.records.map((record, index) => {
     const fields = semanticProjection(dataset, record, projection);
-    if (dataset.familyId === "passage-comparison") fields.order = index;
+    if (dataset.familyId === "passage-comparison") {
+      const witness = String(fields.version);
+      fields.order = passageOrderByVersion.get(witness) ?? 0;
+      passageOrderByVersion.set(witness, fields.order + 1);
+    }
     if (dataset.familyId === "collection-atlas") fields.order = index;
     if (dataset.familyId === "annotated-specimen") {
       fields.specimen = dataset.specimen.sourceId;
@@ -171,6 +181,8 @@ async function sourceForCompiler(source) {
  */
 export async function toCompilerRequest(dataset, manifest, { availableWidth = 1_200 } = {}) {
   if (!dataset || dataset.familyId !== manifest?.id) throw new TypeError("dataset and manifest family ids must match");
+  const catalog = catalogReceiptForFamily(dataset.familyId);
+  const executableMember = { id: executableMemberIdForFamily(dataset.familyId) };
   const records = recordsForFamily(dataset);
   const required = manifest.data.requiredRoles.map((role) => role.id);
   const optional = manifest.data.optionalRoles.map((role) => role.id);
@@ -181,6 +193,7 @@ export async function toCompilerRequest(dataset, manifest, { availableWidth = 1_
       .map((role) => [role, role]),
   );
   return {
+    catalog,
     familyId: dataset.familyId,
     question: {
       text: dataset.question,
@@ -200,7 +213,7 @@ export async function toCompilerRequest(dataset, manifest, { availableWidth = 1_
     roleMapping,
     options: {
       availableWidth,
-      variant: manifest.variants[0].id,
+      variant: catalog.rendererVariantId,
     },
   };
 }

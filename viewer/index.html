@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>Attend</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E">
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
@@ -33,7 +34,7 @@
       <main id="workspace" class="workspace" data-chat-open="false">
         <section id="map-pane" class="map-pane" aria-labelledby="question-heading">
           <header class="map-header">
-            <p class="eyebrow">Phrase recurrence</p>
+            <p id="visualization-kind" class="eyebrow">Evidence visualization</p>
             <h1 id="question-heading">Loading question…</h1>
             <p id="question-target" class="target"></p>
           </header>
@@ -42,6 +43,10 @@
             No phrases meet this analysis threshold.
           </div>
           <ol id="phrase-list" class="phrase-list" aria-label="Recurring phrases"></ol>
+          <section id="atlas-view" class="atlas-view" aria-labelledby="question-heading" hidden>
+            <div id="atlas-visual" class="atlas-visual" aria-live="polite" aria-busy="false"></div>
+            <p id="atlas-abstention" class="atlas-abstention" role="status" hidden></p>
+          </section>
         </section>
 
         <aside
@@ -88,6 +93,8 @@
       </main>
     </div>
 
+    <script src="./vendor/d3.min.js"></script>
+    <script src="./vendor/topojson-client.min.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

@@ -1,3 +1,6 @@
+import { atlasPackageToRenderModel, isAtlasPackage } from "./package-model.js";
+import { atlasSelectionSummary, renderAtlasPackage } from "./package-renderer.js";
+
 const basePath = `${window.location.pathname.replace(/[^/]*$/, "").replace(/\/+$/, "")}/`;
 
 const elements = {
@@ -12,6 +15,10 @@ const elements = {
   target: document.getElementById("question-target"),
   phraseList: document.getElementById("phrase-list"),
   empty: document.getElementById("empty-state"),
+  eyebrow: document.getElementById("visualization-kind"),
+  atlasView: document.getElementById("atlas-view"),
+  atlasVisual: document.getElementById("atlas-visual"),
+  atlasAbstention: document.getElementById("atlas-abstention"),
   revision: document.getElementById("state-revision"),
   selection: document.getElementById("selection-panel"),
   conversation: document.getElementById("conversation"),
@@ -29,6 +36,7 @@ let pending = false;
 let chatOpen = false;
 let chatPinned = true;
 let draftSelectionKey = null;
+let atlasRenderRevision = 0;
 
 function apiUrl(path) {
   return `${basePath}api/${path}`;
@@ -58,12 +66,55 @@ function unwrapSession(payload) {
   return payload.session || payload;
 }
 
+function unwrapArtifact(payload) {
+  return payload.package || payload.artifact || payload.dataPackage || payload;
+}
+
 function countLabel(count) {
   return count === 1 ? "occurrence" : "occurrences";
 }
 
 function sourceLabel(count) {
   return count === 1 ? "source" : "sources";
+}
+
+function atlasMode() {
+  return dataPackage?.schemaVersion === 2 && isAtlasPackage(dataPackage);
+}
+
+function sessionRevision(value = session) {
+  return value?.state?.revision ?? value?.revision ?? 0;
+}
+
+function atlasSessionId(value = session) {
+  return value?.id ?? value?.sessionId ?? value?.analysisId ?? dataPackage?.packageId ?? dataPackage?.id;
+}
+
+function atlasSelectedMarkIds(value = session) {
+  const selection = value?.selection ?? {};
+  const state = value?.state ?? {};
+  const candidates = selection.selectedMarkIds
+    ?? selection.markIds
+    ?? state.selectedMarkIds
+    ?? state.markIds
+    ?? (Array.isArray(selection.marks) ? selection.marks.map((mark) => mark.id ?? mark.markId) : []);
+  if (!Array.isArray(candidates)) return [];
+  let allowed = null;
+  try {
+    allowed = new Set(atlasPackageToRenderModel(dataPackage).selectableMarkIds);
+  } catch {
+    allowed = null;
+  }
+  return [...new Set(candidates.map(String).filter((id) => !allowed || allowed.has(id)))];
+}
+
+function atlasSelectedMarks(value = session) {
+  if (!atlasMode()) return [];
+  try {
+    return atlasSelectionSummary(dataPackage, atlasSelectedMarkIds(value));
+  } catch {
+    return [];
+  }
 }
 
 function markContextSummary(mark) {
@@ -75,6 +126,12 @@ function currentMark() {
 }
 
 function currentSuggestedQuestion() {
+  if (atlasMode()) {
+    const marks = atlasSelectedMarks();
+    if (!marks.length) return "";
+    if (marks.length === 1) return `What does the selected “${marks[0].label}” reveal about this view?`;
+    return `What patterns connect these ${marks.length} selected marks?`;
+  }
   const mark = currentMark();
   if (!mark) return "";
   return mark.distinctSourceCount === 1
@@ -83,13 +140,17 @@ function currentSuggestedQuestion() {
 }
 
 function semanticAttachmentKey(value = session) {
-  const selection = value?.selection;
+  const sourceSelection = value?.selection || {};
+  const selectedMarkIds = atlasMode() ? atlasSelectedMarkIds(value) : sourceSelection.selectedMarkIds || [];
+  const selection = atlasMode()
+    ? { ...sourceSelection, selectedMarkIds }
+    : sourceSelection;
   if (!selection?.selectedMarkIds?.length) return null;
   return JSON.stringify({
     dataPackageId: selection.dataPackageId,
     dataHash: selection.dataHash,
     map: selection.map,
-    selectedMarkIds: selection.selectedMarkIds || [],
+    selectedMarkIds: selection.selectedMarkIds,
     predicate: selection.predicate,
     filters: selection.filters,
     aggregation: selection.aggregation,
@@ -165,6 +226,15 @@ function syncComposer() {
 }
 
 function renderHeader() {
+  if (atlasMode()) {
+    const model = atlasPackageToRenderModel(dataPackage);
+    elements.eyebrow.textContent = `Family Atlas · ${model.catalog.family.replaceAll("-", " ")}`;
+    elements.question.textContent = model.question;
+    elements.target.textContent = `${model.catalog.family} · ${model.catalog.member}`;
+    elements.corpusMeta.textContent = `${model.records.length} marks · ${model.evidence.length} evidence references · package ${model.packageId}`;
+    return;
+  }
+  elements.eyebrow.textContent = "Phrase recurrence";
   const sourceCount = dataPackage.sources.length;
   const phraseCount = dataPackage.rows.length;
   const skippedInputCount = (dataPackage.knownOmissions || []).filter(
@@ -180,6 +250,15 @@ function renderHeader() {
 }
 
 function renderPhrases() {
+  if (atlasMode()) {
+    elements.phraseList.replaceChildren();
+    elements.phraseList.hidden = true;
+    elements.empty.hidden = true;
+    elements.atlasView.hidden = false;
+    return;
+  }
+  elements.phraseList.hidden = false;
+  elements.atlasView.hidden = true;
   elements.phraseList.replaceChildren();
   elements.empty.hidden = dataPackage.rows.length > 0;
   if (dataPackage.rows.length === 0) {
@@ -234,8 +313,86 @@ function renderPhrases() {
   }
 }
 
+async function renderAtlasVisualization() {
+  if (!atlasMode() || !elements.atlasVisual) return;
+  const revision = ++atlasRenderRevision;
+  const selectedMarkIds = atlasSelectedMarkIds();
+  elements.atlasVisual.setAttribute("aria-busy", "true");
+  elements.atlasAbstention.hidden = true;
+  try {
+    await renderAtlasPackage({
+      root: elements.atlasVisual,
+      packageValue: dataPackage,
+      selectedMarkIds,
+      onSelect: (markId) => selectAtlasMark(markId),
+    });
+    if (revision !== atlasRenderRevision) return;
+  } catch (error) {
+    if (revision !== atlasRenderRevision) return;
+    elements.atlasVisual.replaceChildren();
+    elements.atlasAbstention.hidden = false;
+    elements.atlasAbstention.textContent = error instanceof Error
+      ? `This view abstained: ${error.message}`
+      : "This view abstained because its package could not be rendered.";
+  } finally {
+    if (revision === atlasRenderRevision) elements.atlasVisual.setAttribute("aria-busy", "false");
+  }
+}
+
+async function copyAtlasSelection(marks) {
+  const text = marks.map((mark) => `${mark.id}: ${mark.label}`).join("\n");
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable");
+    await navigator.clipboard.writeText(text);
+    setStatus("Selection copied.");
+  } catch {
+    setStatus("The selection could not be copied.", true);
+  }
+}
+
 function renderSelection() {
   elements.selection.replaceChildren();
+  if (atlasMode()) {
+    const marks = atlasSelectedMarks();
+    elements.selection.hidden = marks.length === 0;
+    if (!marks.length) {
+      syncComposer();
+      return;
+    }
+    const attachment = document.createElement("div");
+    attachment.className = "selection-attachment atlas-selection-attachment";
+    const copy = document.createElement("div");
+    copy.className = "attachment-copy";
+    const label = document.createElement("span");
+    label.className = "attachment-label";
+    label.textContent = "Attach selected marks to next message";
+    const names = document.createElement("strong");
+    names.className = "attachment-phrase";
+    names.textContent = marks.map((mark) => mark.label).join(" · ");
+    const meta = document.createElement("span");
+    meta.className = "attachment-meta";
+    meta.textContent = `${marks.length} selected mark${marks.length === 1 ? "" : "s"} · ${marks.reduce((count, mark) => count + mark.evidenceRefs.length, 0)} evidence references`;
+    copy.append(label, names, meta);
+
+    const actions = document.createElement("div");
+    actions.className = "selection-actions";
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = "selection-copy";
+    copyButton.textContent = "Copy selection";
+    copyButton.addEventListener("click", () => copyAtlasSelection(marks));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "selection-remove attachment-remove";
+    remove.setAttribute("aria-label", "Remove selected marks");
+    remove.textContent = "×";
+    remove.addEventListener("click", clearSelection);
+    actions.append(copyButton, remove);
+    attachment.append(copy, actions);
+    elements.selection.append(attachment);
+    syncComposer();
+    return;
+  }
   const mark = currentMark();
   elements.selection.hidden = !mark;
   if (!mark) {
@@ -276,6 +433,27 @@ function isLegacyContextReceipt(turn) {
 }
 
 function historicalAttachment(turn) {
+  if (atlasMode()) {
+    const turnMarks = Array.isArray(turn.selection?.marks) ? turn.selection.marks : [];
+    const labels = turnMarks.map((mark) => mark.label ?? mark.id ?? mark.markId).filter(Boolean);
+    const selectedIds = turn.selection?.selectedMarkIds ?? turn.selection?.markIds ?? [];
+    const names = labels.length ? labels : (Array.isArray(selectedIds) ? selectedIds : []);
+    if (!names.length) return null;
+    const attachment = document.createElement("div");
+    attachment.className = "turn-attachment";
+    attachment.setAttribute("aria-label", "Attached visual context for selected marks");
+    const label = document.createElement("span");
+    label.className = "turn-attachment-label";
+    label.textContent = "From visualization";
+    const selected = document.createElement("strong");
+    selected.className = "turn-attachment-phrase";
+    selected.textContent = names.join(" · ");
+    const meta = document.createElement("span");
+    meta.className = "turn-attachment-meta";
+    meta.textContent = `${names.length} selected mark${names.length === 1 ? "" : "s"}`;
+    attachment.append(label, selected, meta);
+    return attachment;
+  }
   const mark = turn.selection?.marks?.[0];
   if (!mark) return null;
   const attachment = document.createElement("div");
@@ -298,6 +476,19 @@ function historicalAttachment(turn) {
 }
 
 function linkedQuestionReference(turn) {
+  if (atlasMode()) {
+    const marks = Array.isArray(turn.selection?.marks) ? turn.selection.marks : [];
+    const ids = turn.selection?.selectedMarkIds ?? turn.selection?.markIds ?? [];
+    const names = marks.map((mark) => mark.label ?? mark.id ?? mark.markId).filter(Boolean);
+    const selected = names.length ? names : (Array.isArray(ids) ? ids : []);
+    if (!selected.length) return null;
+    const reference = document.createElement("div");
+    reference.className = "turn-reply-reference";
+    const text = document.createElement("span");
+    text.textContent = `Using ${selected.length} selected mark${selected.length === 1 ? "" : "s"} as context · ${selected.join(" · ")}`;
+    reference.append(text);
+    return reference;
+  }
   const mark = turn.selection?.marks?.[0];
   if (!mark) return null;
   const reference = document.createElement("div");
@@ -532,7 +723,9 @@ function renderConversation({ follow = false, focusTurnId = null } = {}) {
   if (turns.length === 0) {
     const empty = document.createElement("p");
     empty.className = "conversation-empty";
-    empty.textContent = "Select a phrase, then ask about it. Your question will keep the exact visual state attached.";
+    empty.textContent = atlasMode()
+      ? "Select a mark, then ask about it. Your question will keep the exact visual state attached."
+      : "Select a phrase, then ask about it. Your question will keep the exact visual state attached.";
     elements.conversation.append(empty);
   } else {
     for (const turn of turns) {
@@ -579,13 +772,53 @@ function renderConversation({ follow = false, focusTurnId = null } = {}) {
 }
 
 function renderState({ followConversation = false, focusConversationTurnId = null } = {}) {
-  elements.revision.textContent = `v${session.state.revision}`;
+  elements.revision.textContent = `v${sessionRevision()}`;
   renderPhrases();
   renderSelection();
   renderConversation({
     follow: followConversation,
     focusTurnId: focusConversationTurnId,
   });
+  if (atlasMode()) renderAtlasVisualization().catch(() => {});
+}
+
+async function selectAtlasMark(markId) {
+  if (!atlasMode() || pending) return;
+  const selected = atlasSelectedMarkIds();
+  if (selected.includes(String(markId))) {
+    pinDraftToCurrentSelection();
+    syncComposer();
+    setStatus("");
+    openChat();
+    elements.input.focus();
+    return;
+  }
+  pending = true;
+  syncComposer();
+  setStatus("Attaching the selected mark…");
+  try {
+    const payload = await request("selection", {
+      method: "POST",
+      // Atlas selection is deliberately the small untrusted browser envelope.
+      body: JSON.stringify({
+        sessionId: atlasSessionId(),
+        revision: sessionRevision(),
+        markId: String(markId),
+      }),
+    });
+    session = unwrapSession(payload);
+    pinDraftToCurrentSelection();
+    renderState();
+    openChat();
+    elements.input.focus();
+    setStatus("");
+  } catch (error) {
+    if (error.status === 409) await refreshState();
+    setStatus(error.message, true);
+  } finally {
+    pending = false;
+    syncComposer();
+  }
 }
 
 async function selectRow(rowId) {
@@ -627,17 +860,17 @@ async function selectRow(rowId) {
 }
 
 async function clearSelection() {
-  if (pending || !session.selection?.selectedMarkIds?.length) return;
+  if (pending || (atlasMode() ? !atlasSelectedMarkIds().length : !session.selection?.selectedMarkIds?.length)) return;
   pending = true;
   syncComposer();
-  setStatus("Removing the attached phrase…");
+  setStatus(atlasMode() ? "Removing the selected marks…" : "Removing the attached phrase…");
   try {
+    const body = atlasMode()
+      ? { sessionId: atlasSessionId(), revision: sessionRevision(), markId: null }
+      : { expectedRevision: sessionRevision(), selectedIds: [] };
     const payload = await request("selection", {
       method: "POST",
-      body: JSON.stringify({
-        expectedRevision: session.state.revision,
-        selectedIds: [],
-      }),
+      body: JSON.stringify(body),
     });
     session = unwrapSession(payload);
     pinDraftToCurrentSelection();
@@ -656,7 +889,9 @@ async function clearSelection() {
 async function sendMessage(message) {
   if (pending || hasActiveResponse()) return;
   if (draftNeedsReview()) {
-    setStatus("The attached phrase changed while you were writing. Select a phrase again before asking.", true);
+    setStatus(atlasMode()
+      ? "The selected marks changed while you were writing. Select them again before asking."
+      : "The attached phrase changed while you were writing. Select a phrase again before asking.", true);
     return;
   }
   pending = true;
@@ -680,7 +915,9 @@ async function sendMessage(message) {
   } catch (error) {
     if (error.status === 409) {
       await refreshState();
-      setStatus("The view changed. Review the attached phrase, then ask again.", true);
+      setStatus(atlasMode()
+        ? "The view changed. Review the selected marks, then ask again."
+        : "The view changed. Review the attached phrase, then ask again.", true);
     } else {
       setStatus(error.message, true);
     }
@@ -715,7 +952,13 @@ async function retryQuestion(questionId) {
 
 async function refreshState() {
   const next = unwrapSession(await request("state"));
-  if (!session || next.state.revision > session.state.revision) {
+  const explicitStateRevisionIsNewer = Boolean(
+    next?.state?.revision !== undefined
+      && session?.state?.revision !== undefined
+      && next.state.revision > session.state.revision,
+  );
+  const normalizedRevisionIsNewer = sessionRevision(next) > sessionRevision();
+  if (!session || explicitStateRevisionIsNewer || normalizedRevisionIsNewer) {
     const priorAssistantIds = new Set(
       (session?.conversation?.turns || session?.turns || [])
         .filter((turn) => turn.role === "assistant")
@@ -727,7 +970,9 @@ async function refreshState() {
     session = next;
     renderState({ focusConversationTurnId });
     if (draftNeedsReview()) {
-      setStatus("The attached phrase changed while you were writing. Select a phrase again before asking.", true);
+      setStatus(atlasMode()
+        ? "The selected marks changed while you were writing. Select them again before asking."
+        : "The attached phrase changed while you were writing. Select a phrase again before asking.", true);
     }
   }
 }
@@ -811,7 +1056,7 @@ async function boot() {
   setChatOpen(false);
   try {
     [dataPackage, session] = await Promise.all([
-      request("data"),
+      request("data").then(unwrapArtifact),
       request("state").then(unwrapSession),
     ]);
     renderHeader();

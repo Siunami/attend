@@ -135,22 +135,41 @@ test("setup copies an explicitly supplied skill with a managed marker", async (t
     ".claude/skills/attend-visualize/SKILL.md",
   ]);
 
-  const claudeSkill = projectPaths(root).skills.find((target) => target.agent === "claude");
-  assert.equal(await readFile(claudeSkill.path, "utf8"), skill, "every host agent gets the same skill");
+  const claudeSkill = projectPaths(root).skills.find(
+    (target) => target.agent === "claude",
+  );
+  assert.equal(
+    await readFile(claudeSkill.path, "utf8"),
+    skill,
+    "every host agent gets the same managed skill",
+  );
 });
 
-test("setup installs the skill only for the requested host agents", async (t) => {
+test("setup installs the skill only for requested host-agent conventions", async (t) => {
   const root = await fixture(t);
   const source = join(root, "skill-template.md");
-  await writeFile(source, "---\nname: attend-visualize\ndescription: Open a local view.\n---\n\n# Attend\n");
+  await writeFile(
+    source,
+    "---\nname: attend-visualize\ndescription: Open a local view.\n---\n\n# Attend\n",
+  );
 
-  const installed = await setupProject({ root, skillSource: source, agents: ["claude"] });
+  const installed = await setupProject({
+    root,
+    skillSource: source,
+    agents: ["claude"],
+  });
   assert.deepEqual(installed.created, [
     ".attend/project.json",
     ".attend/.gitignore",
     ".claude/skills/attend-visualize/SKILL.md",
   ]);
-  assert.equal(await exists(projectPaths(root).skill), false, ".agents is left alone");
+  assert.equal(await exists(projectPaths(root).skill), false);
+  assert.equal(
+    await exists(
+      projectPaths(root).skills.find((target) => target.agent === "claude").path,
+    ),
+    true,
+  );
 
   await assert.rejects(
     setupProject({ root, skillSource: source, agents: ["cursor"] }),

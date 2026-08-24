@@ -8,34 +8,29 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { VIEW_ID, VIEW_VERSION } from "./constants.js";
+import {
+  artifactAdapterFor,
+  buildArtifactSelection,
+  clearArtifactSelection,
+  createArtifactState,
+  normalizeArtifactState,
+  patchArtifactState,
+  validateArtifactPackage,
+  verifyArtifactPackage,
+  viewDescriptorForArtifact,
+} from "./artifacts/index.js";
 import {
   assertSafeWritePath,
   ensureSafeDirectory,
   writeJsonAtomic,
 } from "./project.js";
-import { buildSelection } from "./selection.js";
 
 const SESSION_SCHEMA_VERSION = 1;
 const SESSION_DIRECTORY = ".attend/local/sessions";
 const SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
-const SORT_FIELDS = new Set([
-  "occurrenceCount",
-  "distinctSourceCount",
-  "wordCount",
-  "phrase",
-]);
-const SORT_DIRECTIONS = new Set(["asc", "desc"]);
 const MAX_INLINE_SOURCE_REFS = 50;
 const LOCK_RETRY_DELAYS_MS = [10, 20, 40, 80, 120, 160, 200, 250];
 const MALFORMED_LOCK_STALE_MS = 2_000;
-const MUTABLE_STATE_FIELDS = new Set([
-  "selectedIds",
-  "query",
-  "minCount",
-  "sort",
-  "sourceScope",
-]);
 const RESPONSE_STATUSES = new Set([
   "queued",
   "running",
@@ -91,60 +86,6 @@ function sessionsDirectory(root) {
 
 export function sessionFilePath({ root, sessionId }) {
   return join(sessionsDirectory(root), `${validateSessionId(sessionId)}.json`);
-}
-
-function normalizeSelectedIds(selectedIds) {
-  if (!Array.isArray(selectedIds)) {
-    throw new TypeError("selectedIds must be an array");
-  }
-  const seen = new Set();
-  const normalized = [];
-  for (const id of selectedIds) {
-    if (typeof id !== "string" || id.length === 0) {
-      throw new TypeError("Every selected id must be a non-empty string");
-    }
-    if (!seen.has(id)) {
-      seen.add(id);
-      normalized.push(id);
-    }
-  }
-  return normalized;
-}
-
-function normalizeSort(sort) {
-  if (!sort || typeof sort !== "object" || Array.isArray(sort)) {
-    throw new TypeError("sort must be an object with by and direction");
-  }
-  const by = sort.by ?? sort.field;
-  const direction = sort.direction;
-  if (!SORT_FIELDS.has(by)) {
-    throw new TypeError(`Unsupported sort field: ${by}`);
-  }
-  if (!SORT_DIRECTIONS.has(direction)) {
-    throw new TypeError(`Unsupported sort direction: ${direction}`);
-  }
-  return { by, direction };
-}
-
-function normalizeSourceScope(sourceScope, availableSourceIds) {
-  if (!sourceScope || typeof sourceScope !== "object" || Array.isArray(sourceScope)) {
-    throw new TypeError("sourceScope must be an object");
-  }
-  const mode = sourceScope.mode;
-  if (mode !== "all" && mode !== "include") {
-    throw new TypeError("sourceScope.mode must be 'all' or 'include'");
-  }
-  const sourceIds = normalizeSelectedIds(sourceScope.sourceIds ?? []);
-  const available = new Set(availableSourceIds);
-  for (const sourceId of sourceIds) {
-    if (!available.has(sourceId)) {
-      throw new TypeError(`Unknown source id in sourceScope: ${sourceId}`);
-    }
-  }
-  if (mode === "all") {
-    return { mode, sourceIds: [] };
-  }
-  return { mode, sourceIds };
 }
 
 function compactSelectionSourceScope(selection) {
@@ -246,14 +187,9 @@ function normalizeConversationContext(turns) {
 }
 
 function normalizeStoredSession(session) {
-  const availableSourceIds = session?.dataPackage?.sources?.map(
-    (source) => source?.id,
-  );
-  if (session?.state?.sourceScope && Array.isArray(availableSourceIds)) {
-    session.state.sourceScope = normalizeSourceScope(
-      session.state.sourceScope,
-      availableSourceIds,
-    );
+  if (session?.dataPackage) {
+    const dataPackage = validateArtifactPackage(session.dataPackage);
+    session.state = normalizeArtifactState(dataPackage, session.state);
   }
 
   const turns = Array.isArray(session?.conversation)
@@ -265,120 +201,9 @@ function normalizeStoredSession(session) {
   return session;
 }
 
-function validateMinCount(minCount) {
-  if (!Number.isSafeInteger(minCount) || minCount < 1) {
-    throw new TypeError("minCount must be a positive integer");
-  }
-  return minCount;
-}
-
-function validateDataPackage(dataPackage) {
-  const value = cloneJson(dataPackage, "dataPackage");
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError("dataPackage must be an object");
-  }
-  if (value.kind !== "attend-data-package") {
-    throw new TypeError("dataPackage.kind must be 'attend-data-package'");
-  }
-  if (typeof value.id !== "string" || value.id.length === 0) {
-    throw new TypeError("dataPackage.id must be a non-empty string");
-  }
-  if (!Array.isArray(value.sources) || !Array.isArray(value.rows)) {
-    throw new TypeError("dataPackage must include sources and rows arrays");
-  }
-  if (value.map?.id !== VIEW_ID || value.map?.version !== VIEW_VERSION) {
-    throw new TypeError(
-      `dataPackage.map must identify ${VIEW_ID} version ${VIEW_VERSION}`,
-    );
-  }
-  const sourceIds = value.sources.map((source) => source?.id);
-  if (sourceIds.some((id) => typeof id !== "string" || id.length === 0)) {
-    throw new TypeError("Every dataPackage source must have a non-empty id");
-  }
-  if (new Set(sourceIds).size !== sourceIds.length) {
-    throw new TypeError("dataPackage source ids must be unique");
-  }
-  return { value, sourceIds };
-}
-
-function initialState(dataPackage, sourceIds, overrides = {}) {
-  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
-    throw new TypeError("state must be an object");
-  }
-  if (Object.hasOwn(overrides, "revision") && overrides.revision !== 0) {
-    throw new TypeError("A new session always starts at revision 0");
-  }
-  const unknown = Object.keys(overrides).filter(
-    (key) => key !== "revision" && !MUTABLE_STATE_FIELDS.has(key),
-  );
-  if (unknown.length) {
-    throw new TypeError(`Unknown session state field: ${unknown.join(", ")}`);
-  }
-
-  return {
-    revision: 0,
-    selectedIds: normalizeSelectedIds(overrides.selectedIds ?? []),
-    query:
-      overrides.query === undefined
-        ? ""
-        : typeof overrides.query === "string"
-          ? overrides.query
-          : (() => {
-              throw new TypeError("query must be a string");
-            })(),
-    minCount: validateMinCount(
-      overrides.minCount ?? dataPackage.config?.minCount ?? 2,
-    ),
-    sort: normalizeSort(
-      overrides.sort ??
-        dataPackage.config?.ranking?.[0] ??
-        { by: "occurrenceCount", direction: "desc" },
-    ),
-    sourceScope: normalizeSourceScope(
-      overrides.sourceScope ?? { mode: "all", sourceIds: [] },
-      sourceIds,
-    ),
-  };
-}
-
-function applyStatePatch(current, patch, availableSourceIds) {
-  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
-    throw new TypeError("patch must be an object");
-  }
-  const unknown = Object.keys(patch).filter(
-    (key) => !MUTABLE_STATE_FIELDS.has(key),
-  );
-  if (unknown.length) {
-    throw new TypeError(`Unknown session state field: ${unknown.join(", ")}`);
-  }
-
-  const next = cloneJson(current, "session state");
-  next.sourceScope = normalizeSourceScope(
-    next.sourceScope ?? { mode: "all", sourceIds: [] },
-    availableSourceIds,
-  );
-  if (Object.hasOwn(patch, "selectedIds")) {
-    next.selectedIds = normalizeSelectedIds(patch.selectedIds);
-  }
-  if (Object.hasOwn(patch, "query")) {
-    if (typeof patch.query !== "string") {
-      throw new TypeError("query must be a string");
-    }
-    next.query = patch.query;
-  }
-  if (Object.hasOwn(patch, "minCount")) {
-    next.minCount = validateMinCount(patch.minCount);
-  }
-  if (Object.hasOwn(patch, "sort")) {
-    next.sort = normalizeSort(patch.sort);
-  }
-  if (Object.hasOwn(patch, "sourceScope")) {
-    next.sourceScope = normalizeSourceScope(
-      patch.sourceScope,
-      availableSourceIds,
-    );
-  }
-  return next;
+async function verifyStoredArtifact(session) {
+  await verifyArtifactPackage(session?.dataPackage);
+  return session;
 }
 
 async function readJson(path) {
@@ -533,7 +358,7 @@ function derivedSourceRefs(session) {
   return { refs, total };
 }
 
-function snapshot(session, supplied = {}) {
+function phraseSnapshot(session, supplied = {}) {
   if (!supplied || typeof supplied !== "object" || Array.isArray(supplied)) {
     throw new TypeError("turn.selection must be an object when supplied");
   }
@@ -618,6 +443,16 @@ function snapshot(session, supplied = {}) {
   };
 }
 
+function snapshot(session, supplied = {}) {
+  const adapter = artifactAdapterFor(session.dataPackage);
+  if (adapter.artifactKind === "phrase-v1") return phraseSnapshot(session, supplied);
+
+  // Atlas selections are never accepted from callers. The state and canonical
+  // package are both held under the session lock, so this is the one place a
+  // frozen chat attachment is derived before it is persisted.
+  return buildArtifactSelection(session.dataPackage, session.state);
+}
+
 async function mutateSession({ root, sessionId, expectedRevision, mutate }) {
   const path = sessionFilePath({ root, sessionId });
   await ensureSafeDirectory(root, dirname(path));
@@ -627,9 +462,9 @@ async function mutateSession({ root, sessionId, expectedRevision, mutate }) {
     lock = await acquireLock(path, sessionId, expectedRevision);
     const current = await readJson(path);
     assertExpectedRevision(current, expectedRevision);
-    const next = await mutate(
-      normalizeStoredSession(cloneJson(current, "session")),
-    );
+    const normalized = normalizeStoredSession(cloneJson(current, "session"));
+    await verifyStoredArtifact(normalized);
+    const next = await mutate(normalized);
     next.state.revision = expectedRevision + 1;
     next.updatedAt = new Date().toISOString();
     await writeJsonAtomic(path, next, { root });
@@ -657,6 +492,7 @@ async function mutateLatestSession({ root, sessionId, mutate }) {
     const session = normalizeStoredSession(
       cloneJson(await readJson(path), "session"),
     );
+    await verifyStoredArtifact(session);
     const outcome = (await mutate(session)) ?? {};
     if (outcome.changed === false) {
       return {
@@ -688,7 +524,9 @@ export async function createSession({
   id,
   state = {},
 } = {}) {
-  const { value: packageSnapshot, sourceIds } = validateDataPackage(dataPackage);
+  const packageSnapshot = cloneJson(dataPackage, "dataPackage");
+  validateArtifactPackage(packageSnapshot);
+  await verifyArtifactPackage(packageSnapshot);
   const sessionId = validateSessionId(id ?? packageSnapshot.id);
   const path = sessionFilePath({ root, sessionId });
   await ensureSafeDirectory(root, dirname(path));
@@ -714,9 +552,9 @@ export async function createSession({
       dataPackageId: packageSnapshot.id,
       createdAt: now,
       updatedAt: now,
-      view: { id: VIEW_ID, version: VIEW_VERSION },
+      view: viewDescriptorForArtifact(packageSnapshot),
       dataPackage: packageSnapshot,
-      state: initialState(packageSnapshot, sourceIds, state),
+      state: createArtifactState(packageSnapshot, state),
       conversation: { turns: [] },
     };
     await writeJsonAtomic(path, session, { root });
@@ -729,7 +567,9 @@ export async function createSession({
 export async function loadSession({ root, sessionId } = {}) {
   const path = sessionFilePath({ root, sessionId });
   await assertSafeWritePath(root, path);
-  return normalizeStoredSession(cloneJson(await readJson(path), "session"));
+  const session = normalizeStoredSession(cloneJson(await readJson(path), "session"));
+  await verifyStoredArtifact(session);
+  return session;
 }
 
 export async function updateSession({
@@ -743,14 +583,7 @@ export async function updateSession({
     sessionId: validateSessionId(sessionId),
     expectedRevision,
     mutate(session) {
-      const availableSourceIds = session.dataPackage.sources.map(
-        (source) => source.id,
-      );
-      session.state = applyStatePatch(
-        session.state,
-        patch,
-        availableSourceIds,
-      );
+      session.state = patchArtifactState(session.dataPackage, session.state, patch);
       return session;
     },
   });
@@ -1055,7 +888,7 @@ export async function appendConversationTurns({
     mutate(session) {
       let consumedSelection = null;
       if (consumeSelectedIds) {
-        consumedSelection = buildSelection(session.dataPackage, session.state);
+        consumedSelection = buildArtifactSelection(session.dataPackage, session.state);
         if (entries[0].suppliedSelection?.id !== consumedSelection.id) {
           const mismatch = new Error(
             "Consumed selection does not match the current session selection",
@@ -1152,7 +985,7 @@ export async function appendConversationTurns({
       // the latest relevant immutable attachment active for normal follow-ups.
       // Filters, sorting, query, and historical snapshots remain unchanged.
       if (consumeSelectedIds) {
-        session.state.selectedIds = [];
+        session.state = clearArtifactSelection(session.dataPackage, session.state);
       }
       return session;
     },

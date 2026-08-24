@@ -5,11 +5,13 @@ import {
   multiplesPolicy,
   requireMapFamily,
 } from "../map-families/registry.js";
+import { canonicalUsStateFips } from "../geography.js";
 import {
   DataPackageContractError,
   canonicalJson,
   canonicalize,
   createDataPackage,
+  isOpaqueEvidenceReferenceId,
   sha256Hex,
   stableId,
 } from "./data-package.js";
@@ -28,11 +30,19 @@ const SOURCE_PUBLIC_FIELDS = [
   "byteLength",
   "title",
   "date",
-  "recordId",
   "mediaType",
   "mimeType",
   "permissionRef",
+  "textProjection",
 ];
+const PRIVATE_PREVIEW_FIELDS = new Set([
+  "sourceId",
+  "recordId",
+  "locator",
+  "excerpt",
+  "quote",
+  "text",
+]);
 
 export class PipelineContractError extends TypeError {
   constructor(code, message, path = "compile") {
@@ -56,6 +66,20 @@ function isPlainObject(value) {
 function requiredString(value, path, maximum = 16_384) {
   if (typeof value !== "string" || value.trim().length === 0) fail("INVALID_STRING", "must be a non-empty string", path);
   if (value.length > maximum) fail("STRING_TOO_LONG", `must contain at most ${maximum} characters`, path);
+  return value;
+}
+
+function safeDisplayPath(value, path) {
+  requiredString(value, path, 2_048);
+  const normalized = value.replaceAll("\\", "/");
+  if (
+    normalized.startsWith("/")
+    || normalized.startsWith("~")
+    || /^[a-z]:\//iu.test(normalized)
+    || normalized.split("/").includes("..")
+  ) {
+    fail("UNSAFE_DISPLAY_PATH", "must be relative and cannot traverse a parent directory", path);
+  }
   return value;
 }
 
@@ -119,10 +143,13 @@ function publicSource(source) {
 function validateSource(source, path) {
   if (!isPlainObject(source)) fail("INVALID_SOURCE", "must be an object", path);
   safeId(source.id, `${path}.id`);
-  requiredString(source.displayPath, `${path}.displayPath`, 2_048);
+  safeDisplayPath(source.displayPath, `${path}.displayPath`);
   if (!SHA256.test(source.sha256 ?? "")) fail("INVALID_SOURCE", "sha256 must be a lowercase SHA-256 digest", `${path}.sha256`);
   requiredString(source.kind, `${path}.kind`, 128);
   if (!Number.isSafeInteger(source.byteLength) || source.byteLength < 0) fail("INVALID_SOURCE", "byteLength must be a non-negative integer", `${path}.byteLength`);
+  if (source.textProjection !== undefined && !["utf8", "normalized-text"].includes(source.textProjection)) {
+    fail("INVALID_SOURCE", "textProjection must be utf8 or normalized-text", `${path}.textProjection`);
+  }
 }
 
 function validateRecord(record, sourceIds, path) {
@@ -161,7 +188,10 @@ export function validateNormalizedSourceBundle(bundle) {
     if (recordIds.has(record.id)) fail("DUPLICATE_RECORD", `duplicate record id ${record.id}`, `sourceBundle.records[${index}].id`);
     recordIds.add(record.id);
   });
-  if (bundle.requestedInputs !== undefined && (!Array.isArray(bundle.requestedInputs) || bundle.requestedInputs.some((value) => typeof value !== "string" || value.length > 2_048))) fail("INVALID_SOURCE_BUNDLE", "requestedInputs must contain bounded strings", "sourceBundle.requestedInputs");
+  if (bundle.requestedInputs !== undefined) {
+    if (!Array.isArray(bundle.requestedInputs)) fail("INVALID_SOURCE_BUNDLE", "requestedInputs must be an array", "sourceBundle.requestedInputs");
+    bundle.requestedInputs.forEach((value, index) => safeDisplayPath(value, `sourceBundle.requestedInputs[${index}]`));
+  }
   if (bundle.knownOmissions !== undefined && !Array.isArray(bundle.knownOmissions)) fail("INVALID_SOURCE_BUNDLE", "knownOmissions must be an array", "sourceBundle.knownOmissions");
   return bundle;
 }
@@ -228,14 +258,14 @@ function entryComparator(manifest) {
   };
 }
 
-function normalizeEvidenceRefs(record, sourceIds) {
+async function normalizePrivateEvidenceRefs(record, sourceIds) {
   const supplied = record.evidenceRefs?.length
     ? record.evidenceRefs
     : [{
         sourceId: record.sourceId,
         recordId: record.id,
         locator: { kind: "record", recordId: record.id },
-        ...(typeof record.excerpt === "string" ? { excerpt: record.excerpt.slice(0, 1_000) } : {}),
+        ...(typeof record.excerpt === "string" ? { quote: record.excerpt } : {}),
       }];
   const refs = [];
   const seen = new Set();
@@ -244,27 +274,47 @@ function normalizeEvidenceRefs(record, sourceIds) {
     if (!isPlainObject(reference) || !sourceIds.has(reference.sourceId)) fail("INVALID_EVIDENCE_REF", `record ${record.id} evidence references an unknown source`, `record.${record.id}.evidenceRefs[${index}]`);
     const locator = reference.locator ?? { kind: "record", recordId: record.id };
     if (!isPlainObject(locator) || Object.keys(locator).length === 0) fail("INVALID_EVIDENCE_REF", "locator must be a non-empty object", `record.${record.id}.evidenceRefs[${index}].locator`);
-    const normalized = canonicalize({
+    const quote = reference.quote ?? reference.excerpt;
+    if (quote !== undefined) requiredString(quote, `record.${record.id}.evidenceRefs[${index}].quote`, 16_384);
+    const privateReference = canonicalize({
       sourceId: reference.sourceId,
       recordId: reference.recordId ?? record.id,
       locator,
-      ...(typeof reference.excerpt === "string" ? { excerpt: reference.excerpt.slice(0, 1_000) } : {}),
+      ...(quote === undefined ? {} : { quote }),
     });
-    const key = canonicalJson(normalized);
+    const key = canonicalJson(privateReference);
     if (!seen.has(key)) {
       seen.add(key);
-      refs.push(normalized);
+      refs.push(canonicalize({
+        id: await stableId("evidence", privateReference),
+        ...privateReference,
+      }));
     }
   }
-  refs.sort((left, right) => compareText(canonicalJson(left), canonicalJson(right)));
+  refs.sort((left, right) => compareText(left.id, right.id));
   return refs;
+}
+
+function publicPreviewMetadata(value) {
+  if (Array.isArray(value)) return value.map(publicPreviewMetadata);
+  if (!isPlainObject(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !PRIVATE_PREVIEW_FIELDS.has(key))
+      .map(([key, entry]) => [key, publicPreviewMetadata(entry)]),
+  );
 }
 
 function normalizePreview(preview) {
   if (preview === undefined || preview === null) return undefined;
-  if (typeof preview === "string") return { kind: "text", text: preview.slice(0, 16_384) };
+  if (typeof preview === "string") {
+    return {
+      kind: "text",
+      lineCount: Math.max(1, preview.split(/\r?\n/u).length),
+    };
+  }
   if (!isPlainObject(preview)) fail("INVALID_MEDIA", "preview must be a string or object", "record.media.preview");
-  return canonicalize(preview);
+  return canonicalize(publicPreviewMetadata(preview));
 }
 
 function normalizeMedia(record, source, manifest) {
@@ -359,6 +409,17 @@ function validateFamilyEntries(manifest, entries) {
   if (manifest.id === "composition" && entries.some((entry) => entry.roles.value < 0)) fail("INVALID_COMPOSITION", "part values must be non-negative", "sourceBundle.records");
   if (manifest.id === "distribution" && entries.some((entry) => entry.roles.weight !== undefined && entry.roles.weight < 0)) fail("INVALID_DISTRIBUTION", "weights must be non-negative", "sourceBundle.records");
   if (["flow"].includes(manifest.id) && entries.some((entry) => entry.roles.value < 0)) fail("INVALID_FLOW", "flow values must be non-negative", "sourceBundle.records");
+  if (manifest.id === "region-map") {
+    for (const entry of entries) {
+      if (!canonicalUsStateFips(entry.roles.region)) {
+        fail(
+          "UNKNOWN_GEOGRAPHIC_REGION",
+          "region must resolve to us-atlas/states-10m using a US Census two-digit state or territory FIPS id",
+          `records.${entry.record.id}.region`,
+        );
+      }
+    }
+  }
   if (manifest.id === "timeline") {
     for (const entry of entries) {
       if (entry.roles.endTime !== undefined && comparableTime(entry.roles.endTime) < comparableTime(entry.roles.time)) fail("INVALID_INTERVAL", "endTime cannot precede time", `records.${entry.record.id}`);
@@ -373,7 +434,7 @@ function validateFamilyEntries(manifest, entries) {
 }
 
 function baseItems(entries) {
-  return entries.map((entry) => ({ markId: entry.mark.id, recordId: entry.record.id, ...entry.roles }));
+  return entries.map((entry) => ({ markId: entry.mark.id, ...entry.roles }));
 }
 
 function buildPayload(manifest, entries) {
@@ -515,15 +576,23 @@ function validateOptions(options, manifest) {
   };
 }
 
-function normalizedPatchEvidence(refs, sourceIds, path) {
+function normalizedPatchEvidence(refs, evidenceRefIds, path) {
   if (!Array.isArray(refs) || refs.length === 0) fail("INVALID_ENRICHMENT", "inputEvidenceRefs must be non-empty", path);
-  return refs.map((reference, index) => {
-    if (!isPlainObject(reference) || !sourceIds.has(reference.sourceId)) fail("INVALID_ENRICHMENT", "evidence ref has unknown source", `${path}[${index}]`);
-    return canonicalize(reference);
+  const uniqueRefs = [];
+  const seen = new Set();
+  refs.forEach((reference, index) => {
+    if (!isOpaqueEvidenceReferenceId(reference) || !evidenceRefIds.has(reference)) {
+      fail("INVALID_ENRICHMENT", "inputEvidenceRefs must name canonical opaque evidence ids", `${path}[${index}]`);
+    }
+    if (!seen.has(reference)) {
+      seen.add(reference);
+      uniqueRefs.push(reference);
+    }
   });
+  return uniqueRefs;
 }
 
-async function applyEnrichments(marks, enrichments, manifest, sourceIds) {
+async function applyEnrichments(marks, enrichments, manifest, evidenceRefIds) {
   if (!Array.isArray(enrichments)) fail("INVALID_ENRICHMENT", "enrichments must be an array", "enrichments");
   if (enrichments.length > manifest.enrichment.maximumPatches) fail("ENRICHMENT_LIMIT", `at most ${manifest.enrichment.maximumPatches} patches are permitted`, "enrichments");
   const markById = new Map(marks.map((mark) => [mark.id, mark]));
@@ -542,7 +611,7 @@ async function applyEnrichments(marks, enrichments, manifest, sourceIds) {
     safeId(patch.method?.id, `${path}.method.id`);
     if (!Number.isSafeInteger(patch.method?.version) || patch.method.version < 1) fail("INVALID_ENRICHMENT", "method version must be positive", `${path}.method.version`);
     requiredString(patch.validation?.rule, `${path}.validation.rule`, 1_000);
-    const inputEvidenceRefs = normalizedPatchEvidence(patch.inputEvidenceRefs, sourceIds, `${path}.inputEvidenceRefs`);
+    const inputEvidenceRefs = normalizedPatchEvidence(patch.inputEvidenceRefs, evidenceRefIds, `${path}.inputEvidenceRefs`);
     const target = `${patch.markId}\u0000${patch.field}`;
     if (targets.has(target)) fail("DUPLICATE_ENRICHMENT", "only one patch may target a mark field", path);
     targets.add(target);
@@ -579,8 +648,14 @@ function presentationMediaType(marks, manifest, requested) {
   return manifest.multiples.defaultMedia;
 }
 
-export async function compileMap({
+/**
+ * Compile a public v2 package alongside the private evidence linkage required
+ * to stage its evidence store. The linkage is deliberately not part of the
+ * returned package and must never be serialized with it.
+ */
+export async function compileMapWithEvidence({
   familyId,
+  catalog,
   question,
   sourceBundle,
   roleMapping,
@@ -588,6 +663,9 @@ export async function compileMap({
   enrichments = [],
 } = {}) {
   const manifest = requireMapFamily(familyId);
+  if (!catalog || catalog.family !== manifest.id || catalog.rendererId !== manifest.renderer.id || typeof catalog.member !== "string" || !catalog.member) {
+    fail("INVALID_CATALOG", "catalog family/member/renderer receipt is required", "catalog");
+  }
   validateNormalizedSourceBundle(sourceBundle);
   const mediaAdapter = manifest.mediaAdapters.find((adapter) => adapter.medium === sourceBundle.medium);
   if (mediaAdapter.decision === "abstain") fail("FAMILY_ABSTAINS", `${manifest.id} abstains from ${sourceBundle.medium} input: ${mediaAdapter.reason}`, "sourceBundle.medium");
@@ -603,22 +681,38 @@ export async function compileMap({
   })).sort(entryComparator(manifest));
   validateFamilyEntries(manifest, entries);
 
+  const privateEvidenceRefsById = new Map();
   await Promise.all(entries.map(async (entry) => {
     const source = sourcesById.get(entry.record.sourceId);
+    const privateEvidenceRefs = await normalizePrivateEvidenceRefs(entry.record, sourceIds);
+    for (const reference of privateEvidenceRefs) {
+      const existing = privateEvidenceRefsById.get(reference.id);
+      if (existing && canonicalJson(existing) !== canonicalJson(reference)) {
+        fail("EVIDENCE_ID_COLLISION", `opaque evidence id collision for ${reference.id}`, `record.${entry.record.id}.evidenceRefs`);
+      }
+      privateEvidenceRefsById.set(reference.id, reference);
+    }
+    entry.privateEvidenceRefs = privateEvidenceRefs;
     entry.mark = canonicalize({
       id: await stableId("mark", `${manifest.id}\u0000${entry.record.id}`),
       kind: manifest.id,
-      recordId: entry.record.id,
       label: markLabel(entry.roles, manifest, entry.record.id),
       summary: markSummary(entry.roles),
       values: entry.roles,
-      evidenceRefs: normalizeEvidenceRefs(entry.record, sourceIds),
+      evidenceRefs: privateEvidenceRefs.map((reference) => reference.id),
       media: normalizeMedia(entry.record, source, manifest),
     });
   }));
 
   const marks = entries.map((entry) => entry.mark);
-  const enrichmentReceipts = await applyEnrichments(marks, enrichments, manifest, sourceIds);
+  const privateEvidenceRefs = [...privateEvidenceRefsById.values()]
+    .sort((left, right) => compareText(left.id, right.id));
+  const enrichmentReceipts = await applyEnrichments(
+    marks,
+    enrichments,
+    manifest,
+    new Set(privateEvidenceRefs.map((reference) => reference.id)),
+  );
   const payload = buildPayload(manifest, entries);
   const repeatMedia = presentationMediaType(marks, manifest, normalizedOptions.mediaType);
   const multiples = multiplesPolicy({
@@ -689,8 +783,9 @@ export async function compileMap({
     multiples,
     ...(manifest.renderer.geography ? { geography: GEOGRAPHY_RENDERER_POLICY } : {}),
   });
-  return createDataPackage({
+  const dataPackage = await createDataPackage({
     family: manifest,
+    catalog,
     question: normalizedQuestion,
     scope: canonicalize({
       adapter: sourceBundle.adapter,
@@ -712,6 +807,12 @@ export async function compileMap({
       networkCalls: 0,
     },
   });
+  return { dataPackage, evidenceReferences: privateEvidenceRefs };
+}
+
+/** Public package-only compatibility entry point used by render-only callers. */
+export async function compileMap(input = {}) {
+  return (await compileMapWithEvidence(input)).dataPackage;
 }
 
 export const compileMapPackage = compileMap;

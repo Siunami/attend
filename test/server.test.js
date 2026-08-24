@@ -246,7 +246,8 @@ test("serves only the tokenized viewer and explicit read endpoints", async (t) =
   assert.deepEqual(await responseJson(libraryHealth), {
     ok: true,
     service: "attend-library",
-    protocolVersion: 1,
+    protocolVersion: 2,
+    packageVersion: "0.2.0",
     instanceId: TEST_INSTANCE_ID,
     sessionCount: 1,
   });

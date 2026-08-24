@@ -477,6 +477,12 @@ h1 {
   stroke-width: 1.5;
 }
 
+.family-visual .annotation-anchor {
+  fill: var(--series-1);
+  stroke: var(--paper);
+  stroke-width: 3;
+}
+
 .family-visual .atlas-cluster-label {
   fill: var(--muted);
   font-family: var(--serif);

@@ -1,9 +1,17 @@
 import { join, resolve } from "node:path";
 
+import {
+  artifactAdapterFor,
+  evidenceReferenceIdsForSelection,
+  evidenceSourceIdsForSelection,
+  validateArtifactPackage,
+} from "./artifacts/index.js";
+import { isOpaqueEvidenceReferenceId } from "./pipeline/data-package.js";
 import { readJson, writeJsonAtomic } from "./project.js";
 import { loadSources, sha256 } from "./sources.js";
 
 const EVIDENCE_STORE_SCHEMA_VERSION = 1;
+const ATLAS_EVIDENCE_STORE_SCHEMA_VERSION = 2;
 const EVIDENCE_PACKET_SCHEMA_VERSION = 1;
 const EVIDENCE_DIRECTORY = ".attend/local/evidence";
 const SAFE_DATA_ID = /^data_[a-f0-9]{16}$/u;
@@ -31,6 +39,12 @@ function canonicalJson(value) {
   return JSON.stringify(canonicalValue(value));
 }
 
+function isPlainObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function evidenceError(code, message, cause) {
   const error = new Error(message, cause ? { cause } : undefined);
   error.code = code;
@@ -38,21 +52,18 @@ function evidenceError(code, message, cause) {
 }
 
 function validateDataPackage(dataPackage) {
-  if (!dataPackage || typeof dataPackage !== "object" || Array.isArray(dataPackage)) {
-    throw new TypeError("dataPackage must be an object");
-  }
-  if (!SAFE_DATA_ID.test(dataPackage.id ?? "")) {
+  const value = validateArtifactPackage(dataPackage);
+  if (!SAFE_DATA_ID.test(value.id ?? "")) {
     throw new TypeError("dataPackage.id must be a safe Attend data id");
   }
   if (
-    typeof dataPackage.hashes?.data !== "string" ||
-    typeof dataPackage.hashes?.corpus !== "string" ||
-    !Array.isArray(dataPackage.sources) ||
-    !Array.isArray(dataPackage.rows)
+    typeof value.hashes?.data !== "string" ||
+    typeof value.hashes?.corpus !== "string" ||
+    !Array.isArray(value.sources)
   ) {
-    throw new TypeError("dataPackage is missing hashes, sources, or rows");
+    throw new TypeError("dataPackage is missing hashes or sources");
   }
-  return dataPackage;
+  return value;
 }
 
 export function evidenceStorePath({ root, dataPackageId }) {
@@ -76,7 +87,7 @@ function sourceEvidence(source) {
     byteLength: source.byteLength,
     kind: source.kind,
   };
-  for (const field of ["title", "date", "recordId", "containerPath"]) {
+  for (const field of ["title", "date", "recordId", "containerPath", "textProjection"]) {
     if (typeof source[field] === "string" && source[field].length > 0) {
       metadata[field] = source[field];
     }
@@ -92,12 +103,116 @@ function storeHashable(store) {
     dataHash: store.dataHash,
     corpusHash: store.corpusHash,
     sources: store.sources,
+    ...(store.references === undefined ? {} : { references: store.references }),
   };
 }
 
+function isAtlasPackage(dataPackage) {
+  return artifactAdapterFor(dataPackage).artifactKind === "atlas-v2";
+}
+
+function publicEvidenceReferenceIds(dataPackage) {
+  return new Set(dataPackage.marks.flatMap((mark) => mark.evidenceRefs));
+}
+
+function privateEvidenceReferenceId(reference) {
+  return `evidence_${sha256(canonicalJson({
+    sourceId: reference.sourceId,
+    recordId: reference.recordId,
+    locator: reference.locator,
+    quote: reference.quote,
+  })).slice(0, 16)}`;
+}
+
+function invalidPrivateReference(message) {
+  return evidenceError(
+    "EVIDENCE_REFERENCE_INVALID",
+    `The private Atlas evidence linkage is invalid: ${message}. Regenerate the map.`,
+  );
+}
+
+function normalizePrivateReference(reference, sourceById, expectedIds, index) {
+  const path = `references[${index}]`;
+  if (!isPlainObject(reference)) throw invalidPrivateReference(`${path} must be an object`);
+  const allowed = new Set(["id", "sourceId", "recordId", "locator", "quote"]);
+  for (const key of Object.keys(reference)) {
+    if (!allowed.has(key)) throw invalidPrivateReference(`${path}.${key} is not supported`);
+  }
+  if (!isOpaqueEvidenceReferenceId(reference.id) || !expectedIds.has(reference.id)) {
+    throw invalidPrivateReference(`${path}.id does not resolve to a public mark evidence id`);
+  }
+  if (typeof reference.sourceId !== "string" || !sourceById.has(reference.sourceId)) {
+    throw invalidPrivateReference(`${path}.sourceId does not resolve to a verified source`);
+  }
+  if (typeof reference.recordId !== "string" || !/^[a-z][a-z0-9_-]{1,127}$/u.test(reference.recordId)) {
+    throw invalidPrivateReference(`${path}.recordId is invalid`);
+  }
+  if (!isPlainObject(reference.locator) || Object.keys(reference.locator).length === 0) {
+    throw invalidPrivateReference(`${path}.locator is invalid`);
+  }
+  try {
+    canonicalJson(reference.locator);
+  } catch (error) {
+    throw invalidPrivateReference(`${path}.locator is not JSON-safe`);
+  }
+  if (typeof reference.quote !== "string" || reference.quote.length === 0 || reference.quote.length > 16_384) {
+    throw invalidPrivateReference(`${path}.quote is invalid`);
+  }
+  const source = sourceById.get(reference.sourceId);
+  const locator = reference.locator;
+  if (locator.kind === "text-range") {
+    if (
+      !Number.isSafeInteger(locator.startOffset) ||
+      !Number.isSafeInteger(locator.endOffset) ||
+      locator.startOffset < 0 ||
+      locator.endOffset < locator.startOffset ||
+      locator.endOffset > source.text.length ||
+      (locator.path !== undefined && locator.path !== source.displayPath) ||
+      source.text.slice(locator.startOffset, locator.endOffset) !== reference.quote
+    ) {
+      throw invalidPrivateReference(`${path} does not match its source text-range`);
+    }
+  } else if (!source.text.includes(reference.quote)) {
+    throw invalidPrivateReference(`${path}.quote does not occur in its verified source`);
+  }
+  const normalized = canonicalValue({
+    id: reference.id,
+    sourceId: reference.sourceId,
+    recordId: reference.recordId,
+    locator: reference.locator,
+    quote: reference.quote,
+  });
+  if (privateEvidenceReferenceId(normalized) !== normalized.id) {
+    throw invalidPrivateReference(`${path}.id does not bind its source, record, locator, and quote`);
+  }
+  return normalized;
+}
+
+function normalizeAtlasEvidenceReferences({ dataPackage, evidenceSources, evidenceReferences }) {
+  if (!Array.isArray(evidenceReferences)) {
+    throw invalidPrivateReference("references are required for an Atlas package");
+  }
+  const expectedIds = publicEvidenceReferenceIds(dataPackage);
+  const sourceById = new Map(evidenceSources.map((source) => [source.id, source]));
+  const seen = new Set();
+  const references = evidenceReferences.map((reference, index) => {
+    const normalized = normalizePrivateReference(reference, sourceById, expectedIds, index);
+    if (seen.has(normalized.id)) {
+      throw invalidPrivateReference(`references contains duplicate id ${normalized.id}`);
+    }
+    seen.add(normalized.id);
+    return normalized;
+  });
+  if (seen.size !== expectedIds.size || [...expectedIds].some((id) => !seen.has(id))) {
+    throw invalidPrivateReference("references do not close over every public mark evidence id");
+  }
+  return references.sort((left, right) => compareText(left.id, right.id));
+}
+
 /** Build the private content companion for a public, text-free DataPackage. */
-export function buildEvidenceStore({ dataPackage, sources } = {}) {
+export function buildEvidenceStore({ dataPackage, sources, evidenceReferences } = {}) {
   const packageValue = validateDataPackage(dataPackage);
+  const atlas = isAtlasPackage(packageValue);
   if (!Array.isArray(sources)) throw new TypeError("sources must be an array");
   if (sources.length !== packageValue.sources.length) {
     throw evidenceError(
@@ -116,7 +231,13 @@ export function buildEvidenceStore({ dataPackage, sources } = {}) {
 
   const evidenceSources = packageValue.sources.map((expected) => {
     const source = suppliedById.get(expected.id);
-    const metadataMatches = ["kind", "title", "date", "recordId", "containerPath"]
+    const metadataMatches = [
+      "kind",
+      "title",
+      "date",
+      ...(atlas ? [] : ["recordId", "containerPath"]),
+      "textProjection",
+    ]
       .every((field) => (source?.[field] ?? null) === (expected[field] ?? null));
     if (
       !source ||
@@ -134,13 +255,21 @@ export function buildEvidenceStore({ dataPackage, sources } = {}) {
     return sourceEvidence(source);
   });
 
+  const references = atlas
+    ? normalizeAtlasEvidenceReferences({
+        dataPackage: packageValue,
+        evidenceSources,
+        evidenceReferences,
+      })
+    : undefined;
   const hashable = {
-    schemaVersion: EVIDENCE_STORE_SCHEMA_VERSION,
+    schemaVersion: atlas ? ATLAS_EVIDENCE_STORE_SCHEMA_VERSION : EVIDENCE_STORE_SCHEMA_VERSION,
     kind: "attend-evidence-store",
     dataPackageId: packageValue.id,
     dataHash: packageValue.hashes.data,
     corpusHash: packageValue.hashes.corpus,
     sources: evidenceSources,
+    ...(references === undefined ? {} : { references }),
   };
   const contentHash = sha256(canonicalJson(hashable));
   return {
@@ -153,16 +282,19 @@ export function buildEvidenceStore({ dataPackage, sources } = {}) {
 /** Validate linkage and every source body before any content enters a prompt. */
 export function validateEvidenceStore({ dataPackage, evidenceStore } = {}) {
   const packageValue = validateDataPackage(dataPackage);
+  const atlas = isAtlasPackage(packageValue);
   if (
     !evidenceStore ||
     typeof evidenceStore !== "object" ||
     Array.isArray(evidenceStore) ||
-    evidenceStore.schemaVersion !== EVIDENCE_STORE_SCHEMA_VERSION ||
+    evidenceStore.schemaVersion !== (atlas ? ATLAS_EVIDENCE_STORE_SCHEMA_VERSION : EVIDENCE_STORE_SCHEMA_VERSION) ||
     evidenceStore.kind !== "attend-evidence-store" ||
     evidenceStore.dataPackageId !== packageValue.id ||
     evidenceStore.dataHash !== packageValue.hashes.data ||
     evidenceStore.corpusHash !== packageValue.hashes.corpus ||
-    !Array.isArray(evidenceStore.sources)
+    !Array.isArray(evidenceStore.sources) ||
+    (atlas && !Array.isArray(evidenceStore.references)) ||
+    (!atlas && evidenceStore.references !== undefined)
   ) {
     throw evidenceError(
       "EVIDENCE_STORE_INVALID",
@@ -187,6 +319,7 @@ export function validateEvidenceStore({ dataPackage, evidenceStore } = {}) {
       ...source,
       sha256: source.sourceSha256,
     })),
+    ...(atlas ? { evidenceReferences: evidenceStore.references } : {}),
   });
   if (rebuilt.hashes.content !== expectedHash) {
     throw evidenceError(
@@ -237,6 +370,13 @@ export async function ensureEvidenceStore({ root, dataPackage } = {}) {
     });
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
+  }
+
+  if (artifactAdapterFor(packageValue).artifactKind === "atlas-v2") {
+    throw evidenceError(
+      "EVIDENCE_REGENERATION_REQUIRED",
+      "The private Atlas evidence store is missing. Re-run `attend map` so Attend can verify and stage its source evidence again.",
+    );
   }
 
   let loaded;
@@ -339,49 +479,35 @@ function sampledSegments(text, maxTextBytes) {
   );
 }
 
-function selectedSourceIds(dataPackage, selection) {
-  if (selection === null || selection === undefined) return [];
-  if (typeof selection !== "object" || Array.isArray(selection)) {
-    throw new TypeError("selection must be an object or null");
-  }
-  const markIds = Array.isArray(selection.selectedMarkIds)
-    ? selection.selectedMarkIds
-    : Array.isArray(selection.marks)
-      ? selection.marks.map((mark) => mark?.id).filter(Boolean)
-      : [];
-  if (markIds.length === 0) return [];
-  const rowsById = new Map(dataPackage.rows.map((row) => [row.id, row]));
-  const selectedRows = markIds.map((id) => {
-    const row = rowsById.get(id);
-    if (!row) {
-      throw evidenceError(
-        "EVIDENCE_SELECTION_INVALID",
-        `Selection references an unknown mark: ${String(id)}`,
-      );
+function selectedSourceIds(dataPackage, evidenceStore, selection) {
+  try {
+    if (isAtlasPackage(dataPackage)) {
+      const evidenceRefIds = evidenceReferenceIdsForSelection(dataPackage, selection);
+      const referencesById = new Map(evidenceStore.references.map((reference) => [reference.id, reference]));
+      const selected = evidenceRefIds.map((id) => {
+        const reference = referencesById.get(id);
+        if (!reference) {
+          throw evidenceError(
+            "EVIDENCE_STORE_INVALID",
+            `The private evidence store is missing selected reference ${id}.`,
+          );
+        }
+        return reference;
+      });
+      const implicated = new Set(selected.map((reference) => reference.sourceId));
+      return dataPackage.sources
+        .map((source) => source.id)
+        .filter((sourceId) => implicated.has(sourceId));
     }
-    return row;
-  });
-  const includedScope = selection.filters?.sourceScope?.mode === "include"
-    ? new Set(selection.filters.sourceScope.sourceIds ?? [])
-    : null;
-  const implicated = new Set();
-  for (const row of selectedRows) {
-    for (const occurrence of row.occurrences ?? []) {
-      if (!includedScope || includedScope.has(occurrence.sourceId)) {
-        implicated.add(occurrence.sourceId);
-      }
-    }
-  }
-  const ordered = dataPackage.sources
-    .map((source) => source.id)
-    .filter((sourceId) => implicated.has(sourceId));
-  if (ordered.length !== implicated.size) {
+    return evidenceSourceIdsForSelection(dataPackage, selection);
+  } catch (error) {
+    if (["EVIDENCE_SELECTION_INVALID", "EVIDENCE_STORE_INVALID"].includes(error?.code)) throw error;
     throw evidenceError(
       "EVIDENCE_SELECTION_INVALID",
-      "Selection occurrences reference a source outside the analyzed corpus.",
+      "Selection does not resolve to canonical package evidence.",
+      error,
     );
   }
-  return ordered;
 }
 
 function packetSource(source, maxTextBytes) {
@@ -464,7 +590,7 @@ export function buildEvidencePacket({
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > HARD_MAX_PACKET_BYTES) {
     throw new TypeError(`maxBytes must be an integer between 1 and ${HARD_MAX_PACKET_BYTES}`);
   }
-  const selectedIds = selectedSourceIds(packageValue, selection);
+  const selectedIds = selectedSourceIds(packageValue, store, selection);
   const sourceById = new Map(store.sources.map((source) => [source.id, source]));
   const selectedSources = selectedIds.map((sourceId) => {
     const source = sourceById.get(sourceId);

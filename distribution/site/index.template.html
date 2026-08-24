@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="description" content="Install the Attend visualization CLI with a compatible coding agent.">
+    <title>Attend Local {{VERSION}}</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/copy.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Attend Local · Private preview · {{VERSION}}</p>
+        <h1>Designed visualizations for a compatible coding agent</h1>
+        <p class="lede">
+          Attend has the full nineteen-family Atlas catalog. Version {{VERSION}} makes
+          eighteen designs executable and keeps one explicit capability abstention. It
+          turns authorized local evidence into a tested contract, then opens a private
+          local artifact view with selection-aware chat. The agent does not generate
+          chart code.
+        </p>
+      </header>
+
+      <section aria-labelledby="install-heading">
+        <p class="step">One prompt</p>
+        <div class="prompt-heading">
+          <h2 id="install-heading">Paste this into a compatible coding agent</h2>
+          <button type="button" data-copy-prompt>Copy prompt</button>
+        </div>
+        <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
+        <pre id="install-prompt" tabindex="0"><code>{{INSTALL_PROMPT}}</code></pre>
+      </section>
+
+      <section class="details" aria-labelledby="verify-heading">
+        <div>
+          <p class="step">Pinned release</p>
+          <h2 id="verify-heading">Verify before installing</h2>
+          <dl>
+            <div>
+              <dt>Version</dt>
+              <dd>{{VERSION}}</dd>
+            </div>
+            <div>
+              <dt>SHA-256</dt>
+              <dd><code>{{SHA256}}</code></dd>
+            </div>
+          </dl>
+        </div>
+        <nav aria-label="Release files">
+          <a href="{{INSTALL_SCRIPT_URL}}">Open immutable installer</a>
+          <a href="{{TARBALL_URL}}">Download package</a>
+          <a href="{{MANIFEST_URL}}">Read manifest</a>
+          <a href="/install-prompt.txt">Open latest install prompt</a>
+        </nav>
+      </section>
+
+      <footer>
+        <p>This private preview is for invited collaborators. Node.js 22 or newer is required. Artifacts and saved Attend state stay local. Evidence selected for a sidebar answer is sent through the user's signed-in Codex provider. Attend has no hosted account or telemetry.</p>
+      </footer>
+    </main>
+  </body>
+</html>

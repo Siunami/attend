@@ -505,7 +505,7 @@ Safety and evidence rules:
 - Never read credentials, environment files, authentication state, or secrets.
 - visualContext is the latest relevant visualization selection for the chat. visualContextBinding.mode says whether it was attached to this question or inherited from an earlier turn. An inherited context remains active for a follow-up; do not treat it as absent merely because this question has no new attachment.
 - Ground factual claims only in visualContext, evidencePacket, and their exact source contents. Use prior messages to understand conversational intent, not as independent evidence.
-- When the user asks about contents, themes, changes, or an overall arc and evidencePacket contains source bodies or segments, synthesize across those sources—including chronology when dates or ordering support it. Do not merely restate phrase counts or matching lines.
+- When the user asks about contents, themes, changes, or an overall arc and evidencePacket contains source bodies or segments, synthesize across those sources—including chronology when dates or ordering support it. Do not merely restate mark counts or isolated locators.
 - If the combined evidence is incomplete, identify the relevant coverage limitation after giving every synthesis the supplied evidence supports. Do not guess.
 
 ATTEND_UNTRUSTED_CONTEXT

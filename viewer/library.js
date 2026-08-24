@@ -21,9 +21,11 @@ function formattedDate(value) {
 }
 
 function metadata(entry) {
-  const phrases = entry.counts?.phrases ?? 0;
+  const phrases = entry.counts?.phrases;
+  const marks = entry.counts?.marks ?? phrases ?? 0;
+  const noun = entry.counts?.noun ?? (phrases === undefined ? "mark" : "phrase");
   const sources = entry.counts?.sources ?? 0;
-  return `${phrases} ${plural(phrases, "phrase")} · ${sources} ${plural(sources, "source")}`;
+  return `${marks} ${plural(marks, noun)} · ${sources} ${plural(sources, "source")}`;
 }
 
 function renderEntry(entry) {
@@ -65,11 +67,17 @@ function renderEntry(entry) {
 
 function render(payload) {
   const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+  const unavailable = Number.isSafeInteger(payload.unavailableSessionCount)
+    ? payload.unavailableSessionCount
+    : 0;
   elements.list.replaceChildren(...sessions.map(renderEntry));
   elements.empty.hidden = sessions.length !== 0;
-  elements.status.textContent = sessions.length === 0
+  const availableStatus = sessions.length === 0
     ? "No saved views"
     : `${sessions.length} saved ${plural(sessions.length, "view")}`;
+  elements.status.textContent = unavailable > 0
+    ? `${availableStatus} · ${unavailable} unavailable after validation`
+    : availableStatus;
 }
 
 async function refresh() {

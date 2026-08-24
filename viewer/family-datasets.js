@@ -598,7 +598,7 @@ export const SAMPLE_SOURCES = Object.freeze({
     familyId: "region-map",
     mediaType: "geography",
     title: "Where the work has roots",
-    question: "Which states hold the most project memories, and where is there reason to return?",
+    question: "Which states hold the largest share of the indexed project memories?",
     sources: [
       source("state-memory-index", "State memory index", "geography", "geojson-with-properties", "indexes/state-memories.geojson", {
         date: "2026-08-20",
@@ -610,23 +610,25 @@ export const SAMPLE_SOURCES = Object.freeze({
       region: "geoId",
       regionLabel: "stateId",
       label: "state",
-      value: "memoryCount",
+      value: "memoryShare",
+      baseline: "memoryBaseline",
       secondary: "returnIntent",
       detail: "theme",
       evidence: "evidenceRefs",
     },
     records: [
-      { id: "region-ca", geoId: "06", stateId: "CA", state: "California", memoryCount: 86, returnIntent: 5, theme: "Home base and prototypes", evidenceRefs: ["region-e1"] },
-      { id: "region-or", geoId: "41", stateId: "OR", state: "Oregon", memoryCount: 24, returnIntent: 4, theme: "Long walks and systems conversations", evidenceRefs: ["region-e2"] },
-      { id: "region-wa", geoId: "53", stateId: "WA", state: "Washington", memoryCount: 17, returnIntent: 3, theme: "Cloud research and old collaborators", evidenceRefs: ["region-e3"] },
-      { id: "region-ny", geoId: "36", stateId: "NY", state: "New York", memoryCount: 39, returnIntent: 5, theme: "Exhibitions and editorial work", evidenceRefs: ["region-e4"] },
-      { id: "region-tx", geoId: "48", stateId: "TX", state: "Texas", memoryCount: 13, returnIntent: 2, theme: "Workshops and family visits", evidenceRefs: ["region-e5"] },
-      { id: "region-il", geoId: "17", stateId: "IL", state: "Illinois", memoryCount: 21, returnIntent: 4, theme: "Design history and teaching", evidenceRefs: ["region-e6"] },
+      { id: "region-ca", geoId: "06", stateId: "CA", state: "California", memoryShare: 0.43, memoryBaseline: 200, returnIntent: 5, theme: "Home base and prototypes", evidenceRefs: ["region-e1"] },
+      { id: "region-or", geoId: "41", stateId: "OR", state: "Oregon", memoryShare: 0.12, memoryBaseline: 200, returnIntent: 4, theme: "Long walks and systems conversations", evidenceRefs: ["region-e2"] },
+      { id: "region-wa", geoId: "53", stateId: "WA", state: "Washington", memoryShare: 0.085, memoryBaseline: 200, returnIntent: 3, theme: "Cloud research and old collaborators", evidenceRefs: ["region-e3"] },
+      { id: "region-ny", geoId: "36", stateId: "NY", state: "New York", memoryShare: 0.195, memoryBaseline: 200, returnIntent: 5, theme: "Exhibitions and editorial work", evidenceRefs: ["region-e4"] },
+      { id: "region-tx", geoId: "48", stateId: "TX", state: "Texas", memoryShare: 0.065, memoryBaseline: 200, returnIntent: 2, theme: "Workshops and family visits", evidenceRefs: ["region-e5"] },
+      { id: "region-il", geoId: "17", stateId: "IL", state: "Illinois", memoryShare: 0.105, memoryBaseline: 200, returnIntent: 4, theme: "Design history and teaching", evidenceRefs: ["region-e6"] },
     ],
     evidence: [
-      ["CA", 86], ["OR", 24], ["WA", 17], ["NY", 39], ["TX", 13], ["IL", 21],
-    ].map(([stateId, count], index) =>
-      geoEvidence(`region-e${index + 1}`, "state-memory-index", "indexes/state-memories.geojson", stateId, `${stateId}: ${count} indexed project memories.`),
+      ["CA", "California", "06", 86, 0.43], ["OR", "Oregon", "41", 24, 0.12], ["WA", "Washington", "53", 17, 0.085],
+      ["NY", "New York", "36", 39, 0.195], ["TX", "Texas", "48", 13, 0.065], ["IL", "Illinois", "17", 21, 0.105],
+    ].map(([stateId, state, fips, count, share], index) =>
+      geoEvidence(`region-e${index + 1}`, "state-memory-index", "indexes/state-memories.geojson", stateId, `${state} (FIPS ${fips}): ${count} of 200 indexed project memories; normalized share ${share}.`),
     ),
   },
 
@@ -816,10 +818,9 @@ export const SAMPLE_SOURCES = Object.freeze({
     familyId: "passage-comparison",
     mediaType: "text",
     title: "How the product principle changed",
-    question: "How did the argument for opinionated templates sharpen across drafts and sources?",
+    question: "How did the argument for opinionated templates sharpen between the early notes and design review?",
     sources: [
       source("early-notes", "Early product notes", "text", "markdown", "notes/product/early-mapping-notes.md", { date: "2026-07-14" }),
-      source("direction-memo", "Mapping CLI direction memo", "text", "markdown", "docs/46-mapping-cli.md", { date: "2026-08-17" }),
       source("review-transcript", "Design review transcript", "text", "transcript", "notes/reviews/family-review.txt", { date: "2026-08-20" }),
     ],
     roles: {
@@ -832,20 +833,16 @@ export const SAMPLE_SOURCES = Object.freeze({
       evidence: "evidenceRefs",
     },
     records: [
-      { id: "passage-1", sourceLabel: "Early notes", version: "v1", date: "2026-07-14", stance: "Open", passage: "The system might offer a grammar from which an agent can assemble almost any visualization.", evidenceRefs: ["passage-e1"] },
-      { id: "passage-2", sourceLabel: "Early notes", version: "v1", date: "2026-07-14", stance: "Concern", passage: "The open grammar is powerful, though the generated interfaces already feel too busy.", evidenceRefs: ["passage-e2"] },
-      { id: "passage-3", sourceLabel: "Direction memo", version: "v2", date: "2026-08-17", stance: "Decision", passage: "The correct near-term choice is to begin with designed templates.", evidenceRefs: ["passage-e3"] },
-      { id: "passage-4", sourceLabel: "Direction memo", version: "v2", date: "2026-08-17", stance: "Rationale", passage: "Starting with a universal grammar would reproduce noisy interfaces at a more elaborate level.", evidenceRefs: ["passage-e4"] },
-      { id: "passage-5", sourceLabel: "Design review", version: "v3", date: "2026-08-20", stance: "Refinement", passage: "A template is not merely a chart; it owns a question, data contract, evidence behavior, and abstention rule.", evidenceRefs: ["passage-e5"] },
-      { id: "passage-6", sourceLabel: "Design review", version: "v3", date: "2026-08-20", stance: "Boundary", passage: "Composition becomes legitimate only after repeated families expose the same successful behavior.", evidenceRefs: ["passage-e6"] },
+      { id: "passage-1", sourceLabel: "Early notes", version: "Early notes", date: "2026-07-14", stance: "Scope", passage: "The system might offer a grammar from which an agent can assemble almost any visualization.", evidenceRefs: ["passage-e1"] },
+      { id: "passage-2", sourceLabel: "Early notes", version: "Early notes", date: "2026-07-14", stance: "Boundary", passage: "The open grammar is powerful, though the generated interfaces already feel too busy.", evidenceRefs: ["passage-e2"] },
+      { id: "passage-3", sourceLabel: "Design review", version: "Design review", date: "2026-08-20", stance: "Scope", passage: "A template is not merely a chart; it owns a question, data contract, evidence behavior, and abstention rule.", evidenceRefs: ["passage-e3"] },
+      { id: "passage-4", sourceLabel: "Design review", version: "Design review", date: "2026-08-20", stance: "Boundary", passage: "Composition becomes legitimate only after repeated families expose the same successful behavior.", evidenceRefs: ["passage-e4"] },
     ],
     evidence: [
       textEvidence("passage-e1", "early-notes", "notes/product/early-mapping-notes.md", 18, 20, "The system might offer a grammar from which an agent can assemble almost any visualization."),
       textEvidence("passage-e2", "early-notes", "notes/product/early-mapping-notes.md", 24, 27, "The open grammar is powerful, though the generated interfaces already feel too busy."),
-      textEvidence("passage-e3", "direction-memo", "docs/46-mapping-cli.md", 92, 94, "The correct near-term choice is to begin with designed templates."),
-      textEvidence("passage-e4", "direction-memo", "docs/46-mapping-cli.md", 98, 101, "Starting with a universal grammar would reproduce noisy interfaces at a more elaborate level."),
-      textEvidence("passage-e5", "review-transcript", "notes/reviews/family-review.txt", 141, 146, "A template is not merely a chart; it owns a question, data contract, evidence behavior, and abstention rule."),
-      textEvidence("passage-e6", "review-transcript", "notes/reviews/family-review.txt", 168, 172, "Composition becomes legitimate only after repeated families expose the same successful behavior."),
+      textEvidence("passage-e3", "review-transcript", "notes/reviews/family-review.txt", 141, 146, "A template is not merely a chart; it owns a question, data contract, evidence behavior, and abstention rule."),
+      textEvidence("passage-e4", "review-transcript", "notes/reviews/family-review.txt", 168, 172, "Composition becomes legitimate only after repeated families expose the same successful behavior."),
     ],
   },
 

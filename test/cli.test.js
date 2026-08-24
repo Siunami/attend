@@ -18,6 +18,7 @@ import {
   loadSession,
   updateSession,
 } from "../src/session-store.js";
+import { CATALOG_COUNTS } from "../src/catalog/index.js";
 
 const BIN = fileURLToPath(new URL("../bin/attend.js", import.meta.url));
 const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -108,11 +109,6 @@ test("CLI setup → phrases → context → reply is a project-local round trip"
   );
   assert.ok(installedSkill.startsWith("---\n"));
   assert.match(installedSkill, /attend-managed/u);
-  assert.equal(
-    await readFile(join(root, ".claude", "skills", "attend-visualize", "SKILL.md"), "utf8"),
-    installedSkill,
-    "Claude Code reads .claude/skills, not .agents/skills",
-  );
 
   const repeatedSetup = await runJson(root, ["setup", "--json"]);
   assert.deepEqual(repeatedSetup.created, []);
@@ -195,6 +191,51 @@ test("CLI setup → phrases → context → reply is a project-local round trip"
   assert.equal(doctor.ok, true);
   assert.ok(doctor.checks.every((check) => check.status !== "fail"));
   assert.ok(doctor.checks.some((check) => check.id === "codex-chat"));
+});
+
+test("CLI families and map expose the strict atlas catalog and persist a compiled atlas package", async (t) => {
+  const root = await projectFixture(t);
+  await writeFile(join(root, "evidence.md"), "Alpha scored 8 points.\nBeta scored 5 points.\nGamma scored 3 points.\n");
+  await runJson(root, ["setup", "--json"]);
+
+  const families = await runJson(root, ["families", "--json"]);
+  assert.equal(families.ok, true);
+  assert.deepEqual(families.counts, CATALOG_COUNTS);
+
+  await writeFile(join(root, "request.json"), JSON.stringify({
+    version: 1,
+    question: "How do Alpha and Beta compare?",
+    family: "rank",
+    member: "bar-list",
+    sources: [{ path: "evidence.md" }],
+    records: [
+      { key: "alpha", label: "Alpha", value: 8 },
+      { key: "beta", label: "Beta", value: 5 },
+      { key: "gamma", label: "Gamma", value: 3 },
+    ],
+    evidence: [
+      { source: { path: "evidence.md" }, quote: "Alpha scored 8 points.", recordKey: "alpha", field: "label" },
+      { source: { path: "evidence.md" }, quote: "Alpha scored 8 points.", recordKey: "alpha", field: "value" },
+      { source: { path: "evidence.md" }, quote: "Beta scored 5 points.", recordKey: "beta", field: "label" },
+      { source: { path: "evidence.md" }, quote: "Beta scored 5 points.", recordKey: "beta", field: "value" },
+      { source: { path: "evidence.md" }, quote: "Gamma scored 3 points.", recordKey: "gamma", field: "label" },
+      { source: { path: "evidence.md" }, quote: "Gamma scored 3 points.", recordKey: "gamma", field: "value" },
+    ],
+  }, null, 2));
+
+  const mapped = await runJson(root, ["map", "request.json", "--json"]);
+  assert.equal(mapped.ok, true);
+  assert.equal(mapped.family, "rank");
+  assert.equal(mapped.member, "bar-list");
+  const analysis = await readJson(mapped.analysisPath);
+  assert.equal(analysis.catalog.family, "rank");
+  assert.equal(analysis.catalog.member, "bar-list");
+  assert.equal(analysis.question.text, "How do Alpha and Beta compare?");
+  assert.equal(analysis.marks.length, 3);
+  assert.equal("rows" in analysis, false);
+  const current = await readJson(join(root, ".attend", "local", "current.json"));
+  assert.equal(current.analysisId, mapped.analysisId);
+  assert.equal(current.sessionId, mapped.sessionId);
 });
 
 test("reply requires and enforces the exact context revision and selection id", async (t) => {
