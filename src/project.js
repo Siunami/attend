@@ -21,7 +21,32 @@ export const MANAGED_MARKER = "attend-managed";
 const PROJECT_DIRECTORY = ".attend";
 const PROJECT_FILE = `${PROJECT_DIRECTORY}/project.json`;
 const PROJECT_GITIGNORE = `${PROJECT_DIRECTORY}/.gitignore`;
-const SKILL_FILE = ".agents/skills/attend-visualize/SKILL.md";
+
+/**
+ * Where the managed skill is installed, one entry per host-agent convention.
+ * `agents` is the cross-agent location; `claude` is the only place Claude Code
+ * discovers a project skill.
+ */
+const SKILL_TARGETS = Object.freeze([
+  Object.freeze({ id: "agents", path: ".agents/skills/attend-visualize/SKILL.md" }),
+  Object.freeze({ id: "claude", path: ".claude/skills/attend-visualize/SKILL.md" }),
+]);
+
+export const SKILL_TARGET_IDS = Object.freeze(SKILL_TARGETS.map((target) => target.id));
+
+function selectedSkillTargets(agents) {
+  if (agents === undefined || agents === null) return SKILL_TARGETS;
+  if (!Array.isArray(agents)) throw new TypeError("agents must be an array of skill target ids");
+  const unknown = agents.filter((id) => !SKILL_TARGET_IDS.includes(id));
+  if (unknown.length) {
+    const error = new Error(
+      `Unknown agent target(s): ${unknown.join(", ")}. Known targets: ${SKILL_TARGET_IDS.join(", ")}.`,
+    );
+    error.code = "UNKNOWN_AGENT_TARGET";
+    throw error;
+  }
+  return SKILL_TARGETS.filter((target) => agents.includes(target.id));
+}
 
 function projectFileContents() {
   return `${JSON.stringify(
@@ -106,7 +131,9 @@ function inferredManagedRoot(path) {
   const parts = absolute.slice(filesystemRoot.length).split(sep).filter(Boolean);
   let marker = -1;
   for (let index = 0; index < parts.length; index += 1) {
-    if (parts[index] === ".attend" || parts[index] === ".agents") marker = index;
+    if (parts[index] === ".attend" || parts[index] === ".agents" || parts[index] === ".claude") {
+      marker = index;
+    }
   }
   if (marker < 0) return null;
   return resolve(filesystemRoot, ...parts.slice(0, marker));
@@ -213,7 +240,7 @@ export async function writeJsonAtomic(path, value, options) {
   await writeAtomic(path, `${encoded}\n`, options);
 }
 
-async function desiredFiles({ root, skillSource }) {
+async function desiredFiles({ root, skillSource, agents }) {
   const files = [
     {
       path: resolve(root, PROJECT_FILE),
@@ -235,12 +262,16 @@ async function desiredFiles({ root, skillSource }) {
       ? skillSource
       : resolve(root, skillSource);
     const source = await readFile(sourcePath, "utf8");
-    files.push({
-      path: resolve(root, SKILL_FILE),
-      relativePath: SKILL_FILE,
-      contents: skillContents(source),
-      sourcePath,
-    });
+    const contents = skillContents(source);
+    for (const target of selectedSkillTargets(agents)) {
+      files.push({
+        path: resolve(root, target.path),
+        relativePath: target.path,
+        contents,
+        sourcePath,
+        agent: target.id,
+      });
+    }
   }
 
   return files;
@@ -300,14 +331,14 @@ function setupResult(root, dryRun, planned) {
  * The complete plan is computed before the first write. Differing unmarked
  * files stop a real setup without leaving a partial installation behind.
  */
-export async function setupProject({ root, dryRun = false, skillSource } = {}) {
+export async function setupProject({ root, dryRun = false, skillSource, agents } = {}) {
   if (typeof root !== "string" || root.length === 0) {
     throw new TypeError("setupProject requires a project root");
   }
 
   const projectRoot = resolve(root);
   await assertDirectory(projectRoot);
-  const files = await desiredFiles({ root: projectRoot, skillSource });
+  const files = await desiredFiles({ root: projectRoot, skillSource, agents });
   const planned = await Promise.all(files.map((file) => planFile(file, projectRoot)));
   const result = setupResult(projectRoot, Boolean(dryRun), planned);
 
@@ -354,7 +385,16 @@ export function projectPaths(root) {
     localDir: resolve(projectRoot, PROJECT_DIRECTORY, "local"),
     sessions: resolve(projectRoot, PROJECT_DIRECTORY, "local", "sessions"),
     sessionsDir: resolve(projectRoot, PROJECT_DIRECTORY, "local", "sessions"),
-    skill: resolve(projectRoot, SKILL_FILE),
-    skillFile: resolve(projectRoot, SKILL_FILE),
+    skill: resolve(projectRoot, SKILL_TARGETS[0].path),
+    skillFile: resolve(projectRoot, SKILL_TARGETS[0].path),
+    skills: Object.freeze(
+      SKILL_TARGETS.map((target) =>
+        Object.freeze({
+          agent: target.id,
+          relativePath: target.path,
+          path: resolve(projectRoot, target.path),
+        }),
+      ),
+    ),
   });
 }

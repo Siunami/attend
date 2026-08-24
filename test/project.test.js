@@ -100,6 +100,7 @@ test("setup copies an explicitly supplied skill with a managed marker", async (t
       { path: ".attend/project.json", action: "create" },
       { path: ".attend/.gitignore", action: "create" },
       { path: ".agents/skills/attend-visualize/SKILL.md", action: "create" },
+      { path: ".claude/skills/attend-visualize/SKILL.md", action: "create" },
     ],
   );
   assert.equal(await exists(projectPaths(root).skill), false);
@@ -109,6 +110,7 @@ test("setup copies an explicitly supplied skill with a managed marker", async (t
     ".attend/project.json",
     ".attend/.gitignore",
     ".agents/skills/attend-visualize/SKILL.md",
+    ".claude/skills/attend-visualize/SKILL.md",
   ]);
   const skill = await readFile(projectPaths(root).skill, "utf8");
   assert.ok(skill.startsWith("---\n"), "YAML frontmatter remains at byte zero");
@@ -130,7 +132,30 @@ test("setup copies an explicitly supplied skill with a managed marker", async (t
     ".attend/project.json",
     ".attend/.gitignore",
     ".agents/skills/attend-visualize/SKILL.md",
+    ".claude/skills/attend-visualize/SKILL.md",
   ]);
+
+  const claudeSkill = projectPaths(root).skills.find((target) => target.agent === "claude");
+  assert.equal(await readFile(claudeSkill.path, "utf8"), skill, "every host agent gets the same skill");
+});
+
+test("setup installs the skill only for the requested host agents", async (t) => {
+  const root = await fixture(t);
+  const source = join(root, "skill-template.md");
+  await writeFile(source, "---\nname: attend-visualize\ndescription: Open a local view.\n---\n\n# Attend\n");
+
+  const installed = await setupProject({ root, skillSource: source, agents: ["claude"] });
+  assert.deepEqual(installed.created, [
+    ".attend/project.json",
+    ".attend/.gitignore",
+    ".claude/skills/attend-visualize/SKILL.md",
+  ]);
+  assert.equal(await exists(projectPaths(root).skill), false, ".agents is left alone");
+
+  await assert.rejects(
+    setupProject({ root, skillSource: source, agents: ["cursor"] }),
+    (error) => error.code === "UNKNOWN_AGENT_TARGET",
+  );
 });
 
 test("unmanaged conflicts are previewed and stop setup before any write", async (t) => {

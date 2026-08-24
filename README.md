@@ -173,8 +173,10 @@ follows that agent's configured provider route.
 
 ## Commands
 
-- `attend setup [--dry-run] [--json]` — preview or create project configuration,
-  local state exclusions, and the managed agent skill.
+- `attend setup [--agent <id>] [--dry-run] [--json]` — preview or create project
+  configuration, local state exclusions, and the managed agent skill. The skill
+  is installed once per host-agent convention (`agents`, `claude`); repeat
+  `--agent` to install a subset.
 - `attend phrases <paths...>` — produce a provenance-bearing phrase-list data
   package and make it current.
 - `attend view [--port 0] [--open] [--json]` — start or reuse the detached,
@@ -198,8 +200,12 @@ Run `attend <command> --help` for options.
 
 Shared project configuration lives in `.attend/project.json`. Derived data and
 conversation state live under `.attend/local/` and are ignored by the nested
-`.attend/.gitignore`. The installed skill is a managed file at
-`.agents/skills/attend-visualize/SKILL.md`.
+`.attend/.gitignore`. The installed skill is a managed file, written once per
+host-agent convention: `.agents/skills/attend-visualize/SKILL.md` for agents that
+read the cross-agent location, and `.claude/skills/attend-visualize/SKILL.md`,
+which is the only place Claude Code discovers a project skill. Both copies are
+identical and carry the `attend-managed` marker, so rerunning setup repairs them
+and refuses to touch an unmarked file of the same name.
 
 The source files are read-only. The Attend CLI and viewer do not scan outside
 the paths supplied to `attend phrases`, upload the corpus, collect telemetry, or

@@ -108,6 +108,11 @@ test("CLI setup → phrases → context → reply is a project-local round trip"
   );
   assert.ok(installedSkill.startsWith("---\n"));
   assert.match(installedSkill, /attend-managed/u);
+  assert.equal(
+    await readFile(join(root, ".claude", "skills", "attend-visualize", "SKILL.md"), "utf8"),
+    installedSkill,
+    "Claude Code reads .claude/skills, not .agents/skills",
+  );
 
   const repeatedSetup = await runJson(root, ["setup", "--json"]);
   assert.deepEqual(repeatedSetup.created, []);

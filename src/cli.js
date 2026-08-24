@@ -12,6 +12,7 @@ import {
   projectPaths,
   readJson,
   setupProject,
+  SKILL_TARGET_IDS,
   writeJsonAtomic,
 } from "./project.js";
 import { buildSelection } from "./selection.js";
@@ -37,7 +38,7 @@ const VIEWER_ASSETS = fileURLToPath(new URL("../viewer", import.meta.url));
 const HELP = `Attend Local ${PACKAGE_VERSION}
 
 Usage:
-  attend setup [--root <path>] [--dry-run] [--json]
+  attend setup [--root <path>] [--agent <id>] [--dry-run] [--json]
   attend phrases <path...> --question <text> [options]
   attend view [--root <path>] [--host <loopback>] [--port <number>] [--open] [--json]
   attend status [--root <path>] [--json]
@@ -51,11 +52,16 @@ explicitly named Markdown, text, or normalized JSONL sources.
 `;
 
 const COMMAND_HELP = {
-  setup: `Usage: attend setup [--root <path>] [--dry-run] [--json]
+  setup: `Usage: attend setup [--root <path>] [--agent <id>] [--dry-run] [--json]
 
 Create project-scoped configuration, local-state exclusions, and the managed
 attend-visualize agent skill. Setup is safe to rerun and refuses to overwrite
 unmanaged files.
+
+The skill is installed once per host-agent convention: \`agents\`
+(.agents/skills/) for agents that read the cross-agent location, and \`claude\`
+(.claude/skills/) for Claude Code, which reads only its own. Both are installed
+by default; repeat --agent to install a subset.
 `,
   phrases: `Usage: attend phrases <path...> --question <text> [options]
 
@@ -215,14 +221,25 @@ async function currentSession(root) {
 async function setupCommand(args, context) {
   const parsed = parse("setup", args, {
     "dry-run": { type: "boolean" },
+    agent: { type: "string", multiple: true },
   });
   if (parsed.help) return output(context.stdout, parsed.help.trimEnd());
   if (parsed.positionals.length) throw new Error("setup does not accept positional arguments");
+  const agents = parsed.values.agent;
+  if (agents) {
+    const unknown = agents.filter((id) => !SKILL_TARGET_IDS.includes(id));
+    if (unknown.length) {
+      throw new Error(
+        `Unknown --agent value(s): ${unknown.join(", ")}. Known values: ${SKILL_TARGET_IDS.join(", ")}.`,
+      );
+    }
+  }
   const root = await detectedRoot(context.cwd, parsed.values.root);
   const result = await setupProject({
     root,
     dryRun: parsed.values["dry-run"] || false,
     skillSource: SKILL_SOURCE,
+    agents,
   });
   if (parsed.values.json) return jsonOutput(context.stdout, { ok: true, ...result });
 
@@ -646,13 +663,24 @@ async function doctorCommand(args, context) {
     }
   } else add("project", "fail", "Run `attend setup`.");
 
-  const skillText = await import("node:fs/promises")
-    .then(({ readFile }) => readFile(paths.skill, "utf8"))
-    .catch(() => null);
+  const { readFile: readSkill } = await import("node:fs/promises");
+  const installedSkills = [];
+  const missingSkills = [];
+  for (const target of paths.skills) {
+    const skillText = await readSkill(target.path, "utf8").catch(() => null);
+    const valid = skillText?.startsWith("---\n") && skillText.includes("attend-managed");
+    (valid ? installedSkills : missingSkills).push(target);
+  }
   add(
     "agent-skill",
-    skillText?.startsWith("---\n") && skillText.includes("attend-managed") ? "pass" : "fail",
-    skillText ? paths.skill : "Managed skill is missing.",
+    installedSkills.length ? "pass" : "fail",
+    installedSkills.length
+      ? `${installedSkills.map((target) => target.relativePath).join(", ")}${
+          missingSkills.length
+            ? `; not installed for ${missingSkills.map((target) => target.agent).join(", ")}`
+            : ""
+        }`
+      : "Managed skill is missing. Run `attend setup`.",
   );
 
   for (const asset of ["index.html", "app.js", "styles.css"]) {
