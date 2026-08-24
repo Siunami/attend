@@ -149,10 +149,12 @@ test("release staging produces a reproducible, private-data-free package and pin
   assert.match(installer, /trap cleanup 0/u);
   assert.match(installer, /shasum -a 256/u);
   assert.match(installer, /sha256sum/u);
-  assert.match(installer, /npm install --global/u);
-  assert.match(installer, /attend setup --json/u);
-  assert.match(installer, /attend doctor --json/u);
-  assert.match(installer, /attend families --json/u);
+  assert.match(installer, /"\$ATTEND_NPM" install --global/u);
+  assert.match(installer, /"\$ATTEND_NPM" config get prefix/u);
+  assert.match(installer, /ATTEND_NPM_PREFIX="\$HOME\/\.local"/u);
+  assert.match(installer, /"\$ATTEND_NODE" "\$ATTEND_BIN" setup --json/u);
+  assert.match(installer, /"\$ATTEND_NODE" "\$ATTEND_BIN" doctor --json/u);
+  assert.match(installer, /"\$ATTEND_NODE" "\$ATTEND_BIN" families --json/u);
   assert.doesNotMatch(installer, /\bjq\b/u);
   const shellCheck = spawnSync("sh", ["-n", join(temporary, "first", "install.sh")], {
     encoding: "utf8",
@@ -229,7 +231,12 @@ test("release staging produces a reproducible, private-data-free package and pin
   const familiesPath = join(temporary, "families.json");
   const doctorPath = join(temporary, "doctor.json");
   const npmLog = join(temporary, "npm.log");
+  const fakeAttend = join(temporary, "fake-attend");
+  const fakeHome = join(temporary, "home");
+  const expectedPrefix = join(fakeHome, ".local");
+  const unusablePrefix = join(temporary, "missing-prefix");
   await mkdir(fakeBin);
+  await mkdir(fakeHome);
   await writeFile(familiesPath, installedCatalog.stdout);
   await writeFile(doctorPath, JSON.stringify({
     ok: true,
@@ -241,6 +248,9 @@ test("release staging produces a reproducible, private-data-free package and pin
     ],
   }));
   await Promise.all([
+    writeExecutable(join(fakeBin, "node"), `#!/bin/sh
+exec '${process.execPath}' "$@"
+`),
     writeExecutable(join(fakeBin, "curl"), `#!/bin/sh
 set -eu
 output=''
@@ -256,23 +266,52 @@ cp "$ATTEND_TEST_ARCHIVE" "$output"
 `),
     writeExecutable(join(fakeBin, "npm"), `#!/bin/sh
 set -eu
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "get" ] && [ "\${3:-}" = "prefix" ]; then
+  printf '%s\\n' "$ATTEND_TEST_SYSTEM_PREFIX"
+  exit 0
+fi
 printf '%s\\n' "$*" >"$ATTEND_TEST_NPM_LOG"
-`),
-    writeExecutable(join(fakeBin, "attend"), `#!/bin/sh
-set -eu
-case "\${1:-}" in
-  --version) printf '%s\\n' '${version}' ;;
-  setup) printf '%s\\n' '{"ok":true,"conflicts":[]}' ;;
-  doctor) cat "$ATTEND_TEST_DOCTOR_JSON" ;;
-  families) cat "$ATTEND_TEST_FAMILIES_JSON" ;;
-  *) exit 2 ;;
+[ "$1" = "install" ] || exit 73
+[ "$2" = "--global" ] || exit 73
+[ "$3" = "--prefix" ] || exit 73
+[ "$4" = "$ATTEND_TEST_EXPECTED_PREFIX" ] || exit 73
+case "$5" in
+  */attend-local-\${ATTEND_TEST_VERSION}.tgz) ;;
+  *) exit 73 ;;
 esac
+mkdir -p "$ATTEND_TEST_EXPECTED_PREFIX/bin"
+cp "$ATTEND_TEST_ATTEND" "$ATTEND_TEST_EXPECTED_PREFIX/bin/attend"
+chmod 755 "$ATTEND_TEST_EXPECTED_PREFIX/bin/attend"
+`),
+    writeExecutable(fakeAttend, `#!/usr/bin/env node
+const fs = require("node:fs");
+switch (process.argv[2]) {
+  case "--version":
+    console.log("${version}");
+    break;
+  case "setup":
+    console.log('{"ok":true,"conflicts":[]}');
+    break;
+  case "doctor":
+    process.stdout.write(fs.readFileSync(process.env.ATTEND_TEST_DOCTOR_JSON));
+    break;
+  case "families":
+    process.stdout.write(fs.readFileSync(process.env.ATTEND_TEST_FAMILIES_JSON));
+    break;
+  default:
+    process.exit(2);
+}
 `),
   ]);
   const installerEnvironment = {
     ...process.env,
-    PATH: `${fakeBin}:${process.env.PATH}`,
+    HOME: fakeHome,
+    PATH: `${fakeBin}:/usr/bin:/bin`,
     ATTEND_TEST_ARCHIVE: firstArchive,
+    ATTEND_TEST_ATTEND: fakeAttend,
+    ATTEND_TEST_EXPECTED_PREFIX: expectedPrefix,
+    ATTEND_TEST_SYSTEM_PREFIX: unusablePrefix,
+    ATTEND_TEST_VERSION: version,
     ATTEND_TEST_NPM_LOG: npmLog,
     ATTEND_TEST_DOCTOR_JSON: doctorPath,
     ATTEND_TEST_FAMILIES_JSON: familiesPath,
@@ -283,8 +322,13 @@ esac
     env: installerEnvironment,
   });
   assert.equal(installRun.status, 0, installRun.stderr || installRun.stdout);
-  assert.match(installRun.stdout, /Attend 0\.2\.0 installed: 19 families, 18 executable, 1 unavailable/u);
-  assert.match(await readFile(npmLog, "utf8"), /^install --global \/.+attend-local-0\.2\.0\.tgz\n$/u);
+  assert.match(
+    installRun.stdout,
+    new RegExp(`Attend ${version.replaceAll(".", "\\.")} installed: 19 families, 18 executable, 1 unavailable`, "u"),
+  );
+  const npmInvocation = await readFile(npmLog, "utf8");
+  assert.ok(npmInvocation.startsWith(`install --global --prefix ${expectedPrefix} `));
+  assert.ok(npmInvocation.endsWith(`/attend-local-${version}.tgz\n`));
 
   const tamperedArchive = join(temporary, "tampered.tgz");
   await writeFile(tamperedArchive, "not the release archive\n");

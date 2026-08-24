@@ -163,7 +163,7 @@ test("an upgrade replaces only a token-verified older Attend service with a fres
   assert.equal(upgraded.running, true);
   assert.equal(upgraded.reused, false);
   assert.equal(upgraded.health.protocolVersion, 2);
-  assert.equal(upgraded.health.packageVersion, "0.2.0");
+  assert.equal(upgraded.health.packageVersion, "0.2.1");
   assert.notEqual(upgraded.pid, legacy.pid);
   if (legacy.exitCode === null) await once(legacy, "exit");
 });

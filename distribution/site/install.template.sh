@@ -11,14 +11,46 @@ fail() {
   exit 1
 }
 
-command -v node >/dev/null 2>&1 || fail "Node.js 22 or newer is required."
-command -v npm >/dev/null 2>&1 || fail "npm is required."
+ATTEND_NODE=$(command -v node) || fail "Node.js 22 or newer is required."
+ATTEND_NPM=$(command -v npm) || fail "npm is required."
+case "$ATTEND_NODE:$ATTEND_NPM" in
+  /*:/*) ;;
+  *) fail "Node.js and npm must resolve to absolute executable paths." ;;
+esac
 
-ATTEND_NODE_MAJOR=$(node -p 'Number(process.versions.node.split(".")[0])')
+ATTEND_NODE_MAJOR=$("$ATTEND_NODE" -p 'Number(process.versions.node.split(".")[0])')
 case "$ATTEND_NODE_MAJOR" in
   ''|*[!0-9]*) fail "Could not read the Node.js version." ;;
 esac
 [ "$ATTEND_NODE_MAJOR" -ge 22 ] || fail "Node.js 22 or newer is required."
+
+prefix_is_writable() {
+  [ -n "$1" ] || return 1
+  case "$1" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  [ -d "$1" ] && [ -w "$1" ] && [ -x "$1" ] || return 1
+  for ATTEND_PREFIX_PATH in "$1/bin" "$1/lib" "$1/lib/node_modules"; do
+    if [ -e "$ATTEND_PREFIX_PATH" ]; then
+      [ -d "$ATTEND_PREFIX_PATH" ] &&
+        [ -w "$ATTEND_PREFIX_PATH" ] &&
+        [ -x "$ATTEND_PREFIX_PATH" ] || return 1
+    fi
+  done
+}
+
+ATTEND_ORIGINAL_PATH=$PATH
+ATTEND_NPM_PREFIX=$("$ATTEND_NPM" config get prefix 2>/dev/null) || fail "Could not read npm's global prefix."
+if ! prefix_is_writable "$ATTEND_NPM_PREFIX"; then
+  [ -n "${HOME:-}" ] || fail "HOME is required for a user-owned npm installation."
+  ATTEND_NPM_PREFIX="$HOME/.local"
+  mkdir -p "$ATTEND_NPM_PREFIX/bin" "$ATTEND_NPM_PREFIX/lib/node_modules" ||
+    fail "Could not create the user-owned npm prefix $ATTEND_NPM_PREFIX."
+  prefix_is_writable "$ATTEND_NPM_PREFIX" ||
+    fail "The user-owned npm prefix $ATTEND_NPM_PREFIX is not writable."
+fi
+ATTEND_BIN_DIR="$ATTEND_NPM_PREFIX/bin"
 
 ATTEND_TMP=$(mktemp -d "${TMPDIR:-/tmp}/attend-local.XXXXXX") || fail "Could not create a temporary directory."
 cleanup() {
@@ -45,18 +77,19 @@ else
 fi
 [ "$ATTEND_ACTUAL_SHA256" = "$ATTEND_SHA256" ] || fail "The downloaded tarball failed SHA-256 verification."
 
-npm install --global "$ATTEND_TARBALL"
-command -v attend >/dev/null 2>&1 || fail "npm finished, but attend is not on PATH."
-[ "$(attend --version)" = "$ATTEND_VERSION" ] || fail "The installed Attend version does not match this installer."
+"$ATTEND_NPM" install --global --prefix "$ATTEND_NPM_PREFIX" "$ATTEND_TARBALL"
+ATTEND_BIN="$ATTEND_BIN_DIR/attend"
+[ -x "$ATTEND_BIN" ] || fail "npm finished, but did not create $ATTEND_BIN."
+[ "$("$ATTEND_NODE" "$ATTEND_BIN" --version)" = "$ATTEND_VERSION" ] || fail "The installed Attend version does not match this installer."
 
 ATTEND_SETUP="$ATTEND_TMP/setup.json"
 ATTEND_DOCTOR="$ATTEND_TMP/doctor.json"
 ATTEND_FAMILIES="$ATTEND_TMP/families.json"
-attend setup --json >"$ATTEND_SETUP"
-attend doctor --json >"$ATTEND_DOCTOR"
-attend families --json >"$ATTEND_FAMILIES"
+"$ATTEND_NODE" "$ATTEND_BIN" setup --json >"$ATTEND_SETUP"
+"$ATTEND_NODE" "$ATTEND_BIN" doctor --json >"$ATTEND_DOCTOR"
+"$ATTEND_NODE" "$ATTEND_BIN" families --json >"$ATTEND_FAMILIES"
 
-node - "$ATTEND_SETUP" "$ATTEND_DOCTOR" "$ATTEND_FAMILIES" "$ATTEND_CATALOG_RECEIPT" <<'NODE'
+"$ATTEND_NODE" - "$ATTEND_SETUP" "$ATTEND_DOCTOR" "$ATTEND_FAMILIES" "$ATTEND_CATALOG_RECEIPT" <<'NODE'
 const fs = require("node:fs");
 
 const readJson = (path) => JSON.parse(fs.readFileSync(path, "utf8"));
@@ -98,3 +131,8 @@ console.log(
 );
 if (codex) console.log(`Codex chat: ${codex.status}. ${codex.detail}`);
 NODE
+
+case ":$ATTEND_ORIGINAL_PATH:" in
+  *":$ATTEND_BIN_DIR:"*) ;;
+  *) printf '%s\n' "Add $ATTEND_BIN_DIR to PATH before using attend in a new shell." ;;
+esac

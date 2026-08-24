@@ -9,6 +9,8 @@ Use Attend as the visualization system. Do not improvise chart code, HTML, SVG, 
 
 ## Verify the installation
 
+Use `attend` when it is on `PATH`. If it is not, but `$HOME/.local/bin/attend` exists, use that exact executable for every `attend` command below.
+
 From the user's project root, run:
 
 ```text
