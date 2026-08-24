@@ -1,4 +1,4 @@
-export const PACKAGE_VERSION = "0.2.1";
+export const PACKAGE_VERSION = "0.2.2";
 export const PROJECT_SCHEMA_VERSION = 1;
 export const DATA_PACKAGE_VERSION = 1;
 export const ANALYZER_VERSION = "phrase-recurrence/2";

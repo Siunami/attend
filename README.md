@@ -7,10 +7,10 @@ Attend Local turns evidence from explicitly authorized files into a designed vis
 From the project root, paste this one command into a terminal or compatible coding agent:
 
 ```sh
-curl -fsSL https://attend-cli.matthewwilsonsiu.workers.dev/releases/0.2.1/install.sh | sh
+curl -fsSL https://attend-cli.matthewwilsonsiu.workers.dev/releases/0.2.2/install.sh | sh
 ```
 
-It installs the pinned `0.2.1` release, configures the current project for both `.agents` and `.claude`, and verifies the CLI, catalog, local viewer, and Codex chat capability. Node.js 22 or newer and npm are required.
+It installs the pinned `0.2.2` release, configures the current project for both `.agents` and `.claude`, and verifies the CLI, catalog, local viewer, and Codex chat capability. Node.js 22 or newer and npm are required.
 
 The host agent does not write chart code. It asks Attend for the installed Family Atlas catalog, selects an executable member for the analytic job, transforms source-backed facts into that member's declared roles, and submits a data-only request. Attend reopens the sources, verifies exact quotes, compiles a canonical package, resolves a fixed bundled renderer, and serves the result on loopback.
 

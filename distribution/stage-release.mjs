@@ -297,7 +297,7 @@ function catalogReleaseReceipt() {
   };
 }
 
-function installPrompt({ version, tarballUrl, manifestUrl, installScriptUrl, digest, catalog }) {
+function installPrompt({ version, installScriptUrl, digest, catalog }) {
   const counts = catalog.counts;
   const catalogSummary = [
     `${counts.families} families`,
@@ -310,13 +310,12 @@ function installPrompt({ version, tarballUrl, manifestUrl, installScriptUrl, dig
     "Treat the current repository as the only project root. Do not upload its files or scan outside it.",
     "",
     "1. Check that Node.js 22 or newer and npm are available. If not, stop and tell me what is missing.",
-    "2. You may run the immutable installer at " + installScriptUrl + ". If installing manually, download " + manifestUrl + " and " + tarballUrl + " to a temporary directory. Confirm the manifest names version " + version + " and the same tarball URL and digest printed below.",
-    "3. Compute the tarball's SHA-256 digest and require it to equal " + digest + ". Stop if the manifest or computed digest differs.",
-    "4. Run npm install --global with the verified local tarball path.",
-    "5. Check codex --version and codex login status. Attend's automatic sidebar chat requires an installed, signed-in Codex CLI. If Codex is missing, use the official installation guidance at https://developers.openai.com/codex/cli/. If interactive sign-in is required, pause and ask me to complete it.",
-    "6. From this project's root, run attend setup --json and then attend doctor --json.",
-    "7. Run attend families --json. Confirm that attend --version reports " + version + ", setup installed the managed attend-visualize skill at both .agents/skills/ and .claude/skills/, the catalog receipt is exactly " + catalogSummary + ", doctor returns ok: true, and its codex-chat check passes. One explicit capability abstention is expected in this release; do not describe it as executable. Do not call automatic sidebar chat ready when the Codex check only warns.",
-    "8. Keep the skill installed. For future visualization questions, follow it: inspect the full 19-family Attend catalog, choose only a member marked executable, transform explicitly authorized local evidence into its declarative request, run Attend, and open the returned local artifact URL. Preserve any explicit capability abstention. Never generate custom chart code.",
+    "2. From this project's root, run exactly: curl -fsSL " + installScriptUrl + " | sh",
+    "3. Require the installer to exit successfully. It downloads the pinned tarball and requires its SHA-256 digest to equal " + digest + ". Do not bypass or reimplement those checks. If it fails, stop and report the failure.",
+    "4. Check codex --version and codex login status. Attend's automatic sidebar chat requires an installed, signed-in Codex CLI. If Codex is missing, use the official installation guidance at https://developers.openai.com/codex/cli/. If interactive sign-in is required, pause and ask me to complete it.",
+    "5. Use attend when it is on PATH; otherwise use $HOME/.local/bin/attend. From this project's root, run attend setup --json, attend doctor --json, and attend families --json.",
+    "6. Confirm that attend --version reports " + version + ", setup installed the managed attend-visualize skill at both .agents/skills/ and .claude/skills/, the catalog receipt is exactly " + catalogSummary + ", doctor returns ok: true, and its codex-chat check passes. One explicit capability abstention is expected in this release; do not describe it as executable. Do not call automatic sidebar chat ready when the Codex check only warns.",
+    "7. Keep the skill installed. For future visualization questions, follow it: inspect the full 19-family Attend catalog, choose only a member marked executable, transform explicitly authorized local evidence into its declarative request, run Attend, and open the returned local artifact URL. Preserve any explicit capability abstention. Never generate custom chart code.",
     "",
     "Report the installed version and any failed check. Do not substitute another package, repository checkout, or visualization library.",
   ].join("\n");

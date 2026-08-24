@@ -127,7 +127,9 @@ test("release staging produces a reproducible, private-data-free package and pin
     prompt,
   );
   assert.match(prompt, new RegExp(first.manifest.tarball.sha256, "u"));
-  assert.match(prompt, /npm install --global/u);
+  assert.ok(prompt.includes(`curl -fsSL ${first.manifest.installScriptUrl} | sh`));
+  assert.doesNotMatch(prompt, /npm install --global/u);
+  assert.doesNotMatch(prompt, /installing manually/u);
   assert.match(prompt, /attend setup --json/u);
   assert.match(prompt, /attend doctor --json/u);
   assert.match(prompt, /attend families --json/u);

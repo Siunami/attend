@@ -1,6 +1,6 @@
 {
   "name": "attend-local",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Local, agent-native visualization harness for question-shaped views over private work.",
   "repository": {
     "type": "git",
