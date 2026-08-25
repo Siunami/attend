@@ -267,6 +267,10 @@ test("atlas-v2 server routes use a tiny revision-bound mark envelope and expose 
     assetsDir: VIEWER_ASSETS,
     token: "atlas-runtime-token-0123456789",
     instanceId: "atlas-runtime-instance-0123456789",
+    resolveQuestionRoute: async () => ({
+      kind: "detached",
+      adapter: "codex-cli",
+    }),
   });
   t.after(() => viewer.close());
 

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
   open,
@@ -24,10 +24,13 @@ import {
   ensureSafeDirectory,
   writeJsonAtomic,
 } from "./project.js";
+import { LOCAL_MODEL } from "./local-model.js";
 
 const SESSION_SCHEMA_VERSION = 1;
 const SESSION_DIRECTORY = ".attend/local/sessions";
 const SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const EXPLORATION_ID = /^exploration_[a-f0-9]{24}$/u;
+const EXPERIMENT_ID = /^experiment_[a-f0-9]{24}$/u;
 const MAX_INLINE_SOURCE_REFS = 50;
 const LOCK_RETRY_DELAYS_MS = [10, 20, 40, 80, 120, 160, 200, 250];
 const MALFORMED_LOCK_STALE_MS = 2_000;
@@ -38,6 +41,56 @@ const RESPONSE_STATUSES = new Set([
   "completed",
 ]);
 const RESPONSE_ERROR_CODE = /^[a-z][a-z0-9_]{0,63}$/u;
+const HOST_ATTACHMENT_ID = /^host_[a-f0-9]{16}$/u;
+const DETACHED_ADAPTERS = new Set(["codex-cli", "claude-cli"]);
+
+function normalizeResponseRoute(route) {
+  if (!route || typeof route !== "object" || Array.isArray(route)) {
+    throw new TypeError("turn.response.route must be an object");
+  }
+  if (route.kind === "host") {
+    if (
+      !HOST_ATTACHMENT_ID.test(route.attachmentId ?? "") ||
+      !Number.isSafeInteger(route.generation) ||
+      route.generation < 1
+    ) {
+      throw new TypeError(
+        "A host response route requires a valid attachmentId and positive generation",
+      );
+    }
+    return {
+      kind: "host",
+      attachmentId: route.attachmentId,
+      generation: route.generation,
+    };
+  }
+  if (route.kind === "local" && route.model === LOCAL_MODEL.id) {
+    return { kind: "local", model: LOCAL_MODEL.id };
+  }
+  if (route.kind === "detached" && DETACHED_ADAPTERS.has(route.adapter)) {
+    return { kind: "detached", adapter: route.adapter };
+  }
+  throw new TypeError("Unsupported response route");
+}
+
+function publicResponseRoute(route) {
+  if (route === undefined) return null;
+  const normalized = normalizeResponseRoute(route);
+  if (normalized.kind === "host") return { kind: "host" };
+  if (normalized.kind === "local") return { kind: "local", model: normalized.model };
+  return { kind: "detached", adapter: normalized.adapter };
+}
+
+function sameResponseRoute(left, right) {
+  const a = normalizeResponseRoute(left);
+  const b = normalizeResponseRoute(right);
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "host") {
+    return a.attachmentId === b.attachmentId && a.generation === b.generation;
+  }
+  if (a.kind === "local") return a.model === b.model;
+  return a.adapter === b.adapter;
+}
 
 export class SessionConflictError extends Error {
   constructor({ sessionId, expectedRevision, actualRevision, message }) {
@@ -187,6 +240,9 @@ function normalizeConversationContext(turns) {
 }
 
 function normalizeStoredSession(session) {
+  if (session?.exploration !== undefined) {
+    session.exploration = normalizeExplorationProvenance(session.exploration);
+  }
   if (session?.dataPackage) {
     const dataPackage = validateArtifactPackage(session.dataPackage);
     session.state = normalizeArtifactState(dataPackage, session.state);
@@ -199,6 +255,28 @@ function normalizeStoredSession(session) {
     normalizeConversationContext(turns);
   }
   return session;
+}
+
+function normalizeExplorationProvenance(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("session.exploration must be an object");
+  }
+  const keys = Object.keys(value);
+  if (
+    keys.length !== 2 ||
+    !keys.includes("explorationId") ||
+    !keys.includes("experimentId") ||
+    !EXPLORATION_ID.test(value.explorationId ?? "") ||
+    !EXPERIMENT_ID.test(value.experimentId ?? "")
+  ) {
+    throw new TypeError(
+      "session.exploration requires valid explorationId and experimentId fields",
+    );
+  }
+  return {
+    explorationId: value.explorationId,
+    experimentId: value.experimentId,
+  };
 }
 
 async function verifyStoredArtifact(session) {
@@ -518,11 +596,40 @@ async function mutateLatestSession({ root, sessionId, mutate }) {
   }
 }
 
+/** Serialize an external host-ownership operation with session mutations. */
+export async function withSessionResponseLock({
+  root,
+  sessionId,
+  operation,
+  includeSession = false,
+} = {}) {
+  const validatedSessionId = validateSessionId(sessionId);
+  if (typeof operation !== "function") {
+    throw new TypeError("operation must be a function");
+  }
+  const path = sessionFilePath({ root, sessionId: validatedSessionId });
+  await ensureSafeDirectory(root, dirname(path));
+  await assertSafeWritePath(root, path);
+  let lock;
+  try {
+    lock = await acquireLock(path, validatedSessionId, undefined);
+    if (!includeSession) return await operation({ session: null });
+    const session = normalizeStoredSession(
+      cloneJson(await readJson(path), "session"),
+    );
+    await verifyStoredArtifact(session);
+    return await operation({ session });
+  } finally {
+    await releaseLock(lock);
+  }
+}
+
 export async function createSession({
   root,
   dataPackage,
   id,
   state = {},
+  exploration,
 } = {}) {
   const packageSnapshot = cloneJson(dataPackage, "dataPackage");
   validateArtifactPackage(packageSnapshot);
@@ -556,6 +663,9 @@ export async function createSession({
       dataPackage: packageSnapshot,
       state: createArtifactState(packageSnapshot, state),
       conversation: { turns: [] },
+      ...(exploration === undefined
+        ? {}
+        : { exploration: normalizeExplorationProvenance(exploration) }),
     };
     await writeJsonAtomic(path, session, { root });
     return cloneJson(session, "session");
@@ -655,6 +765,7 @@ function normalizeResponseState(response, role = "user") {
       "turn.response.errorCode must be a safe lowercase error code",
     );
   }
+  value.route = normalizeResponseRoute(value.route);
   return value;
 }
 
@@ -668,6 +779,17 @@ function linkedAnswerFor(session, questionId) {
   return conversationTurns(session).find(
     (turn) =>
       turn?.role === "assistant" && turn.replyToTurnId === questionId,
+  );
+}
+
+function hasActiveResponseJob(session, exceptQuestionId) {
+  return conversationTurns(session).some(
+    (turn) =>
+      turn?.role === "user" &&
+      turn.id !== exceptQuestionId &&
+      (turn.response?.status === "queued" ||
+        turn.response?.status === "running") &&
+      !linkedAnswerFor(session, turn.id),
   );
 }
 
@@ -697,6 +819,7 @@ function publicResponseStatus(response) {
   }
   return {
     status: response.status,
+    route: publicResponseRoute(response.route),
     ...(typeof response.errorCode === "string" &&
     RESPONSE_ERROR_CODE.test(response.errorCode)
       ? { errorCode: response.errorCode }
@@ -910,13 +1033,7 @@ export async function appendConversationTurns({
         if (
           entry.role === "user" &&
           entry.response?.status === "queued" &&
-          session.conversation.turns.some(
-            (turn) =>
-              turn?.role === "user" &&
-              (turn.response?.status === "queued" ||
-                turn.response?.status === "running") &&
-              !linkedAnswerFor(session, turn.id),
-          )
+          hasActiveResponseJob(session)
         ) {
           throw responseError(
             "ACTIVE_RESPONSE_EXISTS",
@@ -1007,6 +1124,7 @@ export async function appendQueuedQuestion({
   expectedRevision,
   turn,
   consumeSelectedIds = true,
+  route = { kind: "detached", adapter: "codex-cli" },
 } = {}) {
   if (!turn || typeof turn !== "object" || Array.isArray(turn)) {
     throw new TypeError("turn must be an object");
@@ -1018,6 +1136,7 @@ export async function appendQueuedQuestion({
     throw new TypeError("Queued response state is managed by Attend");
   }
   const createdAt = turn.createdAt ?? new Date().toISOString();
+  const responseRoute = normalizeResponseRoute(route);
   return appendConversationTurn({
     root,
     sessionId,
@@ -1028,6 +1147,7 @@ export async function appendQueuedQuestion({
       createdAt,
       response: {
         status: "queued",
+        route: responseRoute,
         queuedAt: createdAt,
         updatedAt: createdAt,
         attempt: 0,
@@ -1060,7 +1180,12 @@ export async function markQuestionResponseRunning({
   root,
   sessionId,
   questionId,
+  route,
+  adapter = "codex-cli",
 } = {}) {
+  const expectedRoute = normalizeResponseRoute(
+    route ?? { kind: "detached", adapter },
+  );
   const result = await mutateLatestSession({
     root,
     sessionId,
@@ -1076,6 +1201,12 @@ export async function markQuestionResponseRunning({
         throw responseError(
           "QUESTION_RESPONSE_NOT_RUNNABLE",
           `Question response is not queued: ${question.id}`,
+        );
+      }
+      if (!sameResponseRoute(question.response.route, expectedRoute)) {
+        throw responseError(
+          "QUESTION_RESPONSE_ROUTE_MISMATCH",
+          `Question is not queued for this response worker: ${question.id}`,
         );
       }
       const now = new Date().toISOString();
@@ -1142,7 +1273,11 @@ export async function retryQuestionResponse({
   root,
   sessionId,
   questionId,
+  expectedRoute,
 } = {}) {
+  const retryRoute = expectedRoute === undefined
+    ? null
+    : normalizeResponseRoute(expectedRoute);
   const result = await mutateLatestSession({
     root,
     sessionId,
@@ -1158,6 +1293,21 @@ export async function retryQuestionResponse({
         throw responseError(
           "QUESTION_RESPONSE_NOT_RETRYABLE",
           `Question response is not failed: ${question.id}`,
+        );
+      }
+      if (
+        retryRoute !== null &&
+        !sameResponseRoute(question.response.route, retryRoute)
+      ) {
+        throw responseError(
+          "QUESTION_RESPONSE_ROUTE_MISMATCH",
+          `Question belongs to a different explicit chat route: ${question.id}`,
+        );
+      }
+      if (hasActiveResponseJob(session, question.id)) {
+        throw responseError(
+          "ACTIVE_RESPONSE_EXISTS",
+          "This session already has an active response job",
         );
       }
       const now = new Date().toISOString();
@@ -1190,6 +1340,8 @@ export async function completeQuestionResponse({
   sessionId,
   questionId,
   content,
+  route,
+  adapter = "codex-cli",
   answerId = `turn_${randomUUID()}`,
   createdAt = new Date().toISOString(),
 } = {}) {
@@ -1238,6 +1390,13 @@ export async function completeQuestionResponse({
           `Question response is not running: ${question.id}`,
         );
       }
+      const expectedRoute = route ?? { kind: "detached", adapter };
+      if (!sameResponseRoute(question.response.route, expectedRoute)) {
+        throw responseError(
+          "QUESTION_RESPONSE_ROUTE_MISMATCH",
+          `Question is not running through this response worker: ${question.id}`,
+        );
+      }
       if (conversationTurns(session).some((turn) => turn?.id === answerId)) {
         throw responseError(
           "TURN_EXISTS",
@@ -1270,6 +1429,223 @@ export async function completeQuestionResponse({
   return {
     ...lifecycleResult(result, questionId),
     answer: cloneJson(answer, "assistant answer"),
+  };
+}
+
+/**
+ * Move one exact queued host question to a replacement host attachment. The
+ * caller proves the replacement attachment before entering this store. This
+ * transition never changes the question, its frozen selection, or its queued
+ * status. Exact retries to the same route are idempotent.
+ */
+export async function rebindQueuedHostQuestionResponse({
+  root,
+  sessionId,
+  questionId,
+  expectedRevision,
+  route,
+  beforeRebind,
+} = {}) {
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+    throw new TypeError("expectedRevision must be a non-negative integer");
+  }
+  const targetRoute = normalizeResponseRoute(route);
+  if (targetRoute.kind !== "host") {
+    throw new TypeError("Host rebind requires a host response route");
+  }
+  if (beforeRebind !== undefined && typeof beforeRebind !== "function") {
+    throw new TypeError("beforeRebind must be a function when supplied");
+  }
+
+  const result = await mutateLatestSession({
+    root,
+    sessionId,
+    async mutate(session) {
+      const question = responseQuestionFor(session, questionId);
+      if (linkedAnswerFor(session, question.id) || question.response?.status === "completed") {
+        throw responseError(
+          "QUESTION_ALREADY_ANSWERED",
+          `Question is already answered: ${question.id}`,
+        );
+      }
+      if (question.response?.status !== "queued") {
+        throw responseError(
+          "QUESTION_RESPONSE_NOT_QUEUED",
+          `Host question response is not queued: ${question.id}`,
+        );
+      }
+
+      const currentRoute = normalizeResponseRoute(question.response.route);
+      if (currentRoute.kind !== "host") {
+        throw responseError(
+          "QUESTION_RESPONSE_ROUTE_MISMATCH",
+          `Question is not bound to a host attachment: ${question.id}`,
+        );
+      }
+      if (sameResponseRoute(currentRoute, targetRoute)) {
+        return { changed: false, value: { repeated: true } };
+      }
+      if (session.state?.revision !== expectedRevision) {
+        throw new SessionConflictError({
+          sessionId: session.id,
+          expectedRevision,
+          actualRevision: session.state?.revision,
+        });
+      }
+      await beforeRebind?.({
+        currentRoute,
+        targetRoute,
+        sessionId: session.id,
+        questionId: question.id,
+      });
+      const replySelection = questionReplySelection(session, question);
+      if (typeof replySelection?.id !== "string" || replySelection.id.length === 0) {
+        throw responseError(
+          "QUESTION_SELECTION_MISMATCH",
+          `Queued question has no frozen reply selection: ${question.id}`,
+        );
+      }
+
+      const now = new Date().toISOString();
+      question.response = {
+        ...question.response,
+        route: targetRoute,
+        reboundAt: now,
+        updatedAt: now,
+        rebindCount:
+          (Number.isSafeInteger(question.response.rebindCount)
+            ? question.response.rebindCount
+            : 0) + 1,
+      };
+      return { changed: true, value: { repeated: false } };
+    },
+  });
+
+  return {
+    ...lifecycleResult(result, questionId),
+    repeated: result.value?.repeated === true,
+  };
+}
+
+/**
+ * Commit an answer produced inside the attached host conversation. Reading a
+ * host packet never claims or starts the job, so this is the only host-side
+ * response transition. Exact replays are idempotent; a different answer or a
+ * stale visualization is rejected under the same session lock.
+ */
+export async function completeHostQuestionResponse({
+  root,
+  sessionId,
+  questionId,
+  expectedRevision,
+  expectedSelectionId,
+  route,
+  content,
+  createdAt = new Date().toISOString(),
+} = {}) {
+  if (
+    typeof content !== "string" ||
+    content.length === 0 ||
+    content.includes("\0") ||
+    Buffer.byteLength(content, "utf8") > 64 * 1024
+  ) {
+    throw new TypeError("content must be a non-empty string of at most 64 KiB");
+  }
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+    throw new TypeError("expectedRevision must be a non-negative integer");
+  }
+  if (typeof expectedSelectionId !== "string" || expectedSelectionId.length === 0) {
+    throw new TypeError("expectedSelectionId must be a non-empty string");
+  }
+  const expectedRoute = normalizeResponseRoute(route);
+  if (expectedRoute.kind !== "host") {
+    throw new TypeError("Host completion requires a host response route");
+  }
+  const answerDigest = createHash("sha256").update(content).digest("hex");
+  const answerId = `turn_host_${createHash("sha256")
+    .update(`${questionId}\0${answerDigest}`)
+    .digest("hex")
+    .slice(0, 16)}`;
+
+  const result = await mutateLatestSession({
+    root,
+    sessionId,
+    mutate(session) {
+      const question = responseQuestionFor(session, questionId);
+      if (!sameResponseRoute(question.response?.route, expectedRoute)) {
+        throw responseError(
+          "QUESTION_RESPONSE_ROUTE_MISMATCH",
+          `Question is not bound to this host attachment: ${question.id}`,
+        );
+      }
+
+      const existingAnswer = linkedAnswerFor(session, question.id);
+      if (existingAnswer) {
+        if (
+          question.response?.status === "completed" &&
+          question.response.answerDigest === answerDigest &&
+          existingAnswer.content === content
+        ) {
+          return { changed: false, value: { repeated: true } };
+        }
+        throw responseError(
+          "QUESTION_ALREADY_ANSWERED",
+          `Question is already answered: ${question.id}`,
+        );
+      }
+
+      if (session.state?.revision !== expectedRevision) {
+        throw new SessionConflictError({
+          sessionId: session.id,
+          expectedRevision,
+          actualRevision: session.state?.revision,
+        });
+      }
+      const replySelection = questionReplySelection(session, question);
+      if (replySelection?.id !== expectedSelectionId) {
+        throw responseError(
+          "QUESTION_SELECTION_MISMATCH",
+          `Reply selection does not match pending question ${question.id}`,
+        );
+      }
+      if (question.response?.status !== "queued") {
+        throw responseError(
+          "QUESTION_RESPONSE_NOT_QUEUED",
+          `Host question response is not queued: ${question.id}`,
+        );
+      }
+      if (conversationTurns(session).some((turn) => turn?.id === answerId)) {
+        throw responseError("TURN_EXISTS", `Conversation turn already exists: ${answerId}`);
+      }
+
+      const answer = {
+        id: answerId,
+        role: "assistant",
+        content,
+        createdAt,
+        selection: cloneJson(replySelection, "host reply selection"),
+        replyToTurnId: question.id,
+      };
+      session.conversation.turns.push(answer);
+      const now = new Date().toISOString();
+      question.response = {
+        ...question.response,
+        status: "completed",
+        answerTurnId: answer.id,
+        answerDigest,
+        completedAt: now,
+        updatedAt: now,
+      };
+      delete question.response.errorCode;
+      delete question.response.failedAt;
+      return { changed: true, value: { repeated: false } };
+    },
+  });
+
+  return {
+    ...lifecycleResult(result, questionId),
+    answer: cloneJson(linkedAnswerFor(result.session, questionId), "assistant answer"),
+    repeated: result.value?.repeated === true,
   };
 }
 
@@ -1335,10 +1711,15 @@ export async function pendingQuestionResponseJobs({ root } = {}) {
       ) {
         continue;
       }
+      const legacyRouteMissing = question.response.route === undefined;
       candidates.push({
         sessionId,
         questionId: question.id,
         status: question.response.status,
+        route: legacyRouteMissing
+          ? null
+          : normalizeResponseRoute(question.response.route),
+        ...(legacyRouteMissing ? { legacyRouteMissing: true } : {}),
         createdAt:
           typeof question.createdAt === "string" ? question.createdAt : "",
       });
@@ -1351,10 +1732,18 @@ export async function pendingQuestionResponseJobs({ root } = {}) {
     if (sessionId) return sessionId;
     return compareText(left.questionId, right.questionId);
   });
-  return candidates.map(({ sessionId, questionId, status }) => ({
+  return candidates.map(({
     sessionId,
     questionId,
     status,
+    route,
+    legacyRouteMissing,
+  }) => ({
+    sessionId,
+    questionId,
+    status,
+    route,
+    ...(legacyRouteMissing ? { legacyRouteMissing: true } : {}),
   }));
 }
 

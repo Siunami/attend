@@ -74,7 +74,10 @@ function dataPackage(id) {
   };
 }
 
-async function queuedQuestion(root, suffix, { createdAt } = {}) {
+async function queuedQuestion(root, suffix, {
+  createdAt,
+  route = { kind: "detached", adapter: "codex-cli" },
+} = {}) {
   const packageValue = dataPackage(`data_${suffix}`);
   const sessionId = `session_${suffix}`;
   const questionId = `turn_${suffix}`;
@@ -90,6 +93,7 @@ async function queuedQuestion(root, suffix, { createdAt } = {}) {
     root,
     sessionId,
     expectedRevision: selected.state.revision,
+    route,
     turn: {
       id: questionId,
       role: "user",
@@ -230,6 +234,7 @@ test("worker resolves an unattached follow-up through the persisted conversation
     root,
     sessionId: origin.sessionId,
     expectedRevision: completedOrigin.session.state.revision,
+    route: { kind: "detached", adapter: "codex-cli" },
     turn: {
       id: questionId,
       role: "user",
@@ -352,6 +357,7 @@ test("an interrupted running job becomes retryable without a duplicate provider 
     sessionId: job.sessionId,
     questionId: job.questionId,
     status: "running",
+    route: { kind: "detached", adapter: "codex-cli" },
   }]);
 
   let restartedCalls = 0;
@@ -406,6 +412,39 @@ test("cold-start recovery never repeats a provider call already marked running",
   assert.equal(stored.conversation.turns[0].response.status, "failed");
   assert.equal(stored.conversation.turns[0].response.errorCode, "interrupted");
   assert.equal(called, false);
+});
+
+test("cold-start recovery automatically replays interrupted local inference", async (t) => {
+  const root = await fixture(t);
+  const route = { kind: "local", model: "gpt-oss-20b" };
+  const job = await queuedQuestion(root, "local_restart", { route });
+  await markQuestionResponseRunning({ root, ...job, route });
+  let calls = 0;
+  const worker = createQuestionWorker({
+    root,
+    route,
+    capability: {
+      adapter: "gpt-oss-20b",
+      available: true,
+      authenticated: true,
+    },
+    evidenceForSelection: fixtureEvidenceForSelection,
+    runner: {
+      adapter: "gpt-oss-20b",
+      async respond() {
+        calls += 1;
+        return { answer: "Recovered privately on this Mac." };
+      },
+    },
+  });
+  t.after(() => worker.close());
+
+  assert.deepEqual(await worker.recover(), { recovered: 1, interrupted: 1 });
+  await worker.whenIdle();
+  const stored = await loadSession({ root, sessionId: job.sessionId });
+  assert.equal(calls, 1);
+  assert.equal(stored.conversation.turns[0].response.status, "completed");
+  assert.equal(stored.conversation.turns[1].content, "Recovered privately on this Mac.");
 });
 
 test("runner failures persist only the bounded public error vocabulary", async (t) => {

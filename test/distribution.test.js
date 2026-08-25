@@ -74,6 +74,64 @@ async function writeExecutable(path, contents) {
   await chmod(path, 0o755);
 }
 
+const EXPERIMENT_INBOX_CONTRACT = Object.freeze([
+  /record(?:s|ed)? every admitted hypothesis before execution/iu,
+  /run(?:s)? every admitted experiment/iu,
+  /one canonical experiment inbox/iu,
+  /interesting, uninteresting, null, inconclusive, invalid, and failed/iu,
+  /(?:promote|promotion may emphasize) any number of interesting results/iu,
+  /agent promotion, a human star, and structured feedback (?:as separate signals|remain separate)/iu,
+  /(?:parent-child branches|child experiment linked to its parent)/iu,
+  /exploratory or confirmatory/iu,
+  /comparison count/iu,
+  /mention(?:s)? at most one result/iu,
+  /(?:link(?:s)? (?:to )?the experiment workspace|with a workspace link)/iu,
+]);
+
+const EXPERIMENT_INBOX_COMMANDS = Object.freeze([
+  "attend inspect <request.json> --json",
+  "attend explore <request.json> --json",
+  "attend map <request.json> --stage --exploration <id> --experiment <id> --json",
+  "attend assess <experiment-id> <assessment.json> --json",
+  "attend promote <experiment-id> [--rationale <text>] --json",
+  "attend feedback <experiment-id> --kind <reason> [--note <text>] --json",
+  "attend workspace [exploration-id] --open --json",
+]);
+
+const OPPORTUNITY_CHECK_CONTRACT = Object.freeze([
+  /attend checkpoint/iu,
+  /OpportunityCheck/iu,
+  /eligible natural task boundary/iu,
+  /(?:abstain(?:s|tion)?[^.]{0,100}silent|abstention is completely silent)/iu,
+  /\bproceed\b/iu,
+  /(?:one linked exploration|exactly one exploration)/iu,
+  /checkpointId/iu,
+  /does not call a model/iu,
+]);
+
+function assertExperimentInboxContract(value, label) {
+  for (const pattern of EXPERIMENT_INBOX_CONTRACT) {
+    assert.match(value, pattern, `${label} must preserve ${pattern}`);
+  }
+  assert.doesNotMatch(
+    value,
+    /only surface candidate visualizations|do not mention or link discarded candidates|discarded candidates stay out/iu,
+    `${label} must not restore the hide-discarded policy`,
+  );
+}
+
+function assertExperimentInboxCommands(value, label) {
+  for (const command of EXPERIMENT_INBOX_COMMANDS) {
+    assert.ok(value.includes(command), `${label} must document ${command}`);
+  }
+}
+
+function assertOpportunityCheckContract(value, label) {
+  for (const pattern of OPPORTUNITY_CHECK_CONTRACT) {
+    assert.match(value, pattern, `${label} must preserve ${pattern}`);
+  }
+}
+
 test("vendored browser assets match their pinned upstream files", async () => {
   const expected = {
     "d3.min.js": "f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539",
@@ -120,6 +178,11 @@ test("release staging produces a reproducible, private-data-free package and pin
     unavailable: 1,
     rejected: 38,
   });
+  assert.deepEqual(first.manifest.components.experimentInbox, { schemaVersion: 1 });
+  assert.deepEqual(first.manifest.components.opportunityCheck, { schemaVersion: 1 });
+  assert.equal(first.manifest.components.managedSkill.behaviorSchemaVersion, 2);
+  assert.match(first.manifest.components.managedSkill.sha256, /^[a-f0-9]{64}$/u);
+  assert.match(first.manifest.components.managedSkill.metadataSha256, /^[a-f0-9]{64}$/u);
 
   const prompt = await readFile(join(temporary, "first", "install-prompt.txt"), "utf8");
   assert.equal(
@@ -131,13 +194,27 @@ test("release staging produces a reproducible, private-data-free package and pin
   assert.doesNotMatch(prompt, /npm install --global/u);
   assert.doesNotMatch(prompt, /installing manually/u);
   assert.match(prompt, /attend setup --json/u);
+  assert.match(prompt, /attend model install --json/u);
   assert.match(prompt, /attend doctor --json/u);
   assert.match(prompt, /attend families --json/u);
   assert.match(prompt, /19 families, 18 executable, 1 unavailable/u);
   assert.match(prompt, /\.agents\/skills\/ and \.claude\/skills\//u);
-  assert.match(prompt, /codex login status/u);
-  assert.match(prompt, /codex-chat check passes/u);
-  assert.match(prompt, /Never generate custom chart code/u);
+  assert.match(prompt, /chat-route, and local-model checks pass/u);
+  assert.match(prompt, /readiness\.core and readiness\.localModel\.ready are true/u);
+  assert.match(prompt, /Host routing, Codex CLI, and Claude CLI are optional fallbacks/u);
+  assert.match(prompt, /follow its intentional-proactivity and experiment-inbox contracts/u);
+  assert.match(prompt, /ask before reading a new private source/u);
+  assertExperimentInboxContract(prompt, "install prompt");
+  assertOpportunityCheckContract(prompt, "install prompt");
+  assert.match(prompt, /Inspect doctor\.chat\.route/u);
+  assert.match(prompt, /normal route to be local gpt-oss-20b/u);
+  assert.match(prompt, /sidebar chat does not depend on this agent remaining active/u);
+  assert.match(prompt, /view\.browser\.opened is false/u);
+  assert.match(prompt, /open view\.viewerUrl manually/u);
+  assert.match(prompt, /roughly a 12 GB download/u);
+  assert.doesNotMatch(prompt, /codex --version|codex login status|developers\.openai\.com\/codex/u);
+  assert.doesNotMatch(prompt, /claude auth|doctor --adapter/u);
+  assert.match(prompt, /never generate custom chart code/iu);
 
   const installer = await readFile(join(temporary, "first", "install.sh"), "utf8");
   assert.equal(
@@ -155,8 +232,15 @@ test("release staging produces a reproducible, private-data-free package and pin
   assert.match(installer, /"\$ATTEND_NPM" config get prefix/u);
   assert.match(installer, /ATTEND_NPM_PREFIX="\$HOME\/\.local"/u);
   assert.match(installer, /"\$ATTEND_NODE" "\$ATTEND_BIN" setup --json/u);
+  assert.match(installer, /"\$ATTEND_NODE" "\$ATTEND_BIN" model install --json/u);
   assert.match(installer, /"\$ATTEND_NODE" "\$ATTEND_BIN" doctor --json/u);
   assert.match(installer, /"\$ATTEND_NODE" "\$ATTEND_BIN" families --json/u);
+  assert.match(installer, /"local-model"/u);
+  assert.match(installer, /"chat-route"/u);
+  assert.match(installer, /doctor\.readiness\?\.core !== true/u);
+  assert.match(installer, /doctor\.readiness\?\.localModel\?\.ready !== true/u);
+  assert.match(installer, /doctor\.chat\?\.route/u);
+  assert.doesNotMatch(installer, /codex --version|codex login|claude auth|doctor --adapter/u);
   assert.doesNotMatch(installer, /\bjq\b/u);
   const shellCheck = spawnSync("sh", ["-n", join(temporary, "first", "install.sh")], {
     encoding: "utf8",
@@ -171,7 +255,15 @@ test("release staging produces a reproducible, private-data-free package and pin
   assert.match(index, /eighteen designs executable/u);
   assert.match(index, /one explicit capability abstention/u);
   assert.match(index, /data-copy-prompt/u);
-  assert.match(index, /Evidence selected for a sidebar answer is sent through the user's signed-in Codex provider/u);
+  assert.match(index, /one canonical experiment inbox/u);
+  assert.match(index, /one silent,\s+content-free opportunity checkpoint/u);
+  assert.match(index, /records every admitted hypothesis before execution/u);
+  assert.match(index, /keeps\s+every outcome in one trail/u);
+  assert.match(index, /Promotion, human stars, and feedback stay\s+separate/u);
+  assert.match(index, /agent chat mentions at most one result/u);
+  assert.match(index, /workspace link/u);
+  assert.match(index, /default gpt-oss-20b inference stay on this machine/u);
+  assert.match(index, /Host-agent, Codex CLI, and Claude CLI responders are opt-in compatibility modes/u);
   assert.match(await readFile(join(temporary, "first", "copy.js"), "utf8"), /navigator\.clipboard\.writeText/u);
   const headers = await readFile(join(temporary, "first", "_headers"), "utf8");
   assert.match(headers, /\/releases\/:version\/install\.sh\n  Content-Type: text\/x-shellscript; charset=utf-8/u);
@@ -186,7 +278,12 @@ test("release staging produces a reproducible, private-data-free package and pin
   for (const required of [
     "package/bin/attend.js",
     "package/agent-skill/attend-visualize/SKILL.md",
+    "package/agent-skill/attend-visualize/agents/openai.yaml",
+    "package/src/opportunity-store.js",
     "package/viewer/index.html",
+    "package/viewer/workspace.html",
+    "package/viewer/workspace.js",
+    "package/viewer/workspace.css",
     "package/viewer/vendor/d3.min.js",
     "package/viewer/vendor/topojson-client.min.js",
     "package/viewer/vendor/us-states.json",
@@ -207,6 +304,32 @@ test("release staging produces a reproducible, private-data-free package and pin
     encoding: "utf8",
   });
   assert.equal(unpack.status, 0, unpack.stderr);
+  const extractedPackage = join(extracted, "package");
+  const [packedSkill, packedAgentMetadata, packedReadme] = await Promise.all([
+    readFile(join(extractedPackage, "agent-skill", "attend-visualize", "SKILL.md"), "utf8"),
+    readFile(
+      join(extractedPackage, "agent-skill", "attend-visualize", "agents", "openai.yaml"),
+      "utf8",
+    ),
+    readFile(join(extractedPackage, "README.md"), "utf8"),
+  ]);
+  assertExperimentInboxContract(packedSkill, "packed skill");
+  assertExperimentInboxCommands(packedSkill, "packed skill");
+  assertOpportunityCheckContract(packedSkill, "packed skill");
+  assert.match(
+    packedSkill,
+    /Never paste credentials, raw source bodies, exact source quotes, absolute paths, prompts, or transcripts/iu,
+  );
+  assertExperimentInboxContract(packedReadme, "packed README");
+  assertExperimentInboxCommands(packedReadme, "packed README");
+  assertOpportunityCheckContract(packedReadme, "packed README");
+  assert.match(packedAgentMetadata, /Keep an evidence-backed experiment inbox/u);
+  assert.match(packedAgentMetadata, /record every admitted hypothesis before execution/u);
+  assert.match(packedAgentMetadata, /run every admitted experiment/u);
+  assert.match(packedAgentMetadata, /retain every outcome in one canonical inbox/u);
+  assert.match(packedAgentMetadata, /mention at most one result with a workspace link/u);
+  assert.match(packedAgentMetadata, /silent opportunity checkpoint/u);
+  assert.doesNotMatch(packedAgentMetadata, /surface only evidence-backed insights/iu);
   const installedCatalog = spawnSync(
     process.execPath,
     [join(extracted, "package", "bin", "attend.js"), "families", "--json"],
@@ -240,15 +363,27 @@ test("release staging produces a reproducible, private-data-free package and pin
   await mkdir(fakeBin);
   await mkdir(fakeHome);
   await writeFile(familiesPath, installedCatalog.stdout);
-  await writeFile(doctorPath, JSON.stringify({
+  const readyDoctor = {
     ok: true,
     checks: [
       { id: "project", status: "pass", detail: "fixture" },
       { id: "agent-skill-agents", status: "pass", detail: "fixture" },
       { id: "agent-skill-claude", status: "pass", detail: "fixture" },
-      { id: "codex-chat", status: "warn", detail: "fixture provider is not signed in" },
+      { id: "host-bridge", status: "pass", detail: "fixture" },
+      { id: "chat-route", status: "pass", detail: "fixture" },
+      { id: "local-model", status: "pass", detail: "fixture" },
+      { id: "adapter:codex-cli", status: "info", detail: "optional and not probed" },
+      { id: "adapter:claude-cli", status: "info", detail: "optional and not probed" },
     ],
-  }));
+    readiness: {
+      core: true,
+      localModel: { model: "gpt-oss-20b", ready: true, required: true },
+      hostBridge: true,
+      detachedProvider: { adapter: null, ready: false, optional: true },
+    },
+    chat: { route: { kind: "local", model: "gpt-oss-20b" } },
+  };
+  await writeFile(doctorPath, JSON.stringify(readyDoctor));
   await Promise.all([
     writeExecutable(join(fakeBin, "node"), `#!/bin/sh
 exec '${process.execPath}' "$@"
@@ -294,6 +429,9 @@ switch (process.argv[2]) {
   case "setup":
     console.log('{"ok":true,"conflicts":[]}');
     break;
+  case "model":
+    console.log('{"ok":true,"model":{"model":"gpt-oss-20b"}}');
+    break;
   case "doctor":
     process.stdout.write(fs.readFileSync(process.env.ATTEND_TEST_DOCTOR_JSON));
     break;
@@ -328,9 +466,44 @@ switch (process.argv[2]) {
     installRun.stdout,
     new RegExp(`Attend ${version.replaceAll(".", "\\.")} installed: 19 families, 18 executable, 1 unavailable`, "u"),
   );
+  assert.match(installRun.stdout, /Chat route: private gpt-oss-20b on this machine/u);
+  assert.match(
+    installRun.stdout,
+    /Optional detached fallbacks \(not required\): Codex CLI: not probed, Claude CLI: not probed\./u,
+  );
   const npmInvocation = await readFile(npmLog, "utf8");
   assert.ok(npmInvocation.startsWith(`install --global --prefix ${expectedPrefix} `));
   assert.ok(npmInvocation.endsWith(`/attend-local-${version}.tgz\n`));
+
+  const detachedDoctor = structuredClone(readyDoctor);
+  detachedDoctor.chat.route = { kind: "detached", adapter: "codex-cli" };
+  await writeFile(doctorPath, JSON.stringify(detachedDoctor));
+  const detachedInstall = spawnSync("sh", [join(temporary, "first", "install.sh")], {
+    cwd: project,
+    encoding: "utf8",
+    env: installerEnvironment,
+  });
+  assert.equal(detachedInstall.status, 0, detachedInstall.stderr || detachedInstall.stdout);
+  assert.match(detachedInstall.stdout, /explicit detached fallback Codex CLI remains selected/u);
+  assert.doesNotMatch(detachedInstall.stdout, /Chat route: private gpt-oss-20b/u);
+  await writeFile(doctorPath, JSON.stringify(readyDoctor));
+
+  for (const readiness of ["core", "localModel"]) {
+    const failedDoctor = structuredClone(readyDoctor);
+    if (readiness === "localModel") failedDoctor.readiness.localModel.ready = false;
+    else failedDoctor.readiness[readiness] = false;
+    await writeFile(doctorPath, JSON.stringify(failedDoctor));
+    const rejectedReadiness = spawnSync("sh", [join(temporary, "first", "install.sh")], {
+      cwd: project,
+      encoding: "utf8",
+      env: installerEnvironment,
+    });
+    assert.notEqual(rejectedReadiness.status, 0);
+    assert.match(
+      rejectedReadiness.stderr,
+      readiness === "core" ? /core visualization readiness/u : /local-model readiness/u,
+    );
+  }
 
   const tamperedArchive = join(temporary, "tampered.tgz");
   await writeFile(tamperedArchive, "not the release archive\n");
@@ -359,6 +532,65 @@ switch (process.argv[2]) {
     env: process.env,
   });
   assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+  const packedProject = await import(pathToFileURL(join(extractedPackage, "src", "project.js")));
+  const expectedManagedSkill = packedProject.managedSkillContents(packedSkill);
+  const [agentsSkill, agentsMetadata, claudeSkill] = await Promise.all([
+    readFile(join(project, ".agents", "skills", "attend-visualize", "SKILL.md"), "utf8"),
+    readFile(
+      join(project, ".agents", "skills", "attend-visualize", "agents", "openai.yaml"),
+      "utf8",
+    ),
+    readFile(join(project, ".claude", "skills", "attend-visualize", "SKILL.md"), "utf8"),
+  ]);
+  assert.equal(agentsSkill, expectedManagedSkill);
+  assert.equal(
+    agentsMetadata,
+    packedProject.managedSkillMetadataContents(packedAgentMetadata),
+  );
+  assert.equal(claudeSkill, expectedManagedSkill);
+  assertExperimentInboxContract(agentsSkill, "fresh managed skill");
+  assertExperimentInboxCommands(agentsSkill, "fresh managed skill");
+  assertOpportunityCheckContract(agentsSkill, "fresh managed skill");
+  const checkpointRequest = join(project, "checkpoint-request.json");
+  await writeFile(checkpointRequest, JSON.stringify({
+    version: 1,
+    boundary: { kind: "before-final-answer", id: "packed-release-turn" },
+    host: { kind: "codex", skillVersion: "attend-visualize/0.4.0" },
+    taskShape: {
+      action: "review",
+      evidenceState: "derived-records",
+      resultShape: "table",
+      visualJobs: ["comparison"],
+    },
+    sourceShape: {
+      origin: "self-report",
+      sourceCount: 1,
+      recordCount: 3,
+      numericTokenCount: 3,
+      isoDateCount: 0,
+      omissionCount: 0,
+    },
+    decision: {
+      kind: "abstain",
+      reason: "text-suffices",
+      confidence: 0.9,
+      interruptionCost: 0.1,
+    },
+  }));
+  const checkpoint = spawnSync(
+    process.execPath,
+    [packedBin, "checkpoint", checkpointRequest, "--root", project, "--json"],
+    { cwd: project, encoding: "utf8", env: process.env },
+  );
+  assert.equal(checkpoint.status, 0, checkpoint.stderr || checkpoint.stdout);
+  const checkpointResult = JSON.parse(checkpoint.stdout);
+  assert.equal(checkpointResult.decision, "abstain");
+  assert.match(checkpointResult.checkpointId, /^checkpoint_[a-f0-9]{24}$/u);
+  const packedReceipt = await readFile(
+    join(project, ".attend", "local", "checkpoints", `${checkpointResult.checkpointId}.json`),
+    "utf8",
+  );
+  assert.doesNotMatch(packedReceipt, /packed-release-turn/u);
   const doctor = spawnSync(process.execPath, [packedBin, "doctor", "--root", project, "--json"], {
     cwd: project,
     encoding: "utf8",
@@ -366,6 +598,8 @@ switch (process.argv[2]) {
   });
   assert.equal(doctor.status, 0, doctor.stderr || doctor.stdout);
   const doctorResult = JSON.parse(doctor.stdout);
+  assert.deepEqual(doctorResult.components.opportunityCheck, { schemaVersion: 1 });
+  assert.equal(doctorResult.components.managedSkill.behaviorSchemaVersion, 2);
   const viewerChecks = doctorResult.checks.filter((check) => check.id.startsWith("viewer-"));
   assert.ok(viewerChecks.length >= 20, "doctor must inspect every Atlas module and vendor asset");
   assert.ok(viewerChecks.every((check) => check.status === "pass"));

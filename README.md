@@ -7,10 +7,10 @@ Attend Local turns evidence from explicitly authorized files into a designed vis
 From the project root, paste this one command into a terminal or compatible coding agent:
 
 ```sh
-curl -fsSL https://attend-cli.matthewwilsonsiu.workers.dev/releases/0.2.2/install.sh | sh
+curl -fsSL https://attend-cli.matthewwilsonsiu.workers.dev/releases/0.4.0/install.sh | sh
 ```
 
-It installs the pinned `0.2.2` release, configures the current project for both `.agents` and `.claude`, and verifies the CLI, catalog, local viewer, and Codex chat capability. Node.js 22 or newer and npm are required.
+It installs the pinned `0.4.0` release, configures the current project for both `.agents` and `.claude`, installs the local `gpt-oss-20b` model, and verifies the CLI, catalog, viewer, and private chat runtime. Node.js 22 or newer, npm, llama.cpp, and roughly 12 GB for the model are required. Codex and Claude are not installation requirements.
 
 The host agent does not write chart code. It asks Attend for the installed Family Atlas catalog, selects an executable member for the analytic job, transforms source-backed facts into that member's declared roles, and submits a data-only request. Attend reopens the sources, verifies exact quotes, compiles a canonical package, resolves a fixed bundled renderer, and serves the result on loopback.
 
@@ -18,21 +18,23 @@ This release includes all 19 visualization families. The catalog records every a
 
 ## Install with one prompt
 
-Open [the Attend Local release page](https://attend-cli.matthewwilsonsiu.workers.dev/) and paste its installation prompt into a coding agent from the project where Attend should run. The prompt pins the release tarball by SHA-256, installs it globally, configures the project, installs the managed agent skill for both `.agents` and `.claude`, and verifies the local Codex chat dependency.
+Open [the Attend Local release page](https://attend-cli.matthewwilsonsiu.workers.dev/) and paste its installation prompt into a coding agent from the project where Attend should run. The prompt pins the release tarball by SHA-256, installs it globally, configures the project, installs the managed agent skill for both `.agents` and `.claude`, installs `gpt-oss-20b`, and verifies private local chat.
 
 Requirements:
 
 - macOS or Linux
 - Node.js 22 or newer and npm
-- Codex CLI signed in for automatic artifact-sidebar answers
+- llama.cpp's `llama-server`
+- About 12 GB of disk space for `gpt-oss-20b`; 24 GB or more of unified/system memory is recommended
 
-The visualization, library, and manual host-agent bridge work without automatic chat. The installer does not call chat ready unless `attend doctor --json` reports the `codex-chat` check passing.
+The Attend service handles sidebar questions with `gpt-oss-20b` by default. It owns the loopback page server, durable question queue, and llama.cpp process as one lifecycle. The page URL is not returned until the model is healthy, so a visible page has a working chat path without depending on a coding-agent listener. Codex CLI, Claude CLI, and host-agent routing remain explicit compatibility modes.
 
 For development from a checkout, run these commands in the directory containing this README:
 
 ```sh
 npm install --global .
 attend setup --json
+attend model install
 attend doctor --json
 ```
 
@@ -46,9 +48,48 @@ user question
   -> exact executable family/member
   -> evidence-backed map request
   -> attend map request.json --json
-  -> attend view --json
-  -> local artifact + selected-mark chat
+  -> attend view --open --json
+  -> local artifact + private gpt-oss-20b selected-mark chat
 ```
+
+The skill also tells the active host agent to notice visual opportunities during ordinary work. At an eligible natural task boundary, it records one content-free `OpportunityCheck` with `attend checkpoint`: either `abstain`, which stays completely silent, or `proceed`, which authorizes one linked exploration. The check is limited to bounded, authorized evidence and a plausible comparison, distribution, change, relationship, hierarchy, network, location, or sequence. Attend hashes the raw host boundary identifier with a private project salt; it stores no prompt, transcript, source body, quote, path, host ticket, credential, or free-form rationale.
+
+The agent proceeds only when a governed executable family can test a named pre-result hypothesis against a named baseline and the likely value exceeds the interruption cost. The CLI records the decision; it does not call a model, choose a family, open a browser, create an experiment, or alter the current visualization. A stable host boundary identifier makes exact retries and one-check-per-turn enforcement hard guarantees. Without one, the one-check limit remains managed-skill policy measured by the evaluation harness.
+
+For a direct visualization, the agent presents the artifact in a one-column Markdown card so the link remains clickable:
+
+| Attend visualization |
+| --- |
+| **[Open the visualization](VIEWER_URL)** |
+| **Why it matters**<br>How the view relates to the current goal. |
+| **What surfaced**<br>The evidence-backed insight or clearly labeled exploratory signal. |
+
+## Experiment inbox contract
+
+The packaged skill also defines the experiment-inbox workflow. The agent admits only hypotheses tied to the current task. It records every admitted hypothesis before execution and runs every admitted experiment. Every outcome remains in one canonical experiment inbox, including interesting, uninteresting, null, inconclusive, invalid, and failed attempts. Promotion may emphasize any number of interesting results, but it never copies a result into another section. Agent promotion, a human star, and structured feedback remain separate signals.
+
+Each plan records its intended representation, authorized source scope, named comparison baseline, exploratory or confirmatory status, and comparison count. A change of variables, representation, or question creates a child experiment linked to its parent. The earlier plan remains unchanged. Agent chat mentions at most one result at a natural task boundary and links the experiment workspace; the workspace keeps the complete trail.
+
+Human-readable experiment plans and event prose are visible in the capability-protected loopback workspace. They should summarize findings, not contain credentials, raw source bodies, exact source quotes, absolute paths, prompts, or transcripts. Attend records a generic workspace diagnostic for a staged execution failure while leaving the detailed error in the invoking command's private output.
+
+The lifecycle is explicit:
+
+```text
+attend checkpoint <request.json> --json
+attend inspect <request.json> --json
+attend explore <request.json> --json
+attend map <request.json> --stage --exploration <id> --experiment <id> --json
+attend assess <experiment-id> <assessment.json> --json
+attend promote <experiment-id> [--rationale <text>] --json
+attend feedback <experiment-id> --kind <reason> [--note <text>] --json
+attend workspace [exploration-id] --open --json
+```
+
+`checkpoint` records the active agent's silent boundary decision without reading the evidence set. `inspect` reports deterministic source shape without returning source text. `explore` commits the immutable pre-result plans; a proactive request includes the proceeding checkpoint's `checkpointId`, while a user-invoked exploration may omit it. Staged `map` attempts leave the ordinary current artifact unchanged, including when compilation fails. `assess` records outcome, evidence strength, transformations, omissions, limitations, and the eight-part interestingness vector. `promote` makes an interesting completed artifact current without creating another experiment. `workspace` opens the complete canonical trail. Direct `attend map` and `attend view` remain available for a single visualization.
+
+When a better view needs a new private source, the agent must name the improvement, the source, and the smallest required scope before it reads anything. It asks for permission in the conversation before triggering an operating-system prompt, then queries only the records needed for the stated join. Existing system access is not task authorization. If the user declines or access fails, the agent continues with the original evidence and leaves unresolved values visible.
+
+`attend view --open --json` returns the local artifact URL only after both the private model and page server are healthy. If the system browser cannot open automatically, `browser.opened` is false and `browser.warning` tells the agent to open `viewerUrl` manually. Chat remains available because the model belongs to the same Attend service, not to the agent that opened the browser.
 
 The family is chosen by the question, not by visual taste:
 
@@ -138,17 +179,61 @@ The canonical package stored on the local machine includes source-integrity rece
 
 ## Artifact view and chat
 
-`attend view` starts or reuses a detached loopback-only service, waits for it to become healthy, prints the project `libraryUrl` and current `viewerUrl`, then exits. The capability-bearing library URL remains stable across new artifacts and stop/start cycles. Each saved artifact has its own session URL.
+`attend view` starts or reuses a detached loopback-only service, starts and health-checks `gpt-oss-20b`, starts the page server, prints the project `libraryUrl` and current `viewerUrl`, then exits. The library URL remains stable across new artifacts and stop/start cycles. Each saved artifact has its own session URL. The model endpoint is also loopback-only and is not exposed to the browser; the Attend service is its only client.
 
 The production viewer consumes a closed projection of the canonical package emitted by `attend map`. It resolves that package through the installed catalog and the fixed renderer assigned to its executable member. The package and browser cannot choose a module or remote asset. Every interactive visual mark uses the canonical package mark ID.
 
 Selecting a mark updates server-owned, revisioned state. The server re-derives the selection and implicated evidence rather than accepting evidence from the browser. A selected mark can be attached to the next sidebar question; later messages inherit the latest relevant attachment until the user selects a new visual topic.
 
-Automatic sidebar responses use a separate ephemeral `codex exec` worker and the user's existing Codex sign-in. No `OPENAI_API_KEY` is required. Attend deliberately ignores project and user Codex instructions, hooks, plugins, MCP servers, and custom provider configuration for this worker. It launches without a shell, uses a read-only sandbox and a fixed environment allowlist, and receives no project path or package path.
+Private local chat is the default. Attend sends only the bounded question packet, selected visual context, recent Attend turns, and implicated evidence to `gpt-oss-20b`. The inference subprocess starts with llama.cpp offline mode, receives no provider credentials, has no project path or tools, and makes no hosted inference call. If the service is interrupted during an answer, the durable local job is queued again on restart.
 
-Attend sends the worker only the question, bounded recent conversation, immutable selection, and implicated private evidence. Full source bodies are included when the 1 MiB packet fits; otherwise each selected source receives deterministic head, middle, and tail segments with explicit coverage metadata. The viewer and state are local, but the selected evidence used for an answer follows the user's OpenAI Codex sign-in route. Attend has no hosted account or telemetry.
+Host-attached chat remains available as an explicit compatibility mode. Select it before opening the view:
 
-The browser persists the question before the worker starts, displays a real pending state, and polls for the linked answer. Failed and timed-out calls can be retried without resending the question or changing its historical attachment. A service restart marks interrupted work for an explicit retry instead of silently repeating an external call.
+```sh
+attend chat route host --json
+attend view --open --json
+```
+
+The active coding agent then runs the wait command returned by `view`:
+
+```sh
+attend chat wait --ticket <ticket-from-view> --timeout 300 --json
+```
+
+Agents with a local MCP configuration can run the same bridge with `attend mcp --root <project-root>`. It exposes only `attend_wait_for_question`, `attend_rebind_question`, and `attend_reply`; the server is fixed to that project root and delegates to the same durable queue and reply guards. Pass the `view` ticket to `attend_wait_for_question`, then pass the returned `replyGuard` unchanged to `attend_reply`. The MCP façade does not add a model provider or a second evidence path.
+
+The command returns one verified `attend-host-question/1` packet with the stored question, immutable selection, visual-context binding, bounded prior Attend turns, implicated evidence, and `replyGuard`. It does not scan for more evidence. Answer only from that packet, then pass the ticket and every command-line guard back to Attend:
+
+```sh
+attend reply \
+  --ticket <ticket-from-view> \
+  --question-id <replyGuard.questionId> \
+  --expected-revision <replyGuard.expectedRevision> \
+  --selection-id <replyGuard.selectionId> \
+  --message-stdin \
+  --json
+```
+
+Send the answer on the command's stdin and close stdin. Do not interpolate evidence-derived answer text into a shell command. The reply input is bounded to 64 KiB.
+
+The ticket binds and verifies `replyGuard.sessionId`. Revision and selection checks prevent an answer from being attached to changed visual state. A wait leaves the durable question queued. While Attend builds the packet it advertises a live listener; after delivery it advertises a bounded `delivered` reservation rather than claiming the agent is still active. If the wait times out or the agent stops, the question remains queued. The agent can re-run the wait with the same unexpired ticket, but Attend cannot resume or wake an inactive agent conversation.
+
+Opening the same artifact from a replacement agent may return `chat.recovery`. If the earlier agent is actively listening, takeover is unavailable. If the packet was delivered or no live listener remains, Attend reports an explicit `chat rebind --take-over` command. Run it only with the user's approval: it atomically moves that one queued host question to the new ticket, preserves the frozen selection and evidence, and revokes the earlier attachment's reply guard. The MCP equivalent is `attend_rebind_question` with `confirmTakeover: true`.
+
+While the agent is actively collaborating on the artifact, it re-arms `attend chat wait` after each reply. On timeout, it tells the user that the listener ended instead of claiming that chat is still connected.
+
+In host mode, Attend itself makes no model-provider call. The bounded evidence packet enters the active coding agent's tool context, so its contents follow that agent's configured model and provider route. The viewer, session, and private evidence store stay on the local machine. Attend has no hosted account or telemetry.
+
+Detached responders are opt-in fallbacks:
+
+```sh
+attend chat route codex --json
+attend chat route claude --json
+```
+
+Each command labels and selects an isolated Codex CLI or Claude CLI worker for future questions. Run `attend view --open --json` again after choosing a route. Attend snapshots the route when it saves each question and never switches providers automatically. A detached worker receives the same bounded question packet through its selected provider route. It receives no project path and cannot use project tools.
+
+Return to private local chat with `attend chat route local --json`. Use `attend doctor --json` to check the model receipt and core visualization readiness. Pass `--adapter codex` or `--adapter claude` only when you want to probe an optional detached provider.
 
 ## Phrase recurrence shortcut
 
@@ -164,25 +249,25 @@ attend view --open --json
 
 It accepts `.md`, `.mdx`, `.txt`, and normalized `.jsonl` sources. By default, a phrase must occur at least twice across at least two distinct sources, and distinct-source breadth ranks before raw repetition. Use `--min-sources 1` only when repetition inside one source is intentional. Do not use this shortcut for a different analytic job.
 
-## Manual host-agent bridge
+## Context and manual notes
 
-The sidebar works without the current coding-agent conversation. Use the bridge only when the user explicitly asks that conversation to inspect a click, troubleshoot, or recover an answer:
+Use `attend context` when the user asks the current agent to inspect a click, troubleshoot state, or recover an answer outside the normal host wait loop:
 
 ```sh
 attend context --json
 attend context --include-excerpts --json
 ```
 
-`attend context` returns the exact current or oldest unanswered historical selection with its package ID, view revision, mark IDs, and evidence links. It omits excerpts by default because command output consumed by a host agent follows that agent's configured provider route.
+`attend context` returns the exact current or oldest unanswered historical selection with its package ID, view revision, mark IDs, and evidence links. It omits excerpts by default because command output enters the current coding agent's context. Included excerpts follow that agent's configured model and provider route.
 
-To save a manual response to a pending question:
+To save a manual response to a non-host pending question:
 
 ```sh
 attend reply \
   --question-id <pendingQuestion.id> \
   --expected-revision <pendingQuestion.viewState.revision> \
   --selection-id <pendingQuestion.selection.id> \
-  --message "<answer>"
+  --message-stdin
 ```
 
 The revision prevents concurrent overwrites. The immutable selection ID prevents an answer to one mark from being attached to another.
@@ -190,21 +275,34 @@ The revision prevents concurrent overwrites. The immutable selection ID prevents
 ## Commands
 
 - `attend setup [--agent <agents|claude>]... [--dry-run] [--json]` configures the project and managed skill. Without `--agent`, it installs both targets.
+- `attend model install [--timeout <minutes>] [--json]` downloads and successfully loads the fixed `gpt-oss-20b` GGUF through llama.cpp.
 - `attend families [--json]` returns the governed Atlas catalog.
+- `attend checkpoint <request.json> [--json]` records one content-free `abstain` or `proceed` decision without starting analysis or UI work.
+- `attend inspect <request.json> [--json]` returns deterministic source-shape observations without source text.
+- `attend explore <request.json> [--json]` creates or extends an immutable experiment plan ledger.
 - `attend map <request.json> [--json]` verifies sources and compiles a canonical Atlas artifact.
+- `attend map <request.json> --stage --exploration <id> [--experiment <id>] [--json]` records one admitted execution without changing the current artifact.
+- `attend assess <experiment-id> <assessment.json> [--json]` records the post-result assessment and interestingness vector.
+- `attend promote <experiment-id> [--rationale <text>] [--json]` promotes in place and makes the artifact current.
+- `attend feedback <experiment-id> --kind <reason> [--note <text>] [--json]` records a distinct human signal.
+- `attend workspace [exploration-id] [--open] [--json]` opens the canonical experiment inbox.
 - `attend phrases <paths...> --question <text> [options]` runs the specialized recurrence analyzer.
-- `attend view [--port 0] [--open] [--json]` starts or reuses the local artifact library.
+- `attend view [--port 0] [--open] [--json]` starts or reuses the model-backed local artifact library.
 - `attend status [--json]` reports the service and stable URLs.
 - `attend stop [--json]` stops the service without deleting artifacts or configuration.
+- `attend chat route [local|host|codex|claude] [--json]` reads or explicitly changes the route for future questions. `local` is the default.
+- `attend chat wait --ticket <host-ticket> [--timeout <seconds>] [--json]` waits for one attachment-bound question packet.
+- `attend chat rebind --take-over ...` explicitly moves one queued host question to a replacement ticket after user approval.
+- `attend mcp [--root <path>]` exposes the same attachment-bound wait, takeover, and reply bridge as three stdio MCP tools.
 - `attend context [--include-excerpts] [--json]` reads exact visual and pending-question state.
-- `attend reply ...` commits a guarded manual answer.
-- `attend doctor [--json]` checks runtime, setup, catalog, current artifact, viewer assets, and automatic chat readiness.
+- `attend reply ...` commits a guarded host answer or manual note; agents should pass answers with `--message-stdin` or the structured MCP tool.
+- `attend doctor [--adapter <codex|claude>] [--json]` reports core visualization, local-model, host-bridge, selected-route, and optional detached-provider readiness separately.
 
-Run `attend <command> --help` for all options.
+Run `attend <command> --help` for all options and request-shape guidance.
 
 ## Local state
 
-Shared configuration lives at `.attend/project.json`. Derived packages, private evidence, sessions, conversations, service identity, and the current pointer live below gitignored `.attend/local/`. The managed skill is installed at `.agents/skills/attend-visualize/SKILL.md` and `.claude/skills/attend-visualize/SKILL.md` unless setup is restricted with `--agent`.
+Shared configuration lives at `.attend/project.json`. Inspection receipts, derived packages, private evidence, sessions, conversations, explorations, experiment events, service identity, host attachment ticket digests, chat route, and the current pointer live below gitignored `.attend/local/`. Attend never persists the raw host ticket. The managed skill is installed at `.agents/skills/attend-visualize/SKILL.md` and `.claude/skills/attend-visualize/SKILL.md` unless setup is restricted with `--agent`; the Agents installation also receives its managed `agents/openai.yaml` discovery metadata.
 
 Attend reads source files but does not edit them. It does not scan paths that were not supplied, upload a corpus to an Attend service, watch files, or silently choose another visualization implementation. Regenerate an artifact from its explicit request when sources change; do not hand-edit packages or evidence stores.
 
@@ -214,4 +312,4 @@ Attend reads source files but does not edit them. It does not scan paths that we
 npm run verify
 ```
 
-The verification suite covers the 19-family catalog, all 18 available mappings, the explicit specimen abstention, exact evidence and hash checks, fixed package-native renderer contracts, browser selection and revision behavior, phrase compatibility, private evidence hydration, asynchronous chat jobs, idempotent cross-agent setup, loopback service lifecycle, release tarball allowlisting, SHA-pinned staging, and package contents.
+The verification suite covers the 19-family catalog, all 18 available mappings, the explicit specimen abstention, exact evidence and hash checks, fixed package-native renderer contracts, browser selection and revision behavior, phrase compatibility, private evidence hydration, the attachment-bound host loop, explicit detached adapters, idempotent cross-agent setup, loopback service lifecycle, the packaged experiment-inbox behavior contract, release tarball allowlisting, SHA-pinned staging, and package contents.

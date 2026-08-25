@@ -1,4 +1,4 @@
 interface:
   display_name: "Attend Visualize"
-  short_description: "Build and hand off local evidence-backed views"
-  default_prompt: "Use $attend-visualize to answer this question with the smallest useful local visualization."
+  short_description: "Keep an evidence-backed experiment inbox"
+  default_prompt: "Use $attend-visualize to make one silent opportunity checkpoint at an eligible task boundary, then record every admitted hypothesis before execution, run every admitted experiment, retain every outcome in one canonical inbox, and mention at most one result with a workspace link."

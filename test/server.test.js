@@ -134,6 +134,10 @@ async function fixture(t, options = {}) {
     ...(options.enqueueQuestion
       ? { enqueueQuestion: options.enqueueQuestion }
       : {}),
+    resolveQuestionRoute: options.resolveQuestionRoute ?? (async () => ({
+      kind: "detached",
+      adapter: "codex-cli",
+    })),
     ...(token === undefined ? {} : { token }),
   });
   t.after(async () => {
@@ -246,8 +250,8 @@ test("serves only the tokenized viewer and explicit read endpoints", async (t) =
   assert.deepEqual(await responseJson(libraryHealth), {
     ok: true,
     service: "attend-library",
-    protocolVersion: 2,
-    packageVersion: "0.2.2",
+    protocolVersion: 4,
+    packageVersion: "0.4.0",
     instanceId: TEST_INSTANCE_ID,
     sessionCount: 1,
   });
@@ -529,7 +533,10 @@ test("chat queues only the user question against the exact selected state", asyn
   assert.equal(chat.selectionId, selected.selection.id);
   assert.equal(chat.question.role, "user");
   assert.equal(chat.question.content, "What is happening here?");
-  assert.deepEqual(chat.question.response, { status: "queued" });
+  assert.deepEqual(chat.question.response, {
+    status: "queued",
+    route: { kind: "detached", adapter: "codex-cli" },
+  });
   assert.equal(chat.question.selection.id, selected.selection.id);
   assert.equal(chat.question.selection.stateRevision, selected.state.revision);
   assert.deepEqual(chat.question.selection.selectedMarkIds, ["phrase_design_system"]);
@@ -620,6 +627,7 @@ test("chat returns immediately, then enqueues the exact committed question once"
       root: viewer.root,
       sessionId: viewer.analysisId,
       questionId: chat.question.id,
+      route: { kind: "detached", adapter: "codex-cli" },
     },
     persisted: true,
   }]);
@@ -652,7 +660,10 @@ test("an asynchronous enqueue failure marks only the committed question failed",
   assert.equal(response.status, 200);
   const chat = await responseJson(response);
   assert.equal(chat.status, "queued");
-  assert.deepEqual(chat.question.response, { status: "queued" });
+  assert.deepEqual(chat.question.response, {
+    status: "queued",
+    route: { kind: "detached", adapter: "codex-cli" },
+  });
   assert.equal(enqueueCount, 1);
 
   let stored;
@@ -669,6 +680,7 @@ test("an asynchronous enqueue failure marks only the committed question failed",
   const publicState = await responseJson(await fetch(api(viewer.url, "state")));
   assert.deepEqual(publicState.conversation.turns[0].response, {
     status: "failed",
+    route: { kind: "detached", adapter: "codex-cli" },
     errorCode: "enqueue_failed",
   });
   assert.doesNotMatch(JSON.stringify(publicState), /private enqueue detail/u);
@@ -708,9 +720,13 @@ test("chat rejects a second active response without consuming its attachment", a
 
 test("failed chat responses retry by explicit question id and enqueue after commit", async (t) => {
   const jobs = [];
+  let activeRoute = { kind: "detached", adapter: "codex-cli" };
   const viewer = await fixture(t, {
     enqueueQuestion(job) {
       jobs.push(job);
+    },
+    resolveQuestionRoute() {
+      return activeRoute;
     },
   });
   const selected = await responseJson(await post(viewer.url, "selection", {
@@ -733,6 +749,23 @@ test("failed chat responses retry by explicit question id and enqueue after comm
   });
   assert.equal(failed.question.response.status, "failed");
 
+  activeRoute = { kind: "detached", adapter: "claude-cli" };
+  const wrongRouteRetry = await post(viewer.url, "chat/retry", {
+    questionId: chat.question.id,
+  });
+  assert.equal(wrongRouteRetry.status, 409);
+  assert.equal(
+    (await responseJson(wrongRouteRetry)).error.code,
+    "response_route_mismatch",
+  );
+  assert.equal(
+    turnsFrom(await loadSession({ root: viewer.root, sessionId: viewer.analysisId }))[0]
+      .response.status,
+    "failed",
+  );
+
+  activeRoute = { kind: "detached", adapter: "codex-cli" };
+
   const retriedResponse = await post(viewer.url, "chat/retry", {
     questionId: chat.question.id,
   });
@@ -743,13 +776,17 @@ test("failed chat responses retry by explicit question id and enqueue after comm
   assert.equal(retried.questionId, chat.question.id);
   assert.deepEqual(
     retried.session.conversation.turns[0].response,
-    { status: "queued" },
+    {
+      status: "queued",
+      route: { kind: "detached", adapter: "codex-cli" },
+    },
   );
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(jobs.at(-1), {
     root: viewer.root,
     sessionId: viewer.analysisId,
     questionId: chat.question.id,
+    route: { kind: "detached", adapter: "codex-cli" },
   });
   assert.equal(jobs.length, 2);
 
@@ -767,6 +804,47 @@ test("failed chat responses retry by explicit question id and enqueue after comm
   });
   assert.equal(unknown.status, 404);
   assert.equal((await responseJson(unknown)).error.code, "question_not_found");
+});
+
+test("retry refuses to create a second active response", async (t) => {
+  const viewer = await fixture(t, { enqueueQuestion() {} });
+  const selectedFirst = await responseJson(await post(viewer.url, "selection", {
+    expectedRevision: 0,
+    selectedIds: ["phrase_design_system"],
+  }));
+  const first = await responseJson(await post(viewer.url, "chat", {
+    expectedRevision: selectedFirst.state.revision,
+    selectionId: selectedFirst.selection.id,
+    message: "This older question will fail.",
+  }));
+  const failed = await markQuestionResponseFailed({
+    root: viewer.root,
+    sessionId: viewer.analysisId,
+    questionId: first.question.id,
+    errorCode: "provider_exit",
+  });
+
+  const selectedSecond = await responseJson(await post(viewer.url, "selection", {
+    expectedRevision: failed.session.state.revision,
+    selectedIds: ["phrase_local_context"],
+  }));
+  const second = await responseJson(await post(viewer.url, "chat", {
+    expectedRevision: selectedSecond.state.revision,
+    selectionId: selectedSecond.selection.id,
+    message: "This newer question is already queued.",
+  }));
+
+  const retry = await post(viewer.url, "chat/retry", {
+    questionId: first.question.id,
+  });
+  assert.equal(retry.status, 409);
+  assert.equal((await responseJson(retry)).error.code, "active_response_exists");
+
+  const stored = await loadSession({ root: viewer.root, sessionId: viewer.analysisId });
+  const firstStored = turnsFrom(stored).find((turn) => turn.id === first.question.id);
+  const secondStored = turnsFrom(stored).find((turn) => turn.id === second.question.id);
+  assert.equal(firstStored.response.status, "failed");
+  assert.equal(secondStored.response.status, "queued");
 });
 
 test("chat rejects a mismatched selection id without writing", async (t) => {

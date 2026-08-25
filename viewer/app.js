@@ -2,6 +2,33 @@ import { atlasPackageToRenderModel, isAtlasPackage } from "./package-model.js";
 import { atlasSelectionSummary, renderAtlasPackage } from "./package-renderer.js";
 
 const basePath = `${window.location.pathname.replace(/[^/]*$/, "").replace(/\/+$/, "")}/`;
+const hostAttachmentRoute = (() => {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const attachmentId = params.get("attend-host");
+  const generation = Number(params.get("attend-generation"));
+  if (
+    !/^host_[a-f0-9]{16}$/u.test(attachmentId ?? "") ||
+    !Number.isSafeInteger(generation) ||
+    generation < 1
+  ) {
+    return null;
+  }
+  return { kind: "host", attachmentId, generation };
+})();
+
+function hostBoundHref(href) {
+  const url = new URL(href, window.location.href);
+  if (hostAttachmentRoute) {
+    url.hash = new URLSearchParams({
+      "attend-host": hostAttachmentRoute.attachmentId,
+      "attend-generation": String(hostAttachmentRoute.generation),
+    }).toString();
+  }
+  return url.href;
+}
+
+const libraryReturn = document.querySelector(".library-return");
+if (libraryReturn) libraryReturn.href = hostBoundHref(libraryReturn.href);
 
 const elements = {
   workspace: document.getElementById("workspace"),
@@ -10,6 +37,10 @@ const elements = {
   chatToggle: document.getElementById("chat-toggle"),
   chatClose: document.getElementById("chat-close"),
   chatScroll: document.getElementById("chat-scroll"),
+  chatRoute: document.getElementById("chat-route"),
+  chatRouteLabel: document.getElementById("chat-route-label"),
+  chatRouteState: document.getElementById("chat-route-state"),
+  chatRouteDisclosure: document.getElementById("chat-route-disclosure"),
   corpusMeta: document.getElementById("corpus-meta"),
   question: document.getElementById("question-heading"),
   target: document.getElementById("question-target"),
@@ -32,6 +63,7 @@ const elements = {
 
 let dataPackage;
 let session;
+let chat;
 let pending = false;
 let chatOpen = false;
 let chatPinned = true;
@@ -39,7 +71,12 @@ let draftSelectionKey = null;
 let atlasRenderRevision = 0;
 
 function apiUrl(path) {
-  return `${basePath}api/${path}`;
+  const url = new URL(`${basePath}api/${path}`, window.location.origin);
+  if (hostAttachmentRoute) {
+    url.searchParams.set("attend-host", hostAttachmentRoute.attachmentId);
+    url.searchParams.set("attend-generation", String(hostAttachmentRoute.generation));
+  }
+  return url.href;
 }
 
 async function request(path, options = {}) {
@@ -68,6 +105,91 @@ function unwrapSession(payload) {
 
 function unwrapArtifact(payload) {
   return payload.package || payload.artifact || payload.dataPackage || payload;
+}
+
+function chatProjection(payload) {
+  return payload?.chat ?? payload?.session?.chat ?? null;
+}
+
+function acceptChatProjection(payload) {
+  const next = chatProjection(payload);
+  if (!next) return false;
+  const changed = JSON.stringify(next) !== JSON.stringify(chat);
+  chat = next;
+  return changed;
+}
+
+function activeChatRoute() {
+  const active = chat?.active;
+  if (active?.kind === "local" && active.model === "gpt-oss-20b") {
+    return active;
+  }
+  if (
+    active?.kind === "detached" &&
+    (active.adapter === "codex-cli" || active.adapter === "claude-cli")
+  ) {
+    return active;
+  }
+  if (active?.kind === "host") return active;
+  return {
+    kind: "local",
+    model: "gpt-oss-20b",
+    label: "Private AI on this Mac",
+    available: false,
+    disclosure: "Checking the private local model.",
+  };
+}
+
+function detachedProviderLabel(adapter) {
+  return adapter === "claude-cli" ? "Claude CLI" : "Codex CLI";
+}
+
+function renderChatRoute() {
+  const route = activeChatRoute();
+  elements.chatRoute.dataset.routeKind = route.kind;
+  if (route.kind === "local") {
+    elements.chatRoute.dataset.capability = route.available === false ? "restarting" : "ready";
+    elements.chatRouteLabel.textContent = "Private AI · gpt-oss-20b";
+    elements.chatRouteState.textContent = route.available === false ? "Restarting" : "On this Mac";
+    elements.chatRouteDisclosure.textContent = route.disclosure
+      || "Questions and selected evidence stay on this Mac.";
+    return;
+  }
+  if (route.kind === "detached") {
+    const provider = detachedProviderLabel(route.adapter);
+    elements.chatRouteLabel.textContent = `Detached fallback: ${provider}`;
+    if (route.available === false) {
+      elements.chatRoute.dataset.capability = "unavailable";
+      elements.chatRouteState.textContent = "Unavailable";
+    } else if (route.authenticated === false) {
+      elements.chatRoute.dataset.capability = "sign-in-required";
+      elements.chatRouteState.textContent = "Sign-in required";
+    } else {
+      elements.chatRoute.dataset.capability = "ready";
+      elements.chatRouteState.textContent = "Ready";
+    }
+    elements.chatRouteDisclosure.textContent = route.disclosure
+      || `Selected evidence is sent to the explicitly selected ${provider} fallback.`;
+    return;
+  }
+
+  if (route.ownership === "unattached" || route.registered === false) {
+    elements.chatRoute.dataset.capability = "unattached";
+    elements.chatRouteLabel.textContent = "Host not attached";
+    elements.chatRouteState.textContent = "Open from Attend";
+    elements.chatRouteDisclosure.textContent = route.disclosure
+      || "Sidebar chat is unavailable from this unbound library link.";
+    return;
+  }
+  elements.chatRoute.dataset.capability = route.listener || "not-listening";
+  elements.chatRouteLabel.textContent = `Host attached · ${route.label || "Opening coding agent"}`;
+  elements.chatRouteState.textContent = route.listener === "delivered"
+    ? "Delivered"
+    : route.listener === "listening"
+      ? "Listening"
+      : "No active listener";
+  elements.chatRouteDisclosure.textContent = route.disclosure
+    || "Questions and selected evidence return to the coding agent that opened this view through that agent's configured provider route.";
 }
 
 function countLabel(count) {
@@ -209,20 +331,26 @@ function closeChat({ restoreFocus = true } = {}) {
 function syncComposer() {
   const suggestedQuestion = currentSuggestedQuestion();
   const responseActive = hasActiveResponse();
+  const route = activeChatRoute();
+  const hostUnattached = route.kind === "host" && route.registered === false;
   const showSuggestion = Boolean(
-    suggestedQuestion && elements.input.value === "" && !responseActive,
+    suggestedQuestion && elements.input.value === "" && !responseActive && !hostUnattached,
   );
   elements.suggestion.hidden = !showSuggestion;
   elements.suggestionText.textContent = showSuggestion ? suggestedQuestion : "";
-  elements.input.placeholder = showSuggestion ? "" : "Ask about this view";
+  elements.input.placeholder = hostUnattached
+    ? "Sidebar chat is unavailable from this library link."
+    : showSuggestion
+      ? ""
+      : "Ask about this view";
   if (showSuggestion) {
     elements.input.setAttribute("aria-describedby", "suggested-question");
   } else {
     elements.input.removeAttribute("aria-describedby");
   }
-  elements.input.disabled = responseActive;
+  elements.input.disabled = responseActive || hostUnattached;
   elements.submit.disabled =
-    pending || responseActive || !elements.input.value.trim() || draftNeedsReview();
+    pending || responseActive || hostUnattached || !elements.input.value.trim() || draftNeedsReview();
 }
 
 function renderHeader() {
@@ -671,16 +799,60 @@ function failedResponseMessage(errorCode) {
   return "The answer could not be generated.";
 }
 
+function questionRoute(turn) {
+  const route = turn.response?.route;
+  if (route?.kind === "local" && route.model === "gpt-oss-20b") {
+    return route;
+  }
+  if (
+    route?.kind === "detached" &&
+    (route.adapter === "codex-cli" || route.adapter === "claude-cli")
+  ) {
+    return route;
+  }
+  return { kind: "host" };
+}
+
+function activeResponseMessage(turn) {
+  const route = questionRoute(turn);
+  if (route.kind === "local") {
+    return turn.response?.status === "running"
+      ? "Answering privately on this Mac."
+      : "Waiting for the private local model.";
+  }
+  if (route.kind === "detached") {
+    const provider = detachedProviderLabel(route.adapter);
+    return turn.response?.status === "running"
+      ? `Detached fallback: ${provider} is answering.`
+      : `Detached fallback: ${provider}. Waiting for the provider.`;
+  }
+
+  const activeRoute = activeChatRoute();
+  if (activeRoute.kind === "host" && activeRoute.ownership === "another-host") {
+    return "Another coding agent owns this queued question.";
+  }
+  const listener = activeRoute.kind === "host"
+    ? activeRoute.listener
+    : "not-listening";
+  if (listener === "delivered") {
+    return "Question delivered to the coding agent that opened this view; waiting for its guarded reply.";
+  }
+  if (listener === "listening") {
+    return "Waiting for the coding agent that opened this view.";
+  }
+  return "Saved locally. Attend cannot wake an inactive agent.";
+}
+
 function responseState(turn, answeredQuestionIds) {
   if (turn.role !== "user" || answeredQuestionIds.has(turn.id)) return null;
   const status = turn.response?.status;
   let response;
   if (status === "queued" || status === "running") {
-    const thinking = document.createElement("span");
-    thinking.className = "turn-response turn-response-thinking";
-    thinking.setAttribute("role", "status");
-    thinking.textContent = "Thinking…";
-    response = thinking;
+    const active = document.createElement("span");
+    active.className = "turn-response turn-response-active";
+    active.setAttribute("role", "status");
+    active.textContent = activeResponseMessage(turn);
+    response = active;
   } else if (status === "failed") {
     const failure = document.createElement("div");
     failure.className = "turn-response turn-response-failed";
@@ -773,6 +945,7 @@ function renderConversation({ follow = false, focusTurnId = null } = {}) {
 
 function renderState({ followConversation = false, focusConversationTurnId = null } = {}) {
   elements.revision.textContent = `v${sessionRevision()}`;
+  renderChatRoute();
   renderPhrases();
   renderSelection();
   renderConversation({
@@ -806,6 +979,7 @@ async function selectAtlasMark(markId) {
         markId: String(markId),
       }),
     });
+    acceptChatProjection(payload);
     session = unwrapSession(payload);
     pinDraftToCurrentSelection();
     renderState();
@@ -844,6 +1018,7 @@ async function selectRow(rowId) {
         selectedIds: [rowId],
       }),
     });
+    acceptChatProjection(payload);
     session = unwrapSession(payload);
     pinDraftToCurrentSelection();
     renderState();
@@ -872,6 +1047,7 @@ async function clearSelection() {
       method: "POST",
       body: JSON.stringify(body),
     });
+    acceptChatProjection(payload);
     session = unwrapSession(payload);
     pinDraftToCurrentSelection();
     renderState();
@@ -906,6 +1082,7 @@ async function sendMessage(message) {
         message,
       }),
     });
+    acceptChatProjection(payload);
     session = unwrapSession(payload);
     elements.input.value = "";
     draftSelectionKey = null;
@@ -937,6 +1114,7 @@ async function retryQuestion(questionId) {
       method: "POST",
       body: JSON.stringify({ questionId }),
     });
+    acceptChatProjection(payload);
     session = unwrapSession(payload);
     chatPinned = true;
     renderState({ followConversation: true });
@@ -951,7 +1129,9 @@ async function retryQuestion(questionId) {
 }
 
 async function refreshState() {
-  const next = unwrapSession(await request("state"));
+  const payload = await request("state");
+  const chatChanged = acceptChatProjection(payload);
+  const next = unwrapSession(payload);
   const explicitStateRevisionIsNewer = Boolean(
     next?.state?.revision !== undefined
       && session?.state?.revision !== undefined
@@ -974,6 +1154,9 @@ async function refreshState() {
         ? "The selected marks changed while you were writing. Select them again before asking."
         : "The attached phrase changed while you were writing. Select a phrase again before asking.", true);
     }
+  } else if (chatChanged) {
+    renderChatRoute();
+    renderConversation();
   }
 }
 
@@ -1055,10 +1238,13 @@ document.addEventListener("keydown", (event) => {
 async function boot() {
   setChatOpen(false);
   try {
-    [dataPackage, session] = await Promise.all([
-      request("data").then(unwrapArtifact),
-      request("state").then(unwrapSession),
+    const [dataPayload, statePayload] = await Promise.all([
+      request("data"),
+      request("state"),
     ]);
+    dataPackage = unwrapArtifact(dataPayload);
+    acceptChatProjection(statePayload);
+    session = unwrapSession(statePayload);
     renderHeader();
     renderState({ followConversation: true });
     setStatus("");

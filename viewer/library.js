@@ -5,6 +5,31 @@ const elements = {
   status: document.getElementById("status"),
 };
 
+const hostAttachmentRoute = (() => {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const attachmentId = params.get("attend-host");
+  const generation = Number(params.get("attend-generation"));
+  if (
+    !/^host_[a-f0-9]{16}$/u.test(attachmentId ?? "") ||
+    !Number.isSafeInteger(generation) ||
+    generation < 1
+  ) {
+    return null;
+  }
+  return { attachmentId, generation };
+})();
+
+function hostBoundHref(href) {
+  const url = new URL(href, window.location.href);
+  if (hostAttachmentRoute) {
+    url.hash = new URLSearchParams({
+      "attend-host": hostAttachmentRoute.attachmentId,
+      "attend-generation": String(hostAttachmentRoute.generation),
+    }).toString();
+  }
+  return url.href;
+}
+
 let refreshing = false;
 
 function plural(count, singular, pluralForm = `${singular}s`) {
@@ -32,7 +57,7 @@ function renderEntry(entry) {
   const item = document.createElement("li");
   const link = document.createElement("a");
   link.className = "session-link";
-  link.href = entry.href;
+  link.href = hostBoundHref(entry.href);
 
   const copy = document.createElement("span");
   copy.className = "session-copy";

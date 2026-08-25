@@ -23,6 +23,15 @@ async function readLibraryAssets() {
   return { html, app, css };
 }
 
+async function readWorkspaceAssets() {
+  const [html, app, css] = await Promise.all([
+    readFile(`${VIEWER}/workspace.html`, "utf8"),
+    readFile(`${VIEWER}/workspace.js`, "utf8"),
+    readFile(`${VIEWER}/workspace.css`, "utf8"),
+  ]);
+  return { html, app, css };
+}
+
 function declarationsFor(css, selector) {
   return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
     .filter(([, selectors]) =>
@@ -46,6 +55,10 @@ test("viewer assets match the strict self-only CSP and accessible control contra
   assert.match(html, /<a class="library-return" href="\.\.\/\.\.\/">All views<\/a>/u);
   assert.match(html, /<textarea\b[^>]*\bid="chat-input"/u);
   assert.match(html, /<button\b[^>]*\btype="submit"[^>]*>\s*Ask\s*<\/button>/u);
+  assert.match(html, /id="chat-route"[^>]*aria-live="polite"/u);
+  assert.match(html, /id="chat-route-label"/u);
+  assert.match(html, /id="chat-route-state"/u);
+  assert.match(html, /id="chat-route-disclosure"/u);
   assert.doesNotMatch(html, /OpenAI|Codex runner|existing Codex sign-in/u);
   assert.doesNotMatch(app, /Answered deterministically/u);
   assert.match(
@@ -72,7 +85,7 @@ test("library assets render only API metadata with safe accessible links", async
   assert.match(html, /<ol id="session-list"[^>]*aria-label=/u);
   assert.match(html, /id="status"[^>]*role="status"/u);
   assert.match(app, /fetch\("\.\/api\/library"/u);
-  assert.match(app, /link\.href\s*=\s*entry\.href/u);
+  assert.match(app, /link\.href\s*=\s*hostBoundHref\(entry\.href\)/u);
   assert.match(app, /question\.textContent\s*=/u);
   assert.match(app, /target\.textContent\s*=/u);
   assert.match(app, /entry\.view\?\.id/u);
@@ -89,6 +102,141 @@ test("library assets render only API metadata with safe accessible links", async
   for (const id of queriedIds) {
     assert.match(html, new RegExp(`\\bid="${id}"`), `missing #${id}`);
   }
+});
+
+test("host binding survives navigation through the visualization library", async () => {
+  const viewer = await readViewerAssets();
+  const library = await readLibraryAssets();
+
+  assert.match(
+    viewer.app,
+    /libraryReturn\.href = hostBoundHref\(libraryReturn\.href\)/u,
+    "the All views link must retain the current host attachment",
+  );
+  assert.match(
+    library.app,
+    /link\.href = hostBoundHref\(entry\.href\)/u,
+    "saved-view links must retain the host attachment inherited by the library",
+  );
+  assert.match(viewer.app, /params\.get\("attend-host"\)/u);
+  assert.match(library.app, /params\.get\("attend-host"\)/u);
+});
+
+test("experiment workspace renders one canonical, filterable exploration trail", async () => {
+  const { html, app, css } = await readWorkspaceAssets();
+
+  assert.doesNotMatch(html, /\sstyle=/u);
+  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/u);
+  assert.doesNotMatch(app, /\.style\b|\.innerHTML\b|\.outerHTML\b|insertAdjacentHTML|DOMParser/u);
+  assert.match(html, /<main class="workspace-shell">/u);
+  assert.match(html, /<ol id="experiment-list"[^>]*aria-label=/u);
+  assert.equal((html.match(/<ol\b/gu) ?? []).length, 1, "one list must own every experiment");
+  assert.match(html, /id="status"[^>]*role="status"[^>]*aria-live="polite"/u);
+  assert.match(html, /name="experiment-filter" value="all" checked/u);
+  assert.match(html, /name="experiment-filter" value="promoted"/u);
+  assert.match(html, /name="experiment-filter" value="starred"/u);
+  assert.match(html, /<input id="strict-chronology" type="checkbox">/u);
+
+  assert.match(app, /fetch\("\.\/api\/exploration"/u);
+  assert.match(app, /payload\.schemaVersion !== 1/u);
+  assert.match(app, /function canonicalExperiments\(values\)[\s\S]*const byId = new Map\(\)/u);
+  assert.match(app, /elements\.list\.replaceChildren\(\.\.\.visible\.map\(renderExperiment\)\)/u);
+  assert.doesNotMatch(app, /promotionQuota|MAX_PROMOT|promotedList|starredList/iu);
+
+  const orderStart = app.indexOf("function defaultOrder");
+  const orderEnd = app.indexOf("function chronologicalOrder", orderStart);
+  const orderSource = app.slice(orderStart, orderEnd);
+  assert.ok(orderStart >= 0 && orderEnd > orderStart, "default ordering must remain inspectable");
+  assert.match(orderSource, /starredAt\(left\) \? 0 : promotedAt\(left\) \? 1 : 2/u);
+  assert.match(orderSource, /timestamp\(starredAt\(left\)\)/u);
+  assert.match(orderSource, /timestamp\(promotedAt\(left\)\)/u);
+  assert.match(orderSource, /executionTimestamp\(left\)/u);
+  assert.match(app, /sort\(strictChronology \? chronologicalOrder : defaultOrder\)/u);
+
+  const renderStart = app.indexOf("function renderExperiment");
+  const renderEnd = app.indexOf("function renderHeader", renderStart);
+  const renderSource = app.slice(renderStart, renderEnd);
+  assert.ok(renderStart >= 0 && renderEnd > renderStart, "experiment rendering must remain inspectable");
+  assert.ok(
+    renderSource.indexOf("hypothesisPanel(experiment, position)") <
+      renderSource.indexOf("resultPanel(experiment)"),
+    "the hypothesis and its reason must precede the result",
+  );
+  for (const copy of [
+    "Why test this",
+    "Branch of ",
+    "attempt",
+    "What failed",
+    "What surfaced",
+    "Outcome",
+    "Why promoted",
+    "Limitations",
+    "Factors",
+  ]) {
+    assert.match(app, new RegExp(copy), `workspace must render ${copy.trim()}`);
+  }
+
+  assert.match(css, /@media\s*\(prefers-color-scheme:\s*dark\)/u);
+  assert.match(css, /:focus-visible/u);
+  assert.match(css, /@media\s*\(max-width:\s*620px\)/u);
+
+  const queriedIds = [...app.matchAll(/getElementById\("([^"]+)"\)/gu)].map(
+    (match) => match[1],
+  );
+  for (const id of queriedIds) {
+    assert.match(html, new RegExp(`\\bid="${id}"`), `missing #${id}`);
+  }
+});
+
+test("experiment workspace keeps stars, feedback, branches, and artifact links safe", async () => {
+  const { html, app, css } = await readWorkspaceAssets();
+
+  assert.match(app, /star\.setAttribute\("aria-pressed", String\(experiment\.human\?\.starred === true\)\)/u);
+  assert.match(app, /star\.setAttribute\([\s\S]*"aria-label"/u);
+  assert.match(
+    app,
+    /`\.\/api\/experiments\/\$\{encodeURIComponent\(experiment\.id\)\}\/star`[\s\S]*starred,[\s\S]*mutationId: mutationId\(\),[\s\S]*expectedRevision: experimentRevision\(experiment\)/u,
+  );
+  assert.match(
+    app,
+    /`\.\/api\/experiments\/\$\{encodeURIComponent\(experiment\.id\)\}\/feedback`[\s\S]*kind,[\s\S]*mutationId: mutationId\(\),[\s\S]*expectedRevision: experimentRevision\(experiment\)/u,
+  );
+  assert.match(app, /crypto\.randomUUID\(\)/u);
+  assert.match(app, /counts\?\.attempted/u);
+  assert.match(app, /counts\?\.comparisonsAttempted/u);
+  assert.match(app, /Promotion means worth attention, not proven true\./u);
+  for (const kind of [
+    "useful",
+    "already-known",
+    "wrong-question",
+    "wrong-data",
+    "wrong-representation",
+    "weak-evidence",
+    "misleading",
+    "badly-timed",
+    "dismissed",
+    "acted-upon",
+  ]) {
+    assert.match(app, new RegExp(`\\["${kind}",`), `missing ${kind} feedback`);
+  }
+  assert.match(app, /const label = makeElement\("label", null, "Your feedback"\)/u);
+  assert.match(app, /label\.htmlFor = selectId/u);
+  assert.match(app, /select\.required = true/u);
+
+  assert.match(app, /url\.origin !== window\.location\.origin/u);
+  assert.match(app, /url\.pathname\.endsWith\(expectedSuffix\)/u);
+  assert.match(app, /link\.href = href/u);
+  assert.match(app, /parentHref = safeArtifactHref\(parent\?\.artifact\)/u);
+  assert.match(app, /params\.get\("attend-host"\)/u);
+  assert.match(app, /params\.get\("attend-generation"\)/u);
+  assert.match(app, /return hostBoundHref\(url\.href\)/u);
+  assert.match(app, /No artifact was produced because the attempt failed\./u);
+  assert.match(app, /No artifact is available for this experiment\./u);
+
+  assert.match(declarationsFor(css, ".star-button"), /min-height:\s*42px/u);
+  assert.match(css, /\.star-button\[aria-pressed="true"\]/u);
+  assert.match(declarationsFor(css, ".feedback-form"), /display:\s*grid/u);
+  assert.match(html, /<fieldset class="filter-group">[\s\S]*<legend>Show<\/legend>/u);
 });
 
 test("viewer is a viewport-bound artifact with an accessible slide-out chat drawer", async () => {
@@ -187,7 +335,8 @@ test("drawer, attachment, and suggested-question interactions preserve exact cha
       submitStart > inlineSuggestionStart,
     "the Tab suggestion must live inside the input area rather than above the composer",
   );
-  assert.match(app, /elements\.input\.placeholder = showSuggestion \? "" : "Ask about this view"/u);
+  assert.match(app, /elements\.input\.placeholder = hostUnattached/u);
+  assert.match(app, /Sidebar chat is unavailable from this library link\./u);
   assert.match(declarationsFor(css, ".composer-input"), /position:\s*relative/u);
   assert.match(declarationsFor(css, ".suggested-question"), /position:\s*absolute/u);
   assert.match(declarationsFor(css, ".suggested-question"), /inset:\s*0/u);
@@ -313,7 +462,7 @@ test("drawer, attachment, and suggested-question interactions preserve exact cha
   );
   assert.match(app, /turn\.replyToTurnId/u);
   assert.match(app, /status === "queued" \|\| status === "running"/u);
-  assert.match(app, /thinking\.textContent = "Thinking…"/u);
+  assert.doesNotMatch(app, /Thinking…/u);
   assert.match(app, /status === "failed"/u);
   assert.match(app, /retry\.textContent = "Retry"/u);
   assert.match(app, /retry\.addEventListener\("click", \(\) => retryQuestion\(turn\.id\)\)/u);
@@ -322,10 +471,11 @@ test("drawer, attachment, and suggested-question interactions preserve exact cha
   assert.match(app, /function hasActiveResponse\(value = session\)/u);
   assert.match(app, /turn\.response\?\.status === "queued" \|\| turn\.response\?\.status === "running"/u);
   assert.match(app, /!answeredQuestionIds\.has\(turn\.id\)/u);
-  assert.match(app, /elements\.input\.disabled = responseActive/u);
+  assert.match(app, /const hostUnattached =\s*route\.kind === "host" && route\.registered === false/u);
+  assert.match(app, /elements\.input\.disabled = responseActive \|\| hostUnattached/u);
   assert.match(
     app,
-    /elements\.submit\.disabled =\s*pending \|\| responseActive \|\|/u,
+    /elements\.submit\.disabled =\s*pending \|\| responseActive \|\| hostUnattached \|\|/u,
   );
   assert.match(sendSource, /if \(pending \|\| hasActiveResponse\(\)\) return/u);
   assert.match(app, /retry\.disabled = hasActiveResponse\(\)/u);
@@ -356,9 +506,47 @@ test("drawer, attachment, and suggested-question interactions preserve exact cha
     "response state must never be nested inside the right-aligned user wrapper",
   );
   assert.match(declarationsFor(css, ".turn-wrap-transient"), /color:\s*var\(--muted\)/u);
-  assert.doesNotMatch(app, /Ready for a coding agent|coding agent|hostNotification|notification_failed|open host chat|wake agent/iu);
-  assert.doesNotMatch(html, /coding agent|configured provider route|open host chat|wake agent/iu);
+  assert.doesNotMatch(app, /Ready for a coding agent|hostNotification|notification_failed|open host chat/iu);
   assert.doesNotMatch((await readLibraryAssets()).html, /coding agent|configured provider route|open host chat|wake agent/iu);
+});
+
+test("chat route copy distinguishes private local chat from explicit fallbacks", async () => {
+  const { html, app, css } = await readViewerAssets();
+
+  assert.match(html, /Private AI · gpt-oss-20b/u);
+  assert.match(html, /Questions and selected evidence stay on this Mac\./u);
+  assert.match(app, /payload\?\.chat \?\? payload\?\.session\?\.chat/u);
+  assert.match(app, /turn\.response\?\.route/u);
+  assert.match(app, /route\.kind === "local"/u);
+  assert.match(app, /Waiting for the private local model\./u);
+  assert.match(app, /Host attached · \$\{route\.label/u);
+  assert.match(app, /Detached fallback: \$\{provider\}/u);
+  assert.match(app, /elements\.chatRouteState\.textContent = "Unavailable"/u);
+  assert.match(app, /elements\.chatRouteState\.textContent = "Sign-in required"/u);
+  assert.match(app, /elements\.chatRouteState\.textContent = "Ready"/u);
+  assert.match(app, /Waiting for the coding agent that opened this view\./u);
+  assert.match(app, /Another coding agent owns this queued question\./u);
+  assert.match(app, /Host not attached/u);
+  assert.match(app, /Sidebar chat is unavailable from this unbound library link\./u);
+  assert.match(app, /Saved locally\. Attend cannot wake an inactive agent\./u);
+  assert.match(app, /Question delivered to the coding agent that opened this view; waiting for its guarded reply\./u);
+  assert.match(app, /Detached fallback: \$\{provider\} is answering\./u);
+  assert.match(app, /Detached fallback: \$\{provider\}\. Waiting for the provider\./u);
+  assert.doesNotMatch(app, /Thinking/u);
+  assert.match(app, /else if \(chatChanged\) \{\s*renderChatRoute\(\);\s*renderConversation\(\);/u);
+  assert.match(app, /elements\.chatRouteDisclosure\.textContent =/u);
+  assert.match(declarationsFor(css, ".chat-route"), /display:\s*grid/u);
+  assert.match(declarationsFor(css, ".chat-route-disclosure"), /color:\s*var\(--muted\)/u);
+
+  const composerStart = app.indexOf("function syncComposer");
+  const composerEnd = app.indexOf("function renderHeader", composerStart);
+  const composerSource = app.slice(composerStart, composerEnd);
+  assert.doesNotMatch(composerSource, /listener|authenticated|route\.available/u);
+  assert.match(
+    composerSource,
+    /route\.kind === "host" && route\.registered === false/u,
+    "an unbound library URL must disable chat without treating listener absence as failure",
+  );
 });
 
 test("assistant answers render as safe, readable rich text without flattening conversation data", async () => {

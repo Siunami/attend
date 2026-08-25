@@ -503,12 +503,75 @@ h2 {
 .chat-header {
   display: flex;
   flex: none;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  min-height: 82px;
+  min-height: 112px;
   padding: 17px 22px;
   border-bottom: 1px solid var(--line);
+}
+
+.chat-heading-group {
+  display: grid;
+  min-width: 0;
+  gap: 9px;
+}
+
+.chat-route {
+  display: grid;
+  gap: 4px;
+  max-width: 44ch;
+}
+
+.chat-route-label,
+.chat-route-disclosure {
+  margin: 0;
+}
+
+.chat-route-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chat-route-state {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.chat-route-state::before {
+  margin-inline-end: 7px;
+  content: "·";
+}
+
+.chat-route-label::before {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  content: "";
+}
+
+.chat-route[data-capability="listening"] .chat-route-label::before,
+.chat-route[data-capability="delivered"] .chat-route-label::before,
+.chat-route[data-capability="ready"] .chat-route-label::before {
+  background: var(--accent);
+}
+
+.chat-route[data-capability="unavailable"] .chat-route-label::before,
+.chat-route[data-capability="sign-in-required"] .chat-route-label::before {
+  background: var(--error);
+}
+
+.chat-route-disclosure {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .chat-header .eyebrow {
@@ -734,19 +797,19 @@ h2 {
   font-size: 13px;
 }
 
-.turn-response-thinking {
+.turn-response-active {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.turn-response-thinking::before {
+.turn-response-active::before {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
   content: "";
-  animation: thinking-pulse 1.2s ease-in-out infinite;
+  animation: response-pulse 1.2s ease-in-out infinite;
 }
 
 .turn-response-failed {
@@ -772,7 +835,7 @@ h2 {
   opacity: 0.45;
 }
 
-@keyframes thinking-pulse {
+@keyframes response-pulse {
   0%,
   100% {
     opacity: 0.35;
@@ -1044,7 +1107,7 @@ h2 {
     transition: none;
   }
 
-  .turn-response-thinking::before {
+  .turn-response-active::before {
     animation: none;
   }
 }

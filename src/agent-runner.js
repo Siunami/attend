@@ -26,10 +26,12 @@ import {
 } from "./project.js";
 
 const CODEX_ADAPTER_ID = "codex-cli";
+const CLAUDE_ADAPTER_ID = "claude-cli";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_PROCESS_OUTPUT_BYTES = 256 * 1024;
 const DEFAULT_MAX_ANSWER_BYTES = 64 * 1024;
+const DEFAULT_MAX_PROMPT_BYTES = 2 * 1024 * 1024;
 const MAX_QUESTION_BYTES = 16 * 1024;
 const MAX_SELECTION_BYTES = 128 * 1024;
 const MAX_EVIDENCE_BYTES = 1024 * 1024;
@@ -76,6 +78,20 @@ const SAFE_CHILD_ENVIRONMENT_KEYS = Object.freeze([
   "WINDIR",
   "ComSpec",
   "PATHEXT",
+]);
+const SAFE_CLAUDE_CHILD_ENVIRONMENT_KEYS = Object.freeze(
+  SAFE_CHILD_ENVIRONMENT_KEYS.filter((key) => key !== "CODEX_HOME"),
+);
+const SAFE_LAUNCHER_ENVIRONMENT_KEYS = Object.freeze([
+  ...SAFE_CLAUDE_CHILD_ENVIRONMENT_KEYS,
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XDG_SESSION_TYPE",
+  "XDG_CURRENT_DESKTOP",
+  "XDG_RUNTIME_DIR",
+  "DBUS_SESSION_BUS_ADDRESS",
+  "DESKTOP_SESSION",
+  "XAUTHORITY",
 ]);
 const CODEX_DISABLED_FEATURES = Object.freeze([
   // The worker is intentionally a text responder, not a coding agent. Its
@@ -125,15 +141,128 @@ function positiveInteger(name, value) {
   return value;
 }
 
-function childEnvironment(env) {
+function childEnvironment(env, keys = SAFE_CHILD_ENVIRONMENT_KEYS) {
   const safe = Object.create(null);
-  for (const key of SAFE_CHILD_ENVIRONMENT_KEYS) {
+  for (const key of keys) {
     const value = env[key];
     if (typeof value === "string" && value.length > 0 && !value.includes("\0")) {
       safe[key] = value;
     }
   }
   return safe;
+}
+
+async function trustedPathDirectories(env, canonicalProjectRoot) {
+  const trusted = [];
+  for (const directory of String(env.PATH ?? "").split(delimiter)) {
+    if (!directory || !isAbsolute(directory)) continue;
+    const lexical = resolve(directory);
+    if (canonicalProjectRoot && isInside(canonicalProjectRoot, lexical)) continue;
+    try {
+      const canonical = await realpath(lexical);
+      const info = await stat(canonical);
+      if (!info.isDirectory()) continue;
+      if (canonicalProjectRoot && isInside(canonicalProjectRoot, canonical)) continue;
+      trusted.push({ lexical, canonical });
+    } catch {
+      // Search only directories that were canonicalized and verified above.
+    }
+  }
+  return trusted;
+}
+
+/** Minimal desktop-launch environment with project-controlled paths removed. */
+export async function trustedLauncherEnvironment({
+  root,
+  env = process.env,
+} = {}) {
+  const boundary = await projectRoot(root);
+  const safe = await trustedChildEnvironment(
+    env,
+    SAFE_LAUNCHER_ENVIRONMENT_KEYS,
+    boundary,
+  );
+  if (Object.hasOwn(safe, "XAUTHORITY")) {
+    const value = safe.XAUTHORITY;
+    try {
+      if (!isAbsolute(value) || isInside(boundary, resolve(value))) {
+        throw new Error("project-bound XAUTHORITY");
+      }
+      const canonical = await realpath(value);
+      const info = await stat(canonical);
+      if (!info.isFile() || isInside(boundary, canonical)) {
+        throw new Error("invalid XAUTHORITY");
+      }
+    } catch {
+      delete safe.XAUTHORITY;
+    }
+  }
+  return safe;
+}
+
+async function trustedChildEnvironment(
+  env,
+  keys,
+  canonicalProjectRoot,
+) {
+  const safe = childEnvironment(env, keys);
+  if (!canonicalProjectRoot) return safe;
+  const directories = await trustedPathDirectories(env, canonicalProjectRoot);
+  // Keep PATH present even when every input entry was rejected. An empty PATH
+  // fails closed for `/usr/bin/env` shebangs instead of restoring a platform
+  // default that was never checked.
+  safe.PATH = directories.map(({ lexical }) => lexical).join(delimiter);
+  for (const key of ["HOME", "CODEX_HOME", "TMPDIR", "XDG_RUNTIME_DIR"]) {
+    if (!Object.hasOwn(safe, key)) continue;
+    const value = safe[key];
+    if (!isAbsolute(value) || isInside(canonicalProjectRoot, resolve(value))) {
+      delete safe[key];
+      continue;
+    }
+    try {
+      const canonical = await realpath(value);
+      const info = await stat(canonical);
+      if (!info.isDirectory() || isInside(canonicalProjectRoot, canonical)) {
+        delete safe[key];
+      }
+    } catch {
+      delete safe[key];
+    }
+  }
+  return safe;
+}
+
+async function trustedTemporaryRoot(env, canonicalProjectRoot) {
+  const candidates = [
+    env.TMPDIR,
+    tmpdir(),
+    ...(process.platform === "win32"
+      ? [typeof env.SystemRoot === "string" ? join(env.SystemRoot, "Temp") : null]
+      : ["/tmp", "/var/tmp"]),
+  ];
+  const visited = new Set();
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || !isAbsolute(candidate)) continue;
+    const lexical = resolve(candidate);
+    if (visited.has(lexical)) continue;
+    visited.add(lexical);
+    if (canonicalProjectRoot && isInside(canonicalProjectRoot, lexical)) continue;
+    try {
+      const canonical = await realpath(lexical);
+      const info = await stat(canonical);
+      if (!info.isDirectory()) continue;
+      if (canonicalProjectRoot && isInside(canonicalProjectRoot, canonical)) continue;
+      await access(canonical, fsConstants.W_OK | fsConstants.X_OK);
+      return canonical;
+    } catch {
+      // Continue to a fixed system temp candidate. A provider never falls
+      // back to a project-controlled scratch directory.
+    }
+  }
+  throw runnerError(
+    "AGENT_RUN_UNAVAILABLE",
+    "No writable temporary directory exists outside the analyzed project",
+  );
 }
 
 function throwIfAborted(signal) {
@@ -450,7 +579,7 @@ function visualContextBindingProjection(binding, question, selection) {
   return { mode: binding.mode, selectionTurnId };
 }
 
-function contextPrompt({
+export function attendQuestionPrompt({
   question,
   selection,
   contextBinding,
@@ -540,14 +669,23 @@ async function safeAnswer(root, path, maxBytes) {
   }
 }
 
-async function findCodexOnPath(env) {
-  for (const directory of String(env.PATH ?? "").split(delimiter)) {
-    if (!directory || !isAbsolute(directory)) continue;
-    const candidate = join(directory, process.platform === "win32" ? "codex.exe" : "codex");
+async function findExecutableOnPath(env, name, canonicalProjectRoot) {
+  const directories = canonicalProjectRoot
+    ? await trustedPathDirectories(env, canonicalProjectRoot)
+    : String(env.PATH ?? "")
+        .split(delimiter)
+        .filter((directory) => directory && isAbsolute(directory))
+        .map((directory) => ({ lexical: resolve(directory) }));
+  for (const { lexical: directory } of directories) {
+    const candidate = join(
+      directory,
+      process.platform === "win32" ? `${name}.exe` : name,
+    );
     try {
       const canonical = await realpath(candidate);
       const info = await stat(canonical);
       if (!info.isFile()) continue;
+      if (canonicalProjectRoot && isInside(canonicalProjectRoot, canonical)) continue;
       await access(canonical, fsConstants.X_OK);
       return canonical;
     } catch {
@@ -558,9 +696,86 @@ async function findCodexOnPath(env) {
   return null;
 }
 
+async function trustedExplicitExecutable(value, canonicalProjectRoot, label) {
+  if (!canonicalProjectRoot) return value;
+  const lexical = resolve(value);
+  if (isInside(canonicalProjectRoot, lexical)) {
+    throw runnerError(
+      "AGENT_RUN_UNTRUSTED_EXECUTABLE",
+      `${label} executable must be installed outside the analyzed project`,
+    );
+  }
+  try {
+    const canonical = await realpath(lexical);
+    const info = await stat(canonical);
+    if (!info.isFile()) throw new Error("not a regular file");
+    if (isInside(canonicalProjectRoot, canonical)) {
+      throw runnerError(
+        "AGENT_RUN_UNTRUSTED_EXECUTABLE",
+        `${label} executable must be installed outside the analyzed project`,
+      );
+    }
+    await access(canonical, fsConstants.X_OK);
+    return canonical;
+  } catch (error) {
+    if (error instanceof AgentRunnerError) throw error;
+    throw runnerError(
+      "AGENT_RUN_UNAVAILABLE",
+      `${label} executable is not a readable executable file`,
+      error,
+    );
+  }
+}
+
 function codexVersion(output) {
   const match = String(output).match(/(?:codex(?:-cli)?\s+)?(\d+\.\d+(?:\.\d+)?(?:[-+][A-Za-z0-9.-]+)?)/u);
   return match?.[1];
+}
+
+function claudeVersion(output) {
+  const match = String(output).match(/(?:claude(?:\s+code)?\s+)?(\d+\.\d+(?:\.\d+)?(?:[-+][A-Za-z0-9.-]+)?)/iu);
+  return match?.[1];
+}
+
+function claudeAuthentication(output) {
+  let value;
+  try {
+    value = JSON.parse(String(output));
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return typeof value.loggedIn === "boolean" ? value.loggedIn : null;
+}
+
+function claudeAnswer(output, maxBytes) {
+  let value;
+  try {
+    value = JSON.parse(String(output));
+  } catch (error) {
+    throw runnerError("AGENT_RUN_INVALID_OUTPUT", "Claude CLI returned invalid JSON", error);
+  }
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    value.type !== "result" ||
+    typeof value.is_error !== "boolean"
+  ) {
+    throw runnerError("AGENT_RUN_INVALID_OUTPUT", "Claude CLI returned an invalid result envelope");
+  }
+  if (value.is_error) {
+    throw runnerError("AGENT_RUN_FAILED", "Claude CLI could not produce an answer");
+  }
+  if (
+    typeof value.result !== "string" ||
+    value.result.trim().length === 0 ||
+    value.result.includes("\0") ||
+    Buffer.byteLength(value.result, "utf8") > maxBytes
+  ) {
+    throw runnerError("AGENT_RUN_INVALID_OUTPUT", "Claude CLI returned an empty or oversized answer");
+  }
+  return value.result.trim();
 }
 
 function validatedAnswerResult(result, adapterId) {
@@ -610,6 +825,7 @@ export function createAgentRunner({ adapter }) {
  */
 export function createCodexCliAdapter({
   executable,
+  projectRoot: analyzedProjectRoot,
   env = process.env,
   reasoningEffort = "low",
   timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -630,13 +846,33 @@ export function createCodexCliAdapter({
   positiveInteger("Codex process output bound", maxProcessOutputBytes);
   positiveInteger("Codex answer bound", maxAnswerBytes);
   const execute = runProcess ?? ((request) => runBoundedProcess({ ...request, spawnImpl }));
-  const safeEnv = childEnvironment(env);
+  let canonicalProjectRootPromise;
+  const resolveProjectBoundary = () => {
+    if (analyzedProjectRoot === undefined) return Promise.resolve(null);
+    canonicalProjectRootPromise ??= projectRoot(analyzedProjectRoot);
+    return canonicalProjectRootPromise;
+  };
+  let safeEnvPromise;
+  const resolveSafeEnv = () => {
+    safeEnvPromise ??= resolveProjectBoundary().then((boundary) =>
+      trustedChildEnvironment(env, SAFE_CHILD_ENVIRONMENT_KEYS, boundary));
+    return safeEnvPromise;
+  };
+  let safeTemporaryRootPromise;
+  const resolveTemporaryRoot = () => {
+    safeTemporaryRootPromise ??= resolveProjectBoundary().then((boundary) =>
+      trustedTemporaryRoot(env, boundary));
+    return safeTemporaryRootPromise;
+  };
   let discoveredExecutable;
   const resolveExecutable = async () => {
-    if (executable) return executable;
+    const boundary = await resolveProjectBoundary();
+    if (executable) return trustedExplicitExecutable(executable, boundary, "Codex");
     // Cache a valid executable, but not a miss: installing Codex while the
     // Attend service is already running should become visible to Retry.
-    if (!discoveredExecutable) discoveredExecutable = await findCodexOnPath(env);
+    if (!discoveredExecutable) {
+      discoveredExecutable = await findExecutableOnPath(env, "codex", boundary);
+    }
     return discoveredExecutable;
   };
 
@@ -648,6 +884,7 @@ export function createCodexCliAdapter({
       if (!binary) {
         return { adapter: CODEX_ADAPTER_ID, available: false, authenticated: false, reason: "not_installed" };
       }
+      const safeEnv = await resolveSafeEnv();
       try {
         const versionResult = await execute({
           executable: binary,
@@ -704,9 +941,11 @@ export function createCodexCliAdapter({
       if (!binary) {
         throw runnerError("AGENT_RUN_UNAVAILABLE", "Codex CLI is not installed or not available on PATH");
       }
+      const safeEnv = await resolveSafeEnv();
+      const temporaryRoot = await resolveTemporaryRoot();
       const canonicalRoot = await projectRoot(root);
       await localDataPackagePath(canonicalRoot, dataPackagePath);
-      const prompt = contextPrompt({
+      const prompt = attendQuestionPrompt({
         question,
         selection,
         contextBinding,
@@ -720,7 +959,7 @@ export function createCodexCliAdapter({
       // `.codex/config.toml`, hooks, rules, plugins, and MCP configuration.
       // A fresh external cwd plus an all-inline evidence packet keeps the
       // response worker independent from repository instructions and files.
-      const runDirectory = await mkdtemp(join(tmpdir(), "attend-agent-run-"));
+      const runDirectory = await mkdtemp(join(temporaryRoot, "attend-agent-run-"));
       await chmod(runDirectory, 0o700);
       const outputPath = join(runDirectory, "last-message.txt");
       await assertSafeWritePath(runDirectory, outputPath);
@@ -815,4 +1054,238 @@ export function createCodexCliAdapter({
 
 export function createCodexAgentRunner(options) {
   return createAgentRunner({ adapter: createCodexCliAdapter(options) });
+}
+
+/**
+ * Claude CLI detached adapter. It deliberately starts a fresh, non-persistent
+ * print session outside the project with every optional integration disabled.
+ * The verified Attend context is its only stdin input and its JSON result is
+ * the only accepted answer channel.
+ */
+export function createClaudeCliAdapter({
+  executable,
+  projectRoot: analyzedProjectRoot,
+  env = process.env,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  probeTimeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
+  maxProcessOutputBytes = DEFAULT_MAX_PROCESS_OUTPUT_BYTES,
+  maxAnswerBytes = DEFAULT_MAX_ANSWER_BYTES,
+  spawnImpl = spawn,
+  runProcess,
+} = {}) {
+  if (executable !== undefined && (typeof executable !== "string" || !isAbsolute(executable))) {
+    throw new TypeError("Claude executable must be an absolute path");
+  }
+  positiveInteger("Claude timeout", timeoutMs);
+  positiveInteger("Claude probe timeout", probeTimeoutMs);
+  positiveInteger("Claude process output bound", maxProcessOutputBytes);
+  positiveInteger("Claude answer bound", maxAnswerBytes);
+  const execute = runProcess ?? ((request) => runBoundedProcess({ ...request, spawnImpl }));
+  let canonicalProjectRootPromise;
+  const resolveProjectBoundary = () => {
+    if (analyzedProjectRoot === undefined) return Promise.resolve(null);
+    canonicalProjectRootPromise ??= projectRoot(analyzedProjectRoot);
+    return canonicalProjectRootPromise;
+  };
+  let safeEnvPromise;
+  const resolveSafeEnv = () => {
+    safeEnvPromise ??= resolveProjectBoundary().then((boundary) =>
+      trustedChildEnvironment(env, SAFE_CLAUDE_CHILD_ENVIRONMENT_KEYS, boundary));
+    return safeEnvPromise;
+  };
+  let safeTemporaryRootPromise;
+  const resolveTemporaryRoot = () => {
+    safeTemporaryRootPromise ??= resolveProjectBoundary().then((boundary) =>
+      trustedTemporaryRoot(env, boundary));
+    return safeTemporaryRootPromise;
+  };
+  let discoveredExecutable;
+  const resolveExecutable = async () => {
+    const boundary = await resolveProjectBoundary();
+    if (executable) return trustedExplicitExecutable(executable, boundary, "Claude");
+    if (!discoveredExecutable) {
+      discoveredExecutable = await findExecutableOnPath(env, "claude", boundary);
+    }
+    return discoveredExecutable;
+  };
+
+  return Object.freeze({
+    id: CLAUDE_ADAPTER_ID,
+    async probe({ signal } = {}) {
+      throwIfAborted(signal);
+      const binary = await resolveExecutable();
+      if (!binary) {
+        return {
+          adapter: CLAUDE_ADAPTER_ID,
+          available: false,
+          authenticated: false,
+          reason: "not_installed",
+        };
+      }
+      const safeEnv = await resolveSafeEnv();
+
+      let versionResult;
+      try {
+        versionResult = await execute({
+          executable: binary,
+          args: ["--version"],
+          cwd: dirname(binary),
+          env: safeEnv,
+          signal,
+          timeoutMs: probeTimeoutMs,
+          maxOutputBytes: 16 * 1024,
+        });
+      } catch (error) {
+        if (error?.code === "AGENT_RUN_CANCELLED") throw error;
+        return {
+          adapter: CLAUDE_ADAPTER_ID,
+          available: false,
+          authenticated: false,
+          reason: error?.code === "AGENT_RUN_TIMEOUT" ? "probe_timed_out" : "probe_failed",
+        };
+      }
+      if (versionResult.code !== 0) {
+        return {
+          adapter: CLAUDE_ADAPTER_ID,
+          available: false,
+          authenticated: false,
+          reason: "probe_failed",
+        };
+      }
+
+      const version = claudeVersion(versionResult.stdout || versionResult.stderr);
+      let authResult;
+      try {
+        authResult = await execute({
+          executable: binary,
+          args: ["auth", "status", "--json"],
+          cwd: dirname(binary),
+          env: safeEnv,
+          signal,
+          timeoutMs: probeTimeoutMs,
+          maxOutputBytes: 16 * 1024,
+        });
+      } catch (error) {
+        if (error?.code === "AGENT_RUN_CANCELLED") throw error;
+        return Object.freeze({
+          adapter: CLAUDE_ADAPTER_ID,
+          available: true,
+          authenticated: false,
+          ...(version ? { version } : {}),
+          reason: error?.code === "AGENT_RUN_TIMEOUT" ? "probe_timed_out" : "probe_failed",
+        });
+      }
+      const authenticated = authResult.code === 0
+        ? claudeAuthentication(authResult.stdout)
+        : false;
+      if (authenticated === null) {
+        return Object.freeze({
+          adapter: CLAUDE_ADAPTER_ID,
+          available: true,
+          authenticated: false,
+          ...(version ? { version } : {}),
+          reason: "probe_failed",
+        });
+      }
+      return Object.freeze({
+        adapter: CLAUDE_ADAPTER_ID,
+        available: true,
+        authenticated,
+        ...(version ? { version } : {}),
+        ...(authenticated ? {} : { reason: "not_authenticated" }),
+      });
+    },
+    async respond({
+      root,
+      question,
+      selection = null,
+      contextBinding,
+      evidence = null,
+      conversation = [],
+      dataPackagePath,
+      signal,
+    }) {
+      throwIfAborted(signal);
+      const binary = await resolveExecutable();
+      if (!binary) {
+        throw runnerError("AGENT_RUN_UNAVAILABLE", "Claude CLI is not installed or not available on PATH");
+      }
+      const safeEnv = await resolveSafeEnv();
+      const temporaryRoot = await resolveTemporaryRoot();
+      const canonicalRoot = await projectRoot(root);
+      await localDataPackagePath(canonicalRoot, dataPackagePath);
+      const prompt = attendQuestionPrompt({
+        question,
+        selection,
+        contextBinding,
+        evidence,
+        conversation,
+      });
+      if (Buffer.byteLength(prompt, "utf8") > DEFAULT_MAX_PROMPT_BYTES) {
+        throw new TypeError("Claude prompt exceeds its safe input bound");
+      }
+      throwIfAborted(signal);
+
+      const runDirectory = await mkdtemp(join(temporaryRoot, "attend-claude-run-"));
+      await chmod(runDirectory, 0o700);
+      try {
+        const result = await execute({
+          executable: binary,
+          args: [
+            "-p",
+            "--input-format",
+            "text",
+            "--output-format",
+            "json",
+            "--no-session-persistence",
+            "--safe-mode",
+            "--strict-mcp-config",
+            "--mcp-config",
+            '{"mcpServers":{}}',
+            "--tools",
+            "",
+            "--permission-mode",
+            "dontAsk",
+            "--no-chrome",
+            "--disable-slash-commands",
+          ],
+          cwd: runDirectory,
+          env: safeEnv,
+          input: prompt,
+          signal,
+          timeoutMs,
+          maxOutputBytes: maxProcessOutputBytes,
+        });
+        if (result.code !== 0) {
+          throw runnerError(
+            "AGENT_RUN_FAILED",
+            `Claude CLI failed${result.code === null ? "" : ` with exit code ${result.code}`}${result.signal ? ` (${result.signal})` : ""}`,
+          );
+        }
+        return { answer: claudeAnswer(result.stdout, maxAnswerBytes) };
+      } finally {
+        await rm(runDirectory, {
+          recursive: true,
+          force: true,
+          maxRetries: 2,
+          retryDelay: 10,
+        });
+      }
+    },
+  });
+}
+
+export function createClaudeAgentRunner(options) {
+  return createAgentRunner({ adapter: createClaudeCliAdapter(options) });
+}
+
+export function createDetachedAgentRunner(adapterId, options) {
+  switch (adapterId) {
+    case CODEX_ADAPTER_ID:
+      return createCodexAgentRunner(options);
+    case CLAUDE_ADAPTER_ID:
+      return createClaudeAgentRunner(options);
+    default:
+      throw new TypeError(`Unsupported detached agent adapter: ${adapterId}`);
+  }
 }

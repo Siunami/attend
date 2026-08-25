@@ -17,6 +17,13 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 import { CATALOG_COUNTS, listCatalogFamilies } from "../src/catalog/index.js";
+import { MANAGED_SKILL_BEHAVIOR_SCHEMA_VERSION } from "../src/constants.js";
+import { EXPLORATION_SCHEMA_VERSION } from "../src/exploration-store.js";
+import { OPPORTUNITY_SCHEMA_VERSION } from "../src/opportunity-store.js";
+import {
+  managedSkillContents,
+  managedSkillMetadataContents,
+} from "../src/project.js";
 
 const DISTRIBUTION_ROOT = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(DISTRIBUTION_ROOT, "..");
@@ -83,9 +90,14 @@ function auditPackage(pack, packageJson) {
     "README.md",
     "bin/attend.js",
     "agent-skill/attend-visualize/SKILL.md",
+    "agent-skill/attend-visualize/agents/openai.yaml",
+    "src/opportunity-store.js",
     "viewer/index.html",
     "viewer/app.js",
     "viewer/styles.css",
+    "viewer/workspace.html",
+    "viewer/workspace.js",
+    "viewer/workspace.css",
     "viewer/package-model.js",
     "viewer/package-renderer.js",
     "viewer/family-renderers.js",
@@ -114,6 +126,10 @@ function auditPackage(pack, packageJson) {
 
 async function sha256(path) {
   return createHash("sha256").update(await readFile(path)).digest("hex");
+}
+
+function sha256Contents(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function releaseManifest(path) {
@@ -309,13 +325,14 @@ function installPrompt({ version, installScriptUrl, digest, catalog }) {
     "",
     "Treat the current repository as the only project root. Do not upload its files or scan outside it.",
     "",
-    "1. Check that Node.js 22 or newer and npm are available. If not, stop and tell me what is missing.",
+    "1. Check that Node.js 22 or newer, npm, and llama.cpp's llama-server are available. On macOS, install llama.cpp with Homebrew if needed. If those requirements cannot be met, stop and tell me what is missing. The fixed gpt-oss-20b model is roughly a 12 GB download.",
     "2. From this project's root, run exactly: curl -fsSL " + installScriptUrl + " | sh",
     "3. Require the installer to exit successfully. It downloads the pinned tarball and requires its SHA-256 digest to equal " + digest + ". Do not bypass or reimplement those checks. If it fails, stop and report the failure.",
-    "4. Check codex --version and codex login status. Attend's automatic sidebar chat requires an installed, signed-in Codex CLI. If Codex is missing, use the official installation guidance at https://developers.openai.com/codex/cli/. If interactive sign-in is required, pause and ask me to complete it.",
-    "5. Use attend when it is on PATH; otherwise use $HOME/.local/bin/attend. From this project's root, run attend setup --json, attend doctor --json, and attend families --json.",
-    "6. Confirm that attend --version reports " + version + ", setup installed the managed attend-visualize skill at both .agents/skills/ and .claude/skills/, the catalog receipt is exactly " + catalogSummary + ", doctor returns ok: true, and its codex-chat check passes. One explicit capability abstention is expected in this release; do not describe it as executable. Do not call automatic sidebar chat ready when the Codex check only warns.",
-    "7. Keep the skill installed. For future visualization questions, follow it: inspect the full 19-family Attend catalog, choose only a member marked executable, transform explicitly authorized local evidence into its declarative request, run Attend, and open the returned local artifact URL. Preserve any explicit capability abstention. Never generate custom chart code.",
+    "4. Use attend when it is on PATH; otherwise use $HOME/.local/bin/attend. From this project's root, run attend setup --json, attend model install --json, attend doctor --json, and attend families --json. The installer normally performs these steps already; repeat them to verify idempotence and readiness.",
+    "5. Confirm that attend --version reports " + version + ", setup installed the managed attend-visualize skill at both .agents/skills/ and .claude/skills/, the catalog receipt is exactly " + catalogSummary + ", doctor returns ok: true, its project, agent-skill-agents, agent-skill-claude, chat-route, and local-model checks pass, readiness.core and readiness.localModel.ready are true, and the default route is local gpt-oss-20b. One explicit capability abstention is expected in this release; do not describe it as executable. Host routing, Codex CLI, and Claude CLI are optional fallbacks; do not select or authenticate any of them unless I explicitly ask.",
+    "6. Keep the skill installed and follow its intentional-proactivity and experiment-inbox contracts during future tasks. At an eligible natural task boundary over bounded authorized evidence or results, use attend checkpoint to record one content-free OpportunityCheck: abstain silently, or proceed into exactly one exploration linked by checkpointId. The CLI records the active agent's judgment; it does not call a model, choose a family, open a browser, create an experiment, or change the current visualization. Use inspect, explore, staged map, assess, promote, feedback, and workspace as documented by installed help. Record every admitted hypothesis before execution, including why it may help, the intended representation, authorized source scope, named baseline, exploratory or confirmatory label, pre-result or post-hoc timing, and comparison count. Run every admitted experiment. Retain interesting, uninteresting, null, inconclusive, invalid, and failed outcomes in one canonical experiment inbox. Promote any number of interesting results without copying them. Keep agent promotion, a human star, and structured feedback as separate signals. Preserve refinements as parent-child branches. In agent chat, mention at most one result at a natural task boundary and link the experiment workspace, whose trail retains every attempt. An abstention must not mention Attend or visualization in the final answer.",
+    "7. If a materially better view needs private data, state the improvement, source, and smallest required scope, then ask before reading a new private source or triggering its operating-system permission prompt. Existing system access alone is not task authorization. After approval, read only the records needed for the stated join; if I decline or access fails, continue with the original evidence. Inspect the full 19-family Attend catalog, choose only an executable member, transform explicitly authorized evidence into its declarative request, preserve explicit capability abstentions, and never generate custom chart code.",
+    "8. Inspect doctor.chat.route and the route returned by attend view --open --json. Require the normal route to be local gpt-oss-20b. Attend owns both the page and model lifecycle, so once view returns a visible URL, sidebar chat does not depend on this agent remaining active. If view.browser.opened is false, open view.viewerUrl manually and report view.browser.warning. If doctor instead reports a previously selected host or detached compatibility route, name it and do not change it without my approval. Never switch providers automatically.",
     "",
     "Report the installed version and any failed check. Do not substitute another package, repository checkout, or visualization library.",
   ].join("\n");
@@ -376,6 +393,13 @@ async function main() {
     const manifestUrl = baseUrl + "/" + versionDirectory + "/manifest.json";
     const installScriptUrl = baseUrl + "/" + versionDirectory + "/install.sh";
     const catalog = catalogReleaseReceipt();
+    const [canonicalSkill, canonicalSkillMetadata] = await Promise.all([
+      readFile(join(PACKAGE_ROOT, "agent-skill", "attend-visualize", "SKILL.md"), "utf8"),
+      readFile(
+        join(PACKAGE_ROOT, "agent-skill", "attend-visualize", "agents", "openai.yaml"),
+        "utf8",
+      ),
+    ]);
     const prompt = installPrompt({
       version: packageJson.version,
       tarballUrl,
@@ -408,6 +432,17 @@ async function main() {
         integrity: pack.integrity,
       },
       catalog,
+      components: {
+        opportunityCheck: { schemaVersion: OPPORTUNITY_SCHEMA_VERSION },
+        experimentInbox: { schemaVersion: EXPLORATION_SCHEMA_VERSION },
+        managedSkill: {
+          behaviorSchemaVersion: MANAGED_SKILL_BEHAVIOR_SCHEMA_VERSION,
+          sha256: sha256Contents(managedSkillContents(canonicalSkill)),
+          metadataSha256: sha256Contents(
+            managedSkillMetadataContents(canonicalSkillMetadata),
+          ),
+        },
+      },
       installPromptUrl: baseUrl + "/" + versionDirectory + "/install-prompt.txt",
       installScriptUrl,
     };
