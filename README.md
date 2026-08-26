@@ -1,6 +1,6 @@
-# Attend Local
+# Attend
 
-Attend Local turns evidence from explicitly authorized files into a designed visualization in a private local artifact view with selection-aware chat.
+Attend gives coding agents a governed way to look for relationships and patterns in evidence you authorize, test them as visual hypotheses, and point out what may deserve your attention. It keeps every attempted experiment in one traceable inbox and renders the results in a private local workspace with selection-aware chat.
 
 ## Install in this project
 
