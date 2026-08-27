@@ -573,7 +573,7 @@ test("stop waits for the verified daemon process to finish draining", async (t) 
           ok: true,
           service: "attend-library",
           protocolVersion: 4,
-          packageVersion: "0.5.1",
+          packageVersion: "0.5.2",
           instanceId: process.env.ATTEND_TEST_INSTANCE,
           sessionCount: 0,
         }));
@@ -601,7 +601,7 @@ test("stop waits for the verified daemon process to finish draining", async (t) 
   await writeJsonAtomic(join(paths.local, "service-runtime.json"), {
     schemaVersion: 1,
     protocolVersion: 4,
-    packageVersion: "0.5.1",
+    packageVersion: "0.5.2",
     pid: draining.pid,
     instanceId,
     host: config.host,
@@ -739,7 +739,7 @@ test("an upgrade replaces only a token-verified older Attend service with a fres
   assert.equal(upgraded.running, true);
   assert.equal(upgraded.reused, false);
   assert.equal(upgraded.health.protocolVersion, 4);
-  assert.equal(upgraded.health.packageVersion, "0.5.1");
+  assert.equal(upgraded.health.packageVersion, "0.5.2");
   assert.notEqual(upgraded.pid, legacy.pid);
   if (legacy.exitCode === null) await once(legacy, "exit");
 });

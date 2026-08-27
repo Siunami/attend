@@ -1,7 +1,7 @@
 # Third-party browser assets
 
-Attend is UNLICENSED. The files in this directory are separate
-third-party works distributed under their own licenses.
+Attend is distributed under the MIT License. The files in this directory are
+separate third-party works distributed under their own licenses.
 
 | Packaged file | Upstream package | Version | SHA-256 |
 | --- | --- | --- | --- |

@@ -518,7 +518,7 @@ switch (process.argv[2]) {
   assert.equal(await readFile(npmLog, "utf8"), "not-called\n");
 
   const packedPackage = JSON.parse(await readFile(join(extracted, "package", "package.json"), "utf8"));
-  assert.equal(packedPackage.license, "UNLICENSED");
+  assert.equal(packedPackage.license, "MIT");
   assert.equal(packedPackage.dependencies, undefined);
   assert.deepEqual(packedPackage.repository, {
     type: "git",
@@ -555,7 +555,7 @@ switch (process.argv[2]) {
   await writeFile(checkpointRequest, JSON.stringify({
     version: 1,
     boundary: { kind: "before-final-answer", id: "packed-release-turn" },
-    host: { kind: "codex", skillVersion: "attend-visualize/0.5.1" },
+    host: { kind: "codex", skillVersion: "attend-visualize/0.5.2" },
     taskShape: {
       action: "review",
       evidenceState: "derived-records",

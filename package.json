@@ -1,8 +1,12 @@
 {
   "name": "@siunami/attend",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Evidence-backed visualizations for coding agents in a private local workspace.",
   "homepage": "https://github.com/Siunami/attend#readme",
+  "author": "Siunami",
+  "bugs": {
+    "url": "https://github.com/Siunami/attend/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Siunami/attend.git"
@@ -18,6 +22,8 @@
     "attend": "bin/attend.js"
   },
   "files": [
+    "CHANGELOG.md",
+    "LICENSE",
     "agent-skill/",
     "bin/",
     "src/",
@@ -32,9 +38,10 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "publishConfig": {
     "access": "public",
-    "registry": "https://registry.npmjs.org/"
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
   }
 }

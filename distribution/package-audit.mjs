@@ -1,6 +1,8 @@
 const REQUIRED_PACKAGE_FILES = Object.freeze([
   "package.json",
   "README.md",
+  "CHANGELOG.md",
+  "LICENSE",
   "bin/attend.js",
   "agent-skill/attend-visualize/SKILL.md",
   "agent-skill/attend-visualize/agents/openai.yaml",
@@ -41,7 +43,7 @@ export function auditPackage(pack, packageJson) {
   if (Object.keys(packageJson.dependencies ?? {}).length) {
     throw new Error("Release package must not require runtime npm dependencies");
   }
-  if (packageJson.license !== "UNLICENSED") {
-    throw new Error("Release package license must remain UNLICENSED");
+  if (packageJson.license !== "MIT") {
+    throw new Error("Release package must declare the MIT license");
   }
 }

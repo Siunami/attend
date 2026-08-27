@@ -17,17 +17,20 @@ jobs:
     if: github.repository == 'Siunami/attend'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "24"
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+      - name: Use an npm version that supports trusted publishing
+        run: npm install --global "npm@^11.5.1"
       - run: npm ci
       - id: release
         name: Check the release version
         shell: bash
         run: |
+          package_name=$(node -p 'require("./package.json").name')
           package_version=$(node -p 'require("./package.json").version')
           if [[ "$GITHUB_REF_NAME" != "v$package_version" ]]; then
             echo "Release tag $GITHUB_REF_NAME does not match package version $package_version." >&2
@@ -38,5 +41,18 @@ jobs:
           else
             echo "npm-tag=latest" >> "$GITHUB_OUTPUT"
           fi
+          registry_error=$(mktemp)
+          if npm view "$package_name@$package_version" version >/dev/null 2>"$registry_error"; then
+            echo "already-published=true" >> "$GITHUB_OUTPUT"
+          elif grep -q "E404" "$registry_error"; then
+            echo "already-published=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$registry_error" >&2
+            rm -f "$registry_error"
+            exit 1
+          fi
+          rm -f "$registry_error"
       - run: npm run verify
-      - run: npm publish --access public --tag "${{ steps.release.outputs.npm-tag }}"
+      - name: Publish to npm
+        if: steps.release.outputs.already-published != 'true'
+        run: npm publish --access public --tag "${{ steps.release.outputs.npm-tag }}"

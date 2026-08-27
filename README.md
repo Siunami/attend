@@ -13,7 +13,7 @@ You may install Attend globally, add its setup files to this repository, install
 
 Attend needs macOS or Linux, Node.js 22 or newer, and npm. If anything is missing, stop and tell me. On macOS, if `llama-server` is missing and Homebrew is available, run `brew install llama.cpp`.
 
-Run `npm install --global @siunami/attend@0.5.1`. If npm cannot install globally without sudo, install Attend under my user account instead. Then run `attend bootstrap --yes` and show me the output. You may retry it after an interrupted download. Drive the setup yourself; I'll only step in for a macOS approval.
+Run `npm install --global @siunami/attend@0.5.2`. If npm cannot install globally without sudo, install Attend under my user account instead. Then run `attend bootstrap --yes` and show me the output. You may retry it after an interrupted download. Drive the setup yourself; I'll only step in for a macOS approval.
 
 Keep any existing Attend chat choice. For a new setup, use Attend's private local chat. Do not sign in to Codex or Claude for Attend. If installation or setup fails, show me the actual error. When Attend is ready, show me its welcome and installed version.
 ```
@@ -27,14 +27,14 @@ Attend requires macOS or Linux, Node.js 22 or newer, npm, and llama.cpp's `llama
 Run these commands from the repository where Attend will work:
 
 ```sh
-npm install --global @siunami/attend@0.5.1
+npm install --global @siunami/attend@0.5.2
 attend bootstrap --yes
 ```
 
 If npm cannot write to its global install directory, use a directory owned by your account:
 
 ```sh
-npm install --global --prefix "$HOME/.local" @siunami/attend@0.5.1
+npm install --global --prefix "$HOME/.local" @siunami/attend@0.5.2
 $HOME/.local/bin/attend bootstrap --yes
 ```
 
@@ -342,3 +342,7 @@ npm run verify
 ```
 
 The verification suite covers the 19-family catalog, all 18 available mappings, the explicit specimen abstention, exact evidence and hash checks, fixed package-native renderer contracts, browser selection and revision behavior, phrase compatibility, private evidence hydration, the attachment-bound host loop, explicit detached adapters, idempotent cross-agent setup, loopback service lifecycle, the packaged experiment-inbox behavior contract, release tarball allowlisting, SHA-pinned staging, and package contents.
+
+## License
+
+Attend is available under the [MIT License](LICENSE). Bundled browser assets retain the separate licenses listed in [the third-party notices](viewer/vendor/THIRD_PARTY_NOTICES.md).
