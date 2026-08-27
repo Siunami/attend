@@ -2,45 +2,45 @@
 
 Attend Local turns evidence from explicitly authorized files into a designed visualization in a private local artifact view with selection-aware chat.
 
-## Install
+## Install with a coding agent
+
+Open the repository where you want Attend to work. Paste this prompt into your coding agent:
+
+```text
+Install Attend Local and set it up for this repository.
+
+You may install Attend globally, add its setup files to this repository, install llama.cpp with Homebrew if needed, and download the roughly 12 GB local model. Stay in this repository. Do not upload its files or use sudo.
+
+Attend needs macOS or Linux, Node.js 22 or newer, and npm. If anything is missing, stop and tell me. On macOS, if `llama-server` is missing and Homebrew is available, run `brew install llama.cpp`.
+
+Run `npm install --global attend-local@0.5.1`. If npm cannot install globally without sudo, install Attend under my user account instead. Then run `attend bootstrap --yes` and show me the output. You may retry it after an interrupted download. Drive the setup yourself; I'll only step in for a macOS approval.
+
+Keep any existing Attend chat choice. For a new setup, use Attend's private local chat. Do not sign in to Codex or Claude for Attend. If installation or setup fails, show me the actual error. When Attend is ready, show me its welcome and installed version.
+```
+
+`bootstrap` owns the setup and health checks. A successful command means that Attend configured the repository, installed the local model when needed, and verified the installed files and chat route.
+
+## Install from a terminal
 
 Attend requires macOS or Linux, Node.js 22 or newer, npm, and llama.cpp's `llama-server`. The private `gpt-oss-20b` model needs roughly 12 GB of disk space. A machine with at least 24 GB of unified or system memory is recommended.
 
-Run these commands from the project where Attend will work:
+Run these commands from the repository where Attend will work:
 
 ```sh
-npm install --global attend-local@0.5.0
+npm install --global attend-local@0.5.1
 attend bootstrap --yes
 ```
 
-`bootstrap` configures the current project for both `.agents` and `.claude`, installs the model when the selected chat route requires it, and verifies the CLI, catalog, viewer, and private chat runtime. The `--yes` flag authorizes the project writes and the model download. You can rerun the command after an interrupted installation or an Attend upgrade.
-
-If npm's global prefix is not writable, install Attend in your user-owned prefix and invoke its full path:
+If npm cannot write to its global install directory, use a directory owned by your account:
 
 ```sh
-npm install --global --prefix "$HOME/.local" attend-local@0.5.0
+npm install --global --prefix "$HOME/.local" attend-local@0.5.1
 $HOME/.local/bin/attend bootstrap --yes
 ```
 
 The host agent does not write chart code. It asks Attend for the installed Family Atlas catalog, selects an executable member for the analytic job, transforms source-backed facts into that member's declared roles, and submits a data-only request. Attend reopens the sources, verifies exact quotes, compiles a canonical package, resolves a fixed bundled renderer, and serves the result on loopback.
 
 This release includes all 19 visualization families. The bundled Family Atlas catalog records every authored form and rejection. Eighteen families have one tested executable member. Annotated specimen is marked `unavailable` because the text-only request contract cannot bind its required visible specimen yet. Other approved designs remain `documented`; rejected designs remain `rejected`. Attend never falls back to an unimplemented member or generates a substitute chart.
-
-## Install with a coding agent
-
-Paste this prompt into a coding agent from the project where Attend should run:
-
-```text
-Install Attend Local 0.5.0 for this repository. Treat the current Git repository as the only project root. Do not scan outside it or upload its files. This request authorizes the global npm installation, Attend-managed project files, installation of llama.cpp with Homebrew on macOS if llama-server is missing, and the roughly 12 GB gpt-oss-20b download. Do not use sudo.
-
-First, require macOS or Linux, Node.js 22 or newer, npm, and llama-server. On macOS, run `brew install llama.cpp` if llama-server is missing and Homebrew is available. If a requirement cannot be met, stop and report the missing requirement.
-
-From the project root, run `npm install --global attend-local@0.5.0`. Do not substitute another package or version. If npm's global prefix is not writable, run `npm install --global --prefix "$HOME/.local" attend-local@0.5.0` and use `$HOME/.local/bin/attend` for every later command. Otherwise use `attend` from PATH.
-
-Run `attend bootstrap --yes --json`. Require `ok: true`, `packageVersion: "0.5.0"`, no setup conflicts, `doctor.ok: true`, `doctor.readiness.core: true`, and `doctor.readiness.localModel.ready: true` when the selected route requires the local model. Require the project, both managed agent skills, the agents skill metadata, the chat route, the host bridge, the local model when required, and every packaged viewer asset to pass. Require the catalog to report 19 families, 18 executable members, and one unavailable member.
-
-Then run `attend --version`, `attend doctor --json`, and `attend families --json` as independent checks. Preserve an existing explicit host or detached chat route. Do not select or authenticate Codex CLI or Claude CLI fallbacks. Report the installed version, selected chat route, model status, catalog counts, and any failed check.
-```
 
 The Attend service handles sidebar questions with `gpt-oss-20b` by default. It owns the loopback page server, durable question queue, and llama.cpp process as one lifecycle. The page URL is not returned until the model is healthy, so a visible page has a working chat path without depending on a coding-agent listener. Codex CLI, Claude CLI, and host-agent routing remain explicit compatibility modes.
 
