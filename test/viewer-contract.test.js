@@ -82,8 +82,8 @@ test("Atlas component clicks attach node focus and keep one vertical scroll owne
   assert.match(app, /nodeId:\s*target\.nodeId/u);
   assert.match(app, /selectedNodeId:\s*atlasSelectedFocus\(\)\?\.id/u);
   assert.match(app, /label\.textContent = focus[\s\S]*"Attach selected component to next message"/u);
-  assert.match(declarationsFor(css, ".atlas-visual"), /overflow:\s*visible/u);
-  assert.match(css, /\.atlas-visual \.mechanism-node:hover rect/u);
+  assert.match(declarationsFor(css, ".atlas-visual"), /overflow:\s*clip/u);
+  assert.match(css, /\.atlas-visual \.mechanism-node:hover \.mechanism-node-card/u);
   assert.match(css, /\.atlas-visual \[data-node-id\]:focus-visible/u);
 });
 
@@ -252,7 +252,7 @@ test("experiment workspace keeps stars, feedback, branches, and artifact links s
 });
 
 test("viewer is a viewport-bound artifact with an accessible slide-out chat drawer", async () => {
-  const { html, css } = await readViewerAssets();
+  const { html, app, css } = await readViewerAssets();
 
   assert.match(html, /<main id="workspace" class="workspace"/u);
   assert.match(html, /<section id="map-pane" class="map-pane"/u);
@@ -297,11 +297,21 @@ test("viewer is a viewport-bound artifact with an accessible slide-out chat draw
   assert.match(declarationsFor(css, ".chat-scroll"), /overflow-y:\s*auto/u);
   assert.match(declarationsFor(css, ".composer"), /flex:\s*(?:none|0\s+0\s+auto)/u);
 
+  const drawer = declarationsFor(css, ".chat-pane");
+  assert.match(drawer, /position:\s*absolute/u);
+  assert.match(drawer, /inset-inline-end:\s*0/u);
+  assert.match(drawer, /width:\s*min\(var\(--drawer-width\),\s*100%\)/u);
+  assert.match(drawer, /height:\s*100%/u);
+  assert.match(drawer, /transform:\s*translate3d\(100%,\s*0,\s*0\)/u);
+  assert.match(drawer, /transition:\s*transform/u);
+  assert.match(drawer, /will-change:\s*transform/u);
+  assert.doesNotMatch(drawer, /margin-inline-end/u, "opening chat must not resize the artifact");
   assert.match(
-    css,
-    /@media\s*\(max-width:\s*1120px\)[\s\S]*?\.chat-pane\s*\{[^}]*position:\s*absolute[^}]*width:\s*min\([^,]+,\s*100%\)[^}]*height:\s*100%[^}]*\}/u,
-    "the wider drawer must overlay, not crush, the artifact at tablet widths",
+    declarationsFor(css, '.workspace[data-chat-open="true"] .chat-pane'),
+    /transform:\s*translate3d\(0,\s*0,\s*0\)/u,
   );
+  assert.match(app, /elements\.question\.textContent\s*=\s*model\.title/u);
+  assert.match(app, /elements\.target\.textContent\s*=\s*model\.question/u);
 });
 
 test("drawer, attachment, and suggested-question interactions preserve exact chat state", async () => {
@@ -593,8 +603,9 @@ test("assistant answers render as safe, readable rich text without flattening co
   assert.ok(drawerClamp, "desktop chat width must remain fluid and capped");
   const [, drawerMin, drawerFluid, drawerMax] = drawerClamp.map(Number);
   assert.ok(drawerMin >= 400 && drawerFluid >= 35 && drawerMax >= 520 && drawerMax <= 680);
-  assert.match(drawer, /flex:\s*0 0 var\(--drawer-width\)/u);
-  assert.match(drawer, /width:\s*var\(--drawer-width\)/u);
+  assert.match(drawer, /position:\s*absolute/u);
+  assert.match(drawer, /width:\s*min\(var\(--drawer-width\),\s*100%\)/u);
+  assert.doesNotMatch(drawer, /flex:\s*0 0 var\(--drawer-width\)/u);
 
   const assistant = declarationsFor(css, ".turn-assistant");
   const assistantFont = Number(assistant.match(/font-size:\s*([\d.]+)px/u)?.[1]);

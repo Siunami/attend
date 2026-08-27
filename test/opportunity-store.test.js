@@ -38,7 +38,7 @@ function request(overrides = {}) {
     },
     host: {
       kind: "codex",
-      skillVersion: "attend-visualize/0.5.2",
+      skillVersion: "attend-visualize/0.5.3",
     },
     taskShape: {
       action: "review",

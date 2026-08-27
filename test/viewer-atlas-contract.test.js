@@ -612,6 +612,47 @@ test("annotated specimen uses supplied preview media and otherwise declares a ne
   });
 });
 
+test("mechanism render models isolate real feedback loops without swallowing downstream layers", () => {
+  const links = [
+    ["edge-ab", "A", "B", "invokes"],
+    ["edge-ba", "B", "A", "returns to"],
+    ["edge-bc", "B", "C", "produces"],
+    ["edge-cd", "C", "D", "persists"],
+  ];
+  const marks = links.map(([id, source, target, relation], index) => ({
+    id,
+    kind: "mechanism",
+    label: `${source} ${relation} ${target}`,
+    summary: "",
+    values: { source, target, relation },
+    evidenceRefs: [`evidence_${String(index + 1).padStart(16, "0")}`],
+  }));
+  const model = atlasPackageToRenderModel({
+    kind: "attend-data-package",
+    schemaVersion: 2,
+    id: "data_feedback_layers",
+    family: { id: "mechanism" },
+    catalog: catalogReceiptForFamily("mechanism"),
+    question: { text: "How does this loop feed its outputs?", target: "Feedback system" },
+    payload: {
+      schemaVersion: 1,
+      kind: "attend-mechanism-payload",
+      links: marks.map((mark) => ({ markId: mark.id, ...mark.values })),
+    },
+    marks,
+  });
+  const records = Object.fromEntries(model.records.map((record) => [record.id, record]));
+
+  assert.equal(records.A.cyclic, true);
+  assert.equal(records.B.cyclic, true);
+  assert.equal(records.C.cyclic, false);
+  assert.equal(records.D.cyclic, false);
+  assert.equal(records.A.group, records.B.group);
+  assert.notEqual(records.B.group, records.C.group);
+  assert.notEqual(records.C.group, records.D.group);
+  assert.deepEqual([records.A.stage, records.B.stage, records.C.stage, records.D.stage], [0, 0, 1, 2]);
+});
+
 test("collection atlas renders equal-size labeled facet strips independent of x and y", async () => {
   await withMiniRenderer(async () => {
     const dataset = {
@@ -746,12 +787,66 @@ test("sequence, flow, mechanism, and region views preserve their governed semant
       .find((node) => node.getAttribute("data-node-id") === "source");
     assert.deepEqual(
       [...new Set(mechanism.querySelectorAll("[data-node-id]").map((node) => node.children[0]?.getAttribute("class")))],
-      ["mark-primary"],
+      ["mechanism-node-card"],
       "peer components cannot imply unsupported categories through decorative color",
     );
     assert.equal(sourceNode?.getAttribute("role"), "button");
     sourceNode?.click();
     assert.deepEqual(selectedTargets, [{ kind: "node", nodeId: "source" }]);
+
+    const denseMechanism = new MiniElement("div");
+    const denseRecords = Array.from({ length: 12 }, (_, index) => ({
+      id: `component-${index + 1}`,
+      label: `Component ${index + 1} with readable words`,
+      group: "Feedback layer",
+      cyclic: true,
+    }));
+    const denseLinks = denseRecords.map((record, index) => ({
+      id: `dense-link-${index + 1}`,
+      source: record.id,
+      target: denseRecords[(index + 1) % denseRecords.length].id,
+      type: `hands control to component ${((index + 1) % denseRecords.length) + 1}`,
+    }));
+    await renderFamily({
+      root: denseMechanism,
+      dataset: {
+        familyId: "mechanism",
+        title: "Dense feedback system",
+        roles: { id: "id", label: "label", group: "group" },
+        records: denseRecords,
+        links: denseLinks,
+      },
+      selectableMarkIds: denseLinks.map((link) => link.id),
+      selectedNodeId: "component-1",
+    });
+    const denseSvg = descendants(denseMechanism).find((node) => node.tagName === "svg");
+    const denseNodes = denseMechanism.querySelectorAll("[data-node-id]");
+    assert.equal(denseSvg?.getAttribute("data-density-treatment"), "focus-and-context");
+    assert.equal(denseSvg?.getAttribute("data-cycle-layout"), "wrapped-grid");
+    assert.ok(
+      new Set(denseNodes.map((node) => node.children.find((child) => child.tagName === "rect")?.getAttribute("x"))).size > 1,
+      "a large feedback layer must wrap across columns",
+    );
+    assert.ok(Number(denseSvg?.getAttribute("viewBox")?.split(" ").at(-1)) <= 900);
+    assert.ok(descendants(denseMechanism).some((node) => node.tagName === "tspan"), "long card labels must wrap");
+    for (const node of denseNodes) {
+      const rect = node.children.find((child) => child.tagName === "rect");
+      const text = node.children.find((child) => child.tagName === "text");
+      assert.equal(text?.getAttribute("class"), "mechanism-node-label");
+      const labelRows = text?.children.filter((child) => child.tagName === "tspan") ?? [];
+      assert.ok(labelRows.length >= 1 && labelRows.length <= 2);
+      assert.ok(labelRows.every((row) => (
+        Number(row.getAttribute("y")) > Number(rect.getAttribute("y"))
+        && Number(row.getAttribute("y")) < Number(rect.getAttribute("y")) + Number(rect.getAttribute("height"))
+      )));
+    }
+    const rail = denseMechanism.querySelectorAll("[data-mark-id]")
+      .find((node) => node.getAttribute("data-route") === "same-layer-rail");
+    assert.ok(rail, "same-layer feedback must route outside the cards");
+    assert.ok(
+      denseMechanism.querySelectorAll("[data-mark-id]").every((node) => /hands control/u.test(node.getAttribute("aria-label") ?? "")),
+      "every subdued connector must retain its full typed relation",
+    );
 
     const region = new MiniElement("div");
     await renderFamily({

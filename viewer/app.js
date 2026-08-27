@@ -365,9 +365,9 @@ function syncComposer() {
 function renderHeader() {
   if (atlasMode()) {
     const model = atlasPackageToRenderModel(dataPackage);
-    elements.eyebrow.textContent = `Family Atlas · ${model.catalog.family.replaceAll("-", " ")}`;
-    elements.question.textContent = model.question;
-    elements.target.textContent = `${model.catalog.family} · ${model.catalog.member}`;
+    elements.eyebrow.textContent = `Family Atlas · ${model.catalog.family.replaceAll("-", " ")} / ${model.catalog.member.replaceAll("-", " ")}`;
+    elements.question.textContent = model.title;
+    elements.target.textContent = model.question;
     elements.corpusMeta.textContent = `${model.records.length} marks · ${model.evidence.length} evidence references · package ${model.packageId}`;
     return;
   }

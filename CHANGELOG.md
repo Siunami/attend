@@ -2,6 +2,12 @@
 
 This file records user-visible changes to Attend.
 
+## [0.5.3] - 2026-08-27
+
+- Make mechanism diagrams readable with dense or cyclic relationship data.
+- Keep downstream dependency layers separate from feedback loops.
+- Add component focus, complete typed-relationship lists, wrapped labels, and accessible selection states.
+
 ## [0.5.2] - 2026-08-27
 
 - License Attend under the MIT License.

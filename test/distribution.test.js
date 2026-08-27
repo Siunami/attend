@@ -555,7 +555,7 @@ switch (process.argv[2]) {
   await writeFile(checkpointRequest, JSON.stringify({
     version: 1,
     boundary: { kind: "before-final-answer", id: "packed-release-turn" },
-    host: { kind: "codex", skillVersion: "attend-visualize/0.5.2" },
+    host: { kind: "codex", skillVersion: "attend-visualize/0.5.3" },
     taskShape: {
       action: "review",
       evidenceState: "derived-records",

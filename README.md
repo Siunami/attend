@@ -13,7 +13,7 @@ You may install Attend globally, add its setup files to this repository, install
 
 Attend needs macOS or Linux, Node.js 22 or newer, and npm. If anything is missing, stop and tell me. On macOS, if `llama-server` is missing and Homebrew is available, run `brew install llama.cpp`.
 
-Run `npm install --global @siunami/attend@0.5.2`. If npm cannot install globally without sudo, install Attend under my user account instead. Then run `attend bootstrap --yes` and show me the output. You may retry it after an interrupted download. Drive the setup yourself; I'll only step in for a macOS approval.
+Run `npm install --global @siunami/attend@0.5.3`. If npm cannot install globally without sudo, install Attend under my user account instead. Then run `attend bootstrap --yes` and show me the output. You may retry it after an interrupted download. Drive the setup yourself; I'll only step in for a macOS approval.
 
 Keep any existing Attend chat choice. For a new setup, use Attend's private local chat. Do not sign in to Codex or Claude for Attend. If installation or setup fails, show me the actual error. When Attend is ready, show me its welcome and installed version.
 ```
@@ -27,14 +27,14 @@ Attend requires macOS or Linux, Node.js 22 or newer, npm, and llama.cpp's `llama
 Run these commands from the repository where Attend will work:
 
 ```sh
-npm install --global @siunami/attend@0.5.2
+npm install --global @siunami/attend@0.5.3
 attend bootstrap --yes
 ```
 
 If npm cannot write to its global install directory, use a directory owned by your account:
 
 ```sh
-npm install --global --prefix "$HOME/.local" @siunami/attend@0.5.2
+npm install --global --prefix "$HOME/.local" @siunami/attend@0.5.3
 $HOME/.local/bin/attend bootstrap --yes
 ```
 

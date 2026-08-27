@@ -1,4 +1,4 @@
-export const PACKAGE_VERSION = "0.5.2";
+export const PACKAGE_VERSION = "0.5.3";
 export const MANAGED_SKILL_BEHAVIOR_SCHEMA_VERSION = 2;
 export const PROJECT_SCHEMA_VERSION = 1;
 export const DATA_PACKAGE_VERSION = 1;

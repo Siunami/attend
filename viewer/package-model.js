@@ -281,6 +281,96 @@ function edgeLinks(marks, familyId) {
   });
 }
 
+function compareIdentifier(left, right) {
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
+function mechanismTopology(ids, outgoing, links) {
+  let nextIndex = 0;
+  const nodeIndex = new Map();
+  const lowLink = new Map();
+  const stack = [];
+  const stacked = new Set();
+  const components = [];
+
+  function visit(nodeId) {
+    nodeIndex.set(nodeId, nextIndex);
+    lowLink.set(nodeId, nextIndex);
+    nextIndex += 1;
+    stack.push(nodeId);
+    stacked.add(nodeId);
+
+    for (const target of outgoing.get(nodeId) ?? []) {
+      if (!nodeIndex.has(target)) {
+        visit(target);
+        lowLink.set(nodeId, Math.min(lowLink.get(nodeId), lowLink.get(target)));
+      } else if (stacked.has(target)) {
+        lowLink.set(nodeId, Math.min(lowLink.get(nodeId), nodeIndex.get(target)));
+      }
+    }
+
+    if (lowLink.get(nodeId) !== nodeIndex.get(nodeId)) return;
+    const component = [];
+    while (stack.length) {
+      const member = stack.pop();
+      stacked.delete(member);
+      component.push(member);
+      if (member === nodeId) break;
+    }
+    component.sort(compareIdentifier);
+    components.push(component);
+  }
+
+  for (const nodeId of [...ids].sort(compareIdentifier)) {
+    if (!nodeIndex.has(nodeId)) visit(nodeId);
+  }
+
+  components.sort((left, right) => compareIdentifier(left[0], right[0]));
+  const componentByNode = new Map();
+  components.forEach((component, componentIndex) => {
+    component.forEach((nodeId) => componentByNode.set(nodeId, componentIndex));
+  });
+  const componentOutgoing = new Map(components.map((_, index) => [index, new Set()]));
+  const componentIndegree = new Map(components.map((_, index) => [index, 0]));
+  for (const link of links) {
+    const source = componentByNode.get(link.source);
+    const target = componentByNode.get(link.target);
+    if (source === target || componentOutgoing.get(source).has(target)) continue;
+    componentOutgoing.get(source).add(target);
+    componentIndegree.set(target, componentIndegree.get(target) + 1);
+  }
+
+  const componentKey = (index) => components[index][0];
+  const queue = components
+    .map((_, index) => index)
+    .filter((index) => componentIndegree.get(index) === 0)
+    .sort((left, right) => compareIdentifier(componentKey(left), componentKey(right)));
+  const depth = new Map(components.map((_, index) => [index, 0]));
+  while (queue.length) {
+    const source = queue.shift();
+    for (const target of [...componentOutgoing.get(source)].sort((left, right) => (
+      compareIdentifier(componentKey(left), componentKey(right))
+    ))) {
+      depth.set(target, Math.max(depth.get(target), depth.get(source) + 1));
+      componentIndegree.set(target, componentIndegree.get(target) - 1);
+      if (componentIndegree.get(target) === 0) {
+        queue.push(target);
+        queue.sort((left, right) => compareIdentifier(componentKey(left), componentKey(right)));
+      }
+    }
+  }
+
+  const selfLinked = new Set(links.filter((link) => link.source === link.target).map((link) => link.source));
+  return new Map(ids.map((nodeId) => {
+    const componentIndex = componentByNode.get(nodeId);
+    return [nodeId, {
+      stage: depth.get(componentIndex),
+      cyclic: components[componentIndex].length > 1 || selfLinked.has(nodeId),
+      component: componentIndex,
+    }];
+  }));
+}
+
 function graphRecords(links, familyId) {
   const ids = unique(links.flatMap((link) => [link.source, link.target]));
   if (familyId === "network") {
@@ -299,28 +389,39 @@ function graphRecords(links, familyId) {
     outflow.set(link.source, (outflow.get(link.source) ?? 0) + amount);
     inflow.set(link.target, (inflow.get(link.target) ?? 0) + amount);
   }
-  for (const targets of outgoing.values()) targets.sort();
-  const queue = ids.filter((nodeId) => indegree.get(nodeId) === 0).sort();
-  const visited = new Set();
-  while (queue.length) {
-    const nodeId = queue.shift();
-    visited.add(nodeId);
-    for (const target of outgoing.get(nodeId) ?? []) {
-      depth.set(target, Math.max(depth.get(target) ?? 0, (depth.get(nodeId) ?? 0) + 1));
-      const remaining = (indegree.get(target) ?? 0) - 1;
-      indegree.set(target, remaining);
-      if (remaining === 0) {
-        queue.push(target);
-        queue.sort();
+  for (const targets of outgoing.values()) targets.sort(compareIdentifier);
+  let topology;
+  if (familyId === "mechanism") {
+    topology = mechanismTopology(ids, outgoing, links);
+  } else {
+    const queue = ids.filter((nodeId) => indegree.get(nodeId) === 0).sort(compareIdentifier);
+    const visited = new Set();
+    while (queue.length) {
+      const nodeId = queue.shift();
+      visited.add(nodeId);
+      for (const target of outgoing.get(nodeId) ?? []) {
+        depth.set(target, Math.max(depth.get(target) ?? 0, (depth.get(nodeId) ?? 0) + 1));
+        const remaining = (indegree.get(target) ?? 0) - 1;
+        indegree.set(target, remaining);
+        if (remaining === 0) {
+          queue.push(target);
+          queue.sort(compareIdentifier);
+        }
       }
     }
-  }
-  const maximumDepth = Math.max(0, ...depth.values());
-  for (const nodeId of ids) {
-    if (!visited.has(nodeId)) depth.set(nodeId, maximumDepth + 1);
+    const maximumDepth = Math.max(0, ...depth.values());
+    for (const nodeId of ids) {
+      if (!visited.has(nodeId)) depth.set(nodeId, maximumDepth + 1);
+    }
+    topology = new Map(ids.map((nodeId) => [nodeId, {
+      stage: depth.get(nodeId) ?? 0,
+      cyclic: !visited.has(nodeId),
+      component: null,
+    }]));
   }
   return ids.map((nodeId) => {
-    const stage = depth.get(nodeId) ?? 0;
+    const nodeTopology = topology.get(nodeId);
+    const stage = nodeTopology.stage;
     const input = inflow.get(nodeId) ?? 0;
     const output = outflow.get(nodeId) ?? 0;
     return {
@@ -330,11 +431,12 @@ function graphRecords(links, familyId) {
       label: nodeId,
       stage,
       layer: stage,
-      group: visited.has(nodeId) ? `Stage ${stage + 1}` : "Cycle",
+      group: familyId === "mechanism" ? `Layer ${stage + 1}` : `Stage ${stage + 1}`,
       inflow: input,
       outflow: output,
       balanceGap: input - output,
-      cyclic: !visited.has(nodeId),
+      cyclic: nodeTopology.cyclic,
+      component: nodeTopology.component,
     };
   });
 }

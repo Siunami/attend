@@ -123,6 +123,55 @@ function appendText(parent, x, y, text, className, anchor) {
   return node;
 }
 
+function wrappedLabelLines(text, maximumCharacters, maximumLines = 2) {
+  const words = String(text).trim().split(/\s+/u).filter(Boolean);
+  if (!words.length) return [""];
+  const lines = [];
+  for (const word of words) {
+    const current = lines.at(-1);
+    if (current !== undefined && `${current} ${word}`.length <= maximumCharacters) {
+      lines[lines.length - 1] = `${current} ${word}`;
+    } else {
+      lines.push(word);
+    }
+  }
+  if (lines.length > maximumLines) {
+    const retained = lines.slice(0, maximumLines - 1);
+    retained.push(lines.slice(maximumLines - 1).join(" "));
+    lines.splice(0, lines.length, ...retained);
+  }
+  return lines.map((line, index) => (
+    index === lines.length - 1 && line.length > maximumCharacters
+      ? `${line.slice(0, Math.max(1, maximumCharacters - 1)).trimEnd()}…`
+      : line
+  ));
+}
+
+function appendWrappedText(parent, {
+  x,
+  centerY,
+  text,
+  maximumCharacters,
+  maximumLines = 2,
+  className,
+  anchor = "middle",
+  lineHeight = 14,
+}) {
+  const lines = wrappedLabelLines(text, maximumCharacters, maximumLines);
+  const node = element("text", {
+    x,
+    class: className,
+    "text-anchor": anchor,
+    "aria-hidden": "true",
+  });
+  const firstY = centerY - ((lines.length - 1) * lineHeight) / 2 + 4;
+  lines.forEach((line, index) => {
+    node.append(element("tspan", { x, y: firstY + index * lineHeight }, line));
+  });
+  parent.append(node);
+  return { node, lines };
+}
+
 function linear(domain, range) {
   const [d0, d1] = domain;
   const [r0, r1] = range;
@@ -835,7 +884,7 @@ function renderFlow(root, dataset, selectedId) {
   });
 }
 
-function renderMechanism(root, dataset, selectedId) {
+function renderMechanism(root, dataset, selectedId, { selectedNodeId = null } = {}) {
   const layerField = role(dataset, "group", "layer");
   const stageField = role(dataset, "stage", "stage");
   const firstSeen = new Map();
@@ -862,51 +911,160 @@ function renderMechanism(root, dataset, selectedId) {
     if (leftStage !== rightStage) return leftStage - rightStage;
     return firstSeen.get(left) - firstSeen.get(right);
   });
-  const rowGap = 132;
-  const top = 95;
+  const top = 86;
+  const rowGap = 82;
+  const nodeHeight = 58;
+  const dense = dataset.links.length >= 12 || dataset.records.length >= 12;
   const maximumRows = Math.max(1, ...layers.map((layer) => recordsByLayer.get(layer).length));
-  const height = Math.max(HEIGHT, top + (maximumRows - 1) * rowGap + 105);
+  const wrappedGrid = layers.length === 1 && maximumRows > 7;
+  const gridColumns = wrappedGrid ? Math.min(4, Math.ceil(maximumRows / 6)) : 1;
+  const gridRows = wrappedGrid ? Math.ceil(maximumRows / gridColumns) : maximumRows;
+  const height = Math.max(HEIGHT, top + (gridRows - 1) * rowGap + nodeHeight + 64);
   const verticalCenter = top + ((maximumRows - 1) * rowGap) / 2;
+  const horizontalGap = layers.length > 1 ? 736 / (layers.length - 1) : 0;
+  const nodeWidth = Math.min(168, Math.max(112, horizontalGap ? horizontalGap - 34 : 168));
   const positions = new Map();
   layers.forEach((layer, layerIndex) => {
     const records = recordsByLayer.get(layer);
+    if (wrappedGrid) {
+      const gridGap = 736 / Math.max(gridColumns - 1, 1);
+      records.forEach((record, recordIndex) => {
+        positions.set(id(record, dataset), {
+          x: gridColumns === 1 ? WIDTH / 2 : 112 + (recordIndex % gridColumns) * gridGap,
+          y: top + Math.floor(recordIndex / gridColumns) * rowGap,
+          layer,
+        });
+      });
+      return;
+    }
     const layerTop = verticalCenter - ((records.length - 1) * rowGap) / 2;
     records.forEach((record, recordIndex) => {
       positions.set(id(record, dataset), {
-        x: 100 + layerIndex * (760 / Math.max(layers.length - 1, 1)),
+        x: layers.length === 1 ? WIDTH / 2 : 112 + layerIndex * horizontalGap,
         y: layerTop + recordIndex * rowGap,
+        layer,
       });
     });
   });
-  const svg = canvas(root, dataset.title, `An evidence flowchart with ${dataset.records.length} named components and ${dataset.links.length} verb-labelled links. Read stages from left to right. Layout shows topological reading order, not causal strength.`, height);
+  const svg = canvas(root, dataset.title, `An evidence flowchart with ${dataset.records.length} named components and ${dataset.links.length} typed links. Dependency layers read from left to right; feedback links route around their layer. Position shows reading order, not causal strength.`, height);
   svg.setAttribute("data-layout", "evidence-flowchart");
-  svg.setAttribute("data-reading-order", "left-to-right");
+  svg.setAttribute("class", "mechanism-canvas");
+  svg.setAttribute("data-reading-order", layers.length > 1 ? "left-to-right" : "within-layer");
+  svg.setAttribute("data-density-treatment", dense ? "focus-and-context" : "always-labelled");
+  svg.setAttribute("data-cycle-layout", wrappedGrid ? "wrapped-grid" : "layer-rails");
   const marker = element("marker", { id: `arrow-${chartCounter}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" });
   marker.append(element("path", { d: "M 0 0 L 10 5 L 0 10 z", class: "arrow-head" }));
   const defs = element("defs");
   defs.append(marker);
   svg.append(defs);
-  layers.forEach((layer, index) => appendText(svg, 100 + index * (760 / Math.max(layers.length - 1, 1)), 38, layer, "axis-label", "middle"));
-  dataset.links.forEach((link) => {
+  layers.forEach((layer, index) => {
+    const x = layers.length === 1 ? WIDTH / 2 : 112 + index * horizontalGap;
+    appendText(svg, x, 34, layer, "mechanism-layer-label", "middle");
+    if (!wrappedGrid) {
+      svg.append(element("line", {
+        x1: x,
+        x2: x,
+        y1: 50,
+        y2: height - 22,
+        class: "mechanism-layer-guide",
+      }));
+    }
+  });
+  const selectedMarks = new Set(Array.isArray(selectedId) ? selectedId.map(String) : [String(selectedId ?? "")]);
+  const selectedNode = selectedNodeId === null ? null : String(selectedNodeId);
+  const relatedNodeIds = new Set(selectedNode ? [selectedNode] : []);
+  const relatedLinks = selectedNode
+    ? dataset.links.filter((link) => {
+      const related = String(link.source) === selectedNode || String(link.target) === selectedNode;
+      if (related) {
+        relatedNodeIds.add(String(link.source));
+        relatedNodeIds.add(String(link.target));
+      }
+      return related;
+    })
+    : [];
+  dataset.links.forEach((link, linkIndex) => {
     const source = positions.get(String(link.source));
     const target = positions.get(String(link.target));
     if (!source || !target) return;
     const markId = String(link.id);
-    svg.append(element("path", {
-      d: `M${source.x + 52},${source.y + 25} C${(source.x + target.x) / 2},${source.y + 25} ${(source.x + target.x) / 2},${target.y + 25} ${target.x - 58},${target.y + 25}`,
+    const sameLayer = source.layer === target.layer;
+    const sourceY = source.y + nodeHeight / 2;
+    const targetY = target.y + nodeHeight / 2;
+    let path;
+    let labelX;
+    let labelY;
+    let labelAnchor = "middle";
+    if (sameLayer) {
+      const rightRail = linkIndex % 2 === 0;
+      const railOffset = nodeWidth / 2 + 18 + (linkIndex % 4) * 9;
+      const railX = wrappedGrid
+        ? rightRail ? WIDTH - railOffset + nodeWidth / 2 : railOffset - nodeWidth / 2
+        : source.x + (rightRail ? railOffset : -railOffset);
+      const edgeX = rightRail ? nodeWidth / 2 : -nodeWidth / 2;
+      path = `M${source.x + edgeX},${sourceY} C${railX},${sourceY} ${railX},${targetY} ${target.x + edgeX},${targetY}`;
+      labelX = rightRail ? railX - 8 : railX + 8;
+      labelY = (sourceY + targetY) / 2;
+      labelAnchor = rightRail ? "end" : "start";
+    } else {
+      const direction = target.x >= source.x ? 1 : -1;
+      const sourceX = source.x + direction * nodeWidth / 2;
+      const targetX = target.x - direction * nodeWidth / 2;
+      const middleX = (sourceX + targetX) / 2;
+      path = `M${sourceX},${sourceY} C${middleX},${sourceY} ${middleX},${targetY} ${targetX},${targetY}`;
+      labelX = middleX;
+      labelY = (sourceY + targetY) / 2;
+    }
+    const related = selectedNode !== null && (
+      String(link.source) === selectedNode || String(link.target) === selectedNode
+    );
+    const selected = selectedMarks.has(markId);
+    const relationship = element("g", {
+      class: `mechanism-relationship${related ? " is-related" : ""}${selectedNode !== null && !related ? " is-muted" : ""}${selected ? " is-selected" : ""}${!dense || (selected && selectedNode === null) ? " show-label" : ""}`,
+      "data-mark-id": markId,
+      "data-route": sameLayer ? "same-layer-rail" : "cross-layer",
+      "aria-label": `${linkedLabel(dataset, link.source)} ${String(link.type ?? "connects")} ${linkedLabel(dataset, link.target)}`,
+    });
+    relationship.append(element("title", {}, `${linkedLabel(dataset, link.source)} ${String(link.type ?? "connects")} ${linkedLabel(dataset, link.target)}`));
+    relationship.append(element("path", {
+      d: path,
+      class: "mechanism-link-hit",
+      fill: "none",
+      stroke: "transparent",
+      "stroke-width": 14,
+    }));
+    relationship.append(element("path", {
+      d: path,
       class: markClass(markId, selectedId, "mechanism-link"),
       "marker-end": `url(#arrow-${chartCounter})`,
-      "data-mark-id": markId,
-      "aria-label": `${linkedLabel(dataset, link.source)} ${String(link.type ?? "connects")} ${linkedLabel(dataset, link.target)}`,
     }));
-    appendText(
-      svg,
-      (source.x + target.x) / 2,
-      (source.y + target.y) / 2 + 12,
-      String(link.type ?? "connects"),
-      "axis-label",
-      "middle",
-    );
+    const relation = String(link.type ?? "connects");
+    const relationLines = wrappedLabelLines(relation, 25, 2);
+    const longestLine = Math.max(...relationLines.map((line) => line.length));
+    const labelWidth = Math.min(176, longestLine * 6.2 + 14);
+    const labelHeight = relationLines.length * 14 + 8;
+    const labelLeft = labelAnchor === "start"
+      ? labelX - 6
+      : labelAnchor === "end" ? labelX - labelWidth + 6 : labelX - labelWidth / 2;
+    relationship.append(element("rect", {
+      x: labelLeft,
+      y: labelY - labelHeight / 2,
+      width: labelWidth,
+      height: labelHeight,
+      rx: 4,
+      class: "mechanism-link-label-bg",
+      opacity: 0,
+    }));
+    const relationLabel = appendWrappedText(relationship, {
+      x: labelX,
+      centerY: labelY,
+      text: relation,
+      maximumCharacters: 25,
+      className: "mechanism-link-label",
+      anchor: labelAnchor,
+    });
+    relationLabel.node.setAttribute("opacity", 0);
+    svg.append(relationship);
   });
   dataset.records.forEach((record) => {
     const position = positions.get(id(record, dataset));
@@ -915,21 +1073,52 @@ function renderMechanism(root, dataset, selectedId) {
       (link) => String(link.source) === nodeId || String(link.target) === nodeId,
     ).length;
     const node = element("g", {
-      class: "mechanism-node",
+      class: `mechanism-node${selectedNode === nodeId ? " is-selected" : ""}${selectedNode !== null && !relatedNodeIds.has(nodeId) ? " is-muted" : ""}`,
       "data-node-id": nodeId,
-      "aria-label": `${label(record, dataset)} component with ${countLabel(relationCount, "connected relationship")}`,
+      "aria-label": `${label(record, dataset)}${record.cyclic ? ", feedback" : ""} component with ${countLabel(relationCount, "connected relationship")}`,
     });
     node.append(element("rect", {
-      x: position.x - 58,
+      x: position.x - nodeWidth / 2,
       y: position.y,
-      width: 116,
-      height: 50,
-      rx: 3,
-      class: "mark-primary",
+      width: nodeWidth,
+      height: nodeHeight,
+      rx: 8,
+      class: "mechanism-node-card",
     }));
-    appendText(node, position.x, position.y + 72, label(record, dataset), undefined, "middle");
+    appendWrappedText(node, {
+      x: position.x,
+      centerY: position.y + nodeHeight / 2,
+      text: label(record, dataset),
+      maximumCharacters: Math.max(13, Math.floor(nodeWidth / 7.2)),
+      className: "mechanism-node-label",
+    });
+    if (record.cyclic) appendText(node, position.x + nodeWidth / 2 - 11, position.y + 15, "↺", "mechanism-feedback-badge", "middle");
     svg.append(node);
   });
+
+  const detail = htmlElement("section", "mechanism-detail");
+  if (selectedNode && relatedLinks.length) {
+    const heading = htmlElement("p", "mechanism-detail-heading", `${linkedLabel(dataset, selectedNode)} · ${countLabel(relatedLinks.length, "relationship")}`);
+    const list = htmlElement("ol", "mechanism-relationship-list");
+    relatedLinks.forEach((link) => {
+      const item = htmlElement("li");
+      const button = htmlElement("button", "mechanism-relationship-button");
+      button.type = "button";
+      button.setAttribute("data-mark-id", String(link.id));
+      button.setAttribute("aria-label", `${linkedLabel(dataset, link.source)} ${String(link.type ?? "connects")} ${linkedLabel(dataset, link.target)}`);
+      button.append(
+        htmlElement("span", "mechanism-relationship-source", linkedLabel(dataset, link.source)),
+        htmlElement("strong", "mechanism-relationship-verb", String(link.type ?? "connects")),
+        htmlElement("span", "mechanism-relationship-target", linkedLabel(dataset, link.target)),
+      );
+      item.append(button);
+      list.append(item);
+    });
+    detail.append(heading, list);
+  } else if (dense) {
+    detail.append(htmlElement("p", "mechanism-detail-hint", `${countLabel(dataset.links.length, "typed relationship")}. Select a component to isolate its direct connections and read every verb.`));
+  }
+  if (detail.children.length) root.append(detail);
 }
 
 let usGeographyPromise;
@@ -1367,7 +1556,7 @@ export async function renderFamily({
   if (!renderer) throw new Error(`No renderer registered for ${String(dataset?.familyId)}`);
   const activeSelectedIds = Array.isArray(selectedIds) ? selectedIds : [selectedIds];
   const rendererSelection = activeSelectedIds.length > 0 ? activeSelectedIds : selectedId;
-  await renderer(root, dataset, rendererSelection);
+  await renderer(root, dataset, rendererSelection, { selectedNodeId });
   decorateSelectableMarks(root, { selectedIds: activeSelectedIds, selectableMarkIds, onSelect });
   decorateSelectableNodes(root, { dataset, selectedNodeId, selectableMarkIds, onSelect });
   return {

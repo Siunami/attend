@@ -188,6 +188,7 @@ h2,
 
 .workspace {
   position: relative;
+  isolation: isolate;
   display: flex;
   min-height: 0;
   overflow: hidden;
@@ -199,6 +200,7 @@ h2,
 
 .map-pane {
   flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
   min-height: 0;
   padding: clamp(24px, 4vw, 52px);
@@ -241,8 +243,11 @@ h2 {
 }
 
 .target {
+  max-width: 720px;
   margin: 0;
+  color: var(--muted);
   font-size: 14px;
+  line-height: 1.5;
 }
 
 .phrase-list {
@@ -259,7 +264,7 @@ h2 {
 
 .atlas-visual {
   min-height: 280px;
-  overflow: visible;
+  overflow: clip;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   padding: 18px 0;
@@ -326,8 +331,90 @@ h2 {
 .atlas-visual .median-line { stroke: var(--foreground); stroke-width: 2; }
 .atlas-visual .profile-line,
 .atlas-visual .trend-line { fill: none; stroke-width: 2; opacity: 0.72; }
-.atlas-visual .hierarchy-link,
-.atlas-visual .mechanism-link { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.atlas-visual .hierarchy-link { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.atlas-visual .mechanism-layer-guide {
+  stroke: color-mix(in srgb, var(--line) 58%, transparent);
+  stroke-dasharray: 2 5;
+  stroke-width: 1;
+}
+.atlas-visual .mechanism-layer-label {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.atlas-visual .mechanism-relationship {
+  transition: opacity 150ms ease;
+}
+.atlas-visual .mechanism-relationship.is-muted {
+  opacity: 0.1;
+}
+.atlas-visual .mechanism-link {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.25;
+  transition: stroke 150ms ease, stroke-width 150ms ease;
+}
+.atlas-visual .mechanism-link-hit {
+  fill: none;
+  pointer-events: stroke;
+  stroke: transparent;
+  stroke-width: 14;
+}
+.atlas-visual .mechanism-relationship.is-related .mechanism-link,
+.atlas-visual .mechanism-relationship.is-selected .mechanism-link,
+.atlas-visual .mechanism-relationship:focus-visible .mechanism-link,
+.atlas-visual .mechanism-relationship:hover .mechanism-link {
+  stroke: var(--accent);
+  stroke-width: 2.25;
+}
+.atlas-visual .mechanism-link-label,
+.atlas-visual .mechanism-link-label-bg {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.atlas-visual .mechanism-link-label {
+  fill: var(--foreground);
+  font-size: 10px;
+}
+.atlas-visual .mechanism-link-label-bg {
+  fill: var(--surface-raised);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.atlas-visual .mechanism-relationship.show-label .mechanism-link-label,
+.atlas-visual .mechanism-relationship.show-label .mechanism-link-label-bg,
+.atlas-visual .mechanism-relationship:focus-visible .mechanism-link-label,
+.atlas-visual .mechanism-relationship:focus-visible .mechanism-link-label-bg,
+.atlas-visual .mechanism-relationship:hover .mechanism-link-label,
+.atlas-visual .mechanism-relationship:hover .mechanism-link-label-bg {
+  opacity: 1;
+}
+.atlas-visual .mechanism-node {
+  transition: opacity 150ms ease;
+}
+.atlas-visual .mechanism-node.is-muted {
+  opacity: 0.28;
+}
+.atlas-visual .mechanism-node-card {
+  fill: var(--surface-raised);
+  stroke: var(--line-strong);
+  stroke-width: 1.25;
+  transition: fill 150ms ease, stroke 150ms ease, stroke-width 150ms ease;
+}
+.atlas-visual .mechanism-node-label {
+  fill: var(--foreground);
+  font-size: 11.5px;
+  font-weight: 580;
+  pointer-events: none;
+}
+.atlas-visual .mechanism-feedback-badge {
+  fill: var(--muted);
+  font-size: 12px;
+  pointer-events: none;
+}
 .atlas-visual .network-link { stroke: var(--line); stroke-width: 1; }
 .atlas-visual .network-link.strength-4,
 .atlas-visual .network-link.strength-5 { stroke: var(--line-strong); stroke-width: 2; }
@@ -357,11 +444,85 @@ h2 {
 .atlas-visual [data-mark-id]:hover,
 .atlas-visual [data-mark-id].is-selected { filter: brightness(0.9); stroke: var(--foreground); }
 .atlas-visual [data-node-id] { cursor: pointer; }
-.atlas-visual .mechanism-node:hover rect,
-.atlas-visual .mechanism-node.is-selected rect {
-  filter: brightness(0.9);
-  stroke: var(--foreground);
+.atlas-visual .mechanism-node:hover .mechanism-node-card,
+.atlas-visual .mechanism-node.is-selected .mechanism-node-card,
+.atlas-visual .mechanism-node:focus-visible .mechanism-node-card {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
   stroke-width: 2;
+}
+
+.mechanism-detail {
+  max-width: 960px;
+  margin: 4px auto 0;
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--line);
+}
+
+.mechanism-detail-heading,
+.mechanism-detail-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mechanism-detail-heading {
+  margin-bottom: 9px;
+  color: var(--foreground);
+  font-weight: 650;
+}
+
+.mechanism-relationship-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mechanism-relationship-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  text-align: left;
+}
+
+.mechanism-relationship-button:hover,
+.mechanism-relationship-button.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.mechanism-relationship-source,
+.mechanism-relationship-target {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mechanism-relationship-source {
+  text-align: right;
+}
+
+.mechanism-relationship-target {
+  text-align: left;
+}
+
+.mechanism-relationship-verb {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 650;
+  text-align: center;
 }
 
 .atlas-visual .passage-columns {
@@ -491,21 +652,29 @@ h2 {
 
 .chat-pane {
   --drawer-width: clamp(440px, 38vw, 600px);
+  position: absolute;
+  z-index: 3;
+  inset-block: 0;
+  inset-inline-end: 0;
   display: flex;
-  flex: 0 0 var(--drawer-width);
   flex-direction: column;
-  width: var(--drawer-width);
+  width: min(var(--drawer-width), 100%);
+  height: 100%;
   min-width: 0;
   min-height: 0;
-  margin-inline-end: calc(-1 * var(--drawer-width));
   overflow: hidden;
   border-left: 1px solid var(--line);
   background: var(--surface);
-  transition: margin-inline-end 220ms cubic-bezier(0.3, 0.7, 0.3, 1);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  transform: translate3d(100%, 0, 0);
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
 }
 
 .workspace[data-chat-open="true"] .chat-pane {
-  margin-inline-end: 0;
+  pointer-events: auto;
+  transform: translate3d(0, 0, 0);
 }
 
 .chat-header {
@@ -1037,27 +1206,6 @@ h2 {
   border: 0;
 }
 
-@media (max-width: 1120px) {
-  .chat-pane {
-    position: absolute;
-    z-index: 2;
-    inset-block: 0;
-    inset-inline-end: 0;
-    width: min(540px, 100%);
-    height: 100%;
-    margin: 0;
-    border-left: 1px solid var(--line);
-    box-shadow: var(--shadow);
-    transform: translateX(100%);
-    transition: transform 220ms cubic-bezier(0.3, 0.7, 0.3, 1);
-  }
-
-  .workspace[data-chat-open="true"] .chat-pane {
-    margin-inline-end: 0;
-    transform: none;
-  }
-}
-
 @media (max-width: 620px) {
   .shell {
     gap: 8px;
@@ -1084,7 +1232,6 @@ h2 {
   }
 
   .chat-pane {
-    width: 100%;
     border-left: 0;
   }
 

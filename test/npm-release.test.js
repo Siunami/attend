@@ -12,7 +12,7 @@ test("the public package leads with a human-readable coding-agent install", asyn
     readFile(`${PACKAGE_ROOT}/README.md`, "utf8"),
   ]);
 
-  assert.equal(manifest.version, "0.5.2");
+  assert.equal(manifest.version, "0.5.3");
   assert.equal(manifest.name, "@siunami/attend");
   assert.equal(manifest.license, "MIT");
   assert.equal(manifest.author, "Siunami");
@@ -40,7 +40,7 @@ test("the public package leads with a human-readable coding-agent install", asyn
   )?.groups?.prompt;
   assert.ok(prompt, "coding-agent prompt is missing");
   assert.ok(prompt.split(/\s+/u).length <= 180, "coding-agent prompt is too long");
-  assert.match(prompt, /npm install --global @siunami\/attend@0\.5\.2/u);
+  assert.match(prompt, /npm install --global @siunami\/attend@0\.5\.3/u);
   assert.match(prompt, /attend bootstrap --yes/u);
   assert.match(prompt, /show me the output/iu);
   assert.match(prompt, /show me the actual error/iu);
@@ -61,7 +61,7 @@ test("the public package states its license and release history", async () => {
 
   assert.match(license, /^MIT License$/mu);
   assert.match(license, /Copyright \(c\) 2026 Siunami/u);
-  assert.match(changelog, /## \[0\.5\.2\] - 2026-08-27/u);
+  assert.match(changelog, /## \[0\.5\.3\] - 2026-08-27/u);
   assert.match(readme, /## License[\s\S]*\[MIT License\]\(LICENSE\)/u);
 });
 

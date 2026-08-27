@@ -92,7 +92,7 @@ test("initialize advertises the three host bridge tools with exact schemas", asy
     result: {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "@siunami/attend", version: "0.5.2" },
+      serverInfo: { name: "@siunami/attend", version: "0.5.3" },
       instructions:
         "Wait with the ticket from attend view. If view reports a question bound to an earlier host, ask the user to approve takeover before rebinding that exact question with confirmTakeover: true; takeover revokes the earlier attachment. Answer only from returned evidence, then pass its exact replyGuard to attend_reply. A timeout leaves the question queued.",
     },
