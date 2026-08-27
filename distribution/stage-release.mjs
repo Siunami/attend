@@ -29,7 +29,7 @@ import { auditPackage } from "./package-audit.mjs";
 const DISTRIBUTION_ROOT = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(DISTRIBUTION_ROOT, "..");
 const DEFAULT_OUTPUT = join(DISTRIBUTION_ROOT, ".deploy");
-const DEFAULT_BASE_URL = "https://attend-cli.matthewwilsonsiu.workers.dev";
+const DEFAULT_BASE_URL = "https://downloads.attend.example";
 const TOKEN = /\{\{([A-Z0-9_]+)\}\}/gu;
 const RELEASE_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const RELEASE_FILENAMES = Object.freeze({

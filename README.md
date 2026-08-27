@@ -13,7 +13,7 @@ You may install Attend globally, add its setup files to this repository, install
 
 Attend needs macOS or Linux, Node.js 22 or newer, and npm. If anything is missing, stop and tell me. On macOS, if `llama-server` is missing and Homebrew is available, run `brew install llama.cpp`.
 
-Run `npm install --global @siunami/attend@0.5.3`. If npm cannot install globally without sudo, install Attend under my user account instead. Then run `attend bootstrap --yes` and show me the output. You may retry it after an interrupted download. Drive the setup yourself; I'll only step in for a macOS approval.
+Run `npm install --global @siunami/attend@0.5.4`. If npm cannot install globally without sudo, install Attend under my user account instead. Then run `attend bootstrap --yes` and show me the output. You may retry it after an interrupted download. Drive the setup yourself; I'll only step in for a macOS approval.
 
 Keep any existing Attend chat choice. For a new setup, use Attend's private local chat. Do not sign in to Codex or Claude for Attend. If installation or setup fails, show me the actual error. When Attend is ready, show me its welcome and installed version.
 ```
@@ -27,18 +27,18 @@ Attend requires macOS or Linux, Node.js 22 or newer, npm, and llama.cpp's `llama
 Run these commands from the repository where Attend will work:
 
 ```sh
-npm install --global @siunami/attend@0.5.3
+npm install --global @siunami/attend@0.5.4
 attend bootstrap --yes
 ```
 
 If npm cannot write to its global install directory, use a directory owned by your account:
 
 ```sh
-npm install --global --prefix "$HOME/.local" @siunami/attend@0.5.3
+npm install --global --prefix "$HOME/.local" @siunami/attend@0.5.4
 $HOME/.local/bin/attend bootstrap --yes
 ```
 
-The host agent does not write chart code. It asks Attend for the installed Family Atlas catalog, selects an executable member for the analytic job, transforms source-backed facts into that member's declared roles, and submits a data-only request. Attend reopens the sources, verifies exact quotes, compiles a canonical package, resolves a fixed bundled renderer, and serves the result on loopback.
+Inside an admitted Attend workflow, the host agent does not write chart code. It asks Attend for the installed Family Atlas catalog, selects an executable member for the analytic job, transforms source-backed facts into that member's declared roles, and submits a data-only request. Attend reopens the sources, verifies exact quotes, compiles a canonical package, resolves a fixed bundled renderer, and serves the result on loopback.
 
 This release includes all 19 visualization families. The bundled Family Atlas catalog records every authored form and rejection. Eighteen families have one tested executable member. Annotated specimen is marked `unavailable` because the text-only request contract cannot bind its required visible specimen yet. Other approved designs remain `documented`; rejected designs remain `rejected`. Attend never falls back to an unimplemented member or generates a substitute chart.
 
@@ -69,7 +69,9 @@ attend bootstrap --yes --json
 
 ## Agent workflow
 
-The installed `attend-visualize` skill directs a compatible host agent through this sequence:
+The installed `attend-visualize` skill has two lanes. Its primary lane proactively tests exploratory-data-analysis opportunities when the user did not request a visualization. Its requested lane handles an explicit visual form or interaction only when one executable Family Atlas member is an exact, natural match. If there is no exact match, Attend performs no setup, inspection, exploration, compilation, or view work. It returns control to the host agent's ordinary just-in-time visualization workflow, which can search the repository for an existing example or template and use its normal visualization tools.
+
+An admitted Attend request follows this sequence:
 
 ```text
 user question
@@ -97,7 +99,7 @@ For a direct visualization, the agent presents the artifact in a one-column Mark
 
 The packaged skill also defines the experiment-inbox workflow. The agent admits only hypotheses tied to the current task. It records every admitted hypothesis before execution and runs every admitted experiment. Every outcome remains in one canonical experiment inbox, including interesting, uninteresting, null, inconclusive, invalid, and failed attempts. Promotion may emphasize any number of interesting results, but it never copies a result into another section. Agent promotion, a human star, and structured feedback remain separate signals.
 
-Each plan records its intended representation, authorized source scope, named comparison baseline, exploratory or confirmatory status, and comparison count. A change of variables, representation, or question creates a child experiment linked to its parent. The earlier plan remains unchanged. Agent chat mentions at most one result at a natural task boundary and links the experiment workspace; the workspace keeps the complete trail.
+Each plan records its versioned representation intent, authorized source scope, named comparison baseline, exploratory or confirmatory status, and comparison count. A change of variables, representation, or question creates a child experiment linked to its parent. The earlier plan remains unchanged. Agent chat mentions at most one result at a natural task boundary and links the experiment workspace; the workspace keeps the complete trail.
 
 Human-readable experiment plans and event prose are visible in the capability-protected loopback workspace. They should summarize findings, not contain credentials, raw source bodies, exact source quotes, absolute paths, prompts, or transcripts. Attend records a generic workspace diagnostic for a staged execution failure while leaving the detailed error in the invoking command's private output.
 
@@ -135,10 +137,15 @@ Run `attend families --json` for each governed member, required roles, field typ
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "question": "How do results differ by region?",
   "family": "rank",
   "member": "bar-list",
+  "representationIntent": {
+    "version": 1,
+    "mode": "open",
+    "constraints": []
+  },
   "sources": [
     { "path": "notes/results.md", "textProjection": "utf8" }
   ],
@@ -196,7 +203,7 @@ attend map request.json --json
 attend view --open --json
 ```
 
-`question` is required and carries the user's literal question into the compiled artifact. `options.title` is an optional display label; it does not replace or rewrite the question.
+`question` is required and carries the user's literal question into the compiled artifact. `options.title` is an optional display label; it does not replace or rewrite the question. Managed workflows use version 2, which requires `representationIntent`. `open` means the user did not constrain the form. `exact` carries one finite constraint for each named `form`, `dimensionality`, `interaction`, `motion`, or `projection`; the compiler rejects the request with `UNSUPPORTED_REQUESTED_REPRESENTATION` unless the selected executable member advertises every constraint. Version-1 requests remain a compatibility boundary and normalize to open intent when the field is omitted.
 
 The invocation determines the project root. A request cannot supply or enlarge it. Source paths must resolve inside that root. Attend supports explicit UTF-8 text and normalized-text projections in this release; it abstains from raw binary or remote URL input.
 

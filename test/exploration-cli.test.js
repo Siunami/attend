@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -242,6 +242,147 @@ test("CLI preserves the complete admitted experiment lifecycle without duplicate
   assert.equal(workspaceResult.browser.opened, true);
   assert.equal(workspaceResult.workspaceUrl, openedUrl);
   assert.match(openedUrl, new RegExp(`/e/${explored.explorationId}/$`, "u"));
+});
+
+test("a staged map cannot discard an experiment's exact representation intent", async (t) => {
+  const root = await fixture(t);
+  await runJson(root, ["setup"]);
+  await writeFile(join(root, "explore.json"), JSON.stringify({
+    version: 1,
+    goal: "Keep the requested ranked form",
+    analyticIntent: "Test the exact requested bar-list form.",
+    sourceScope: [{ path: "evidence.md" }],
+    experiments: [{
+      key: "exact-rank",
+      hypothesis: "The exact bar-list form makes the score gap inspectable.",
+      whyUseful: "The user requested this form rather than an interchangeable comparison.",
+      representation: {
+        family: "rank",
+        member: "bar-list",
+        representationIntent: {
+          version: 1,
+          mode: "exact",
+          constraints: [{ kind: "form", value: "bar-list" }],
+        },
+      },
+      sourceScope: [{ path: "evidence.md" }],
+      baseline: { name: "equal scores", description: "Compare with no gap between entities." },
+      comparisonCount: 3,
+      origin: "user",
+      analysisMode: "confirmatory",
+      timing: "pre-result",
+    }],
+  }));
+  const explored = await runJson(root, ["explore", "explore.json"]);
+  const experimentId = explored.experiments[0].id;
+  const request = mapRequest();
+  request.version = 2;
+  request.representationIntent = { version: 1, mode: "open", constraints: [] };
+  await writeFile(join(root, "map.json"), JSON.stringify(request));
+
+  const output = capture();
+  await assert.rejects(
+    run([
+      "map",
+      "map.json",
+      "--stage",
+      "--exploration",
+      explored.explorationId,
+      "--experiment",
+      experimentId,
+      "--json",
+    ], { cwd: root, stdout: output.stream, stderr: output.stream }),
+    (error) => error?.code === "STAGED_REPRESENTATION_INTENT_MISMATCH",
+  );
+
+  const experiment = (await publicExploration({ root, explorationId: explored.explorationId }))
+    .experiments[0];
+  assert.equal(experiment.execution, "queued");
+  assert.deepEqual(experiment.events, []);
+  await assert.rejects(readFile(join(root, ".attend", "local", "current.json")), /ENOENT/u);
+});
+
+test("exploration admission rejects an unsupported exact form before writing a plan", async (t) => {
+  const root = await fixture(t);
+  await runJson(root, ["setup"]);
+  await writeFile(join(root, "explore.json"), JSON.stringify({
+    version: 1,
+    goal: "Use the explicitly requested radial network",
+    analyticIntent: "Inspect the requested animated radial network without substituting a nearby form.",
+    sourceScope: [{ path: "evidence.md" }],
+    experiments: [{
+      key: "exact-radial-network",
+      hypothesis: "The requested radial network may make the relationships legible.",
+      whyUseful: "It tests the specific form requested by the user.",
+      representation: {
+        family: "network",
+        member: "local",
+        representationIntent: {
+          version: 1,
+          mode: "exact",
+          constraints: [
+            { kind: "form", value: "radial-network" },
+            { kind: "motion", value: "animated" },
+          ],
+        },
+      },
+      sourceScope: [{ path: "evidence.md" }],
+      baseline: { name: "requested form", description: "Do not replace the named representation." },
+      comparisonCount: 1,
+      origin: "user",
+      analysisMode: "confirmatory",
+      timing: "pre-result",
+    }],
+  }));
+
+  const output = capture();
+  await assert.rejects(
+    run(["explore", "explore.json", "--json"], {
+      cwd: root,
+      stdout: output.stream,
+      stderr: output.stream,
+    }),
+    (error) => error?.code === "UNSUPPORTED_REQUESTED_REPRESENTATION",
+  );
+  await assert.rejects(
+    readdir(join(root, ".attend", "local", "explorations")),
+    (error) => error?.code === "ENOENT",
+  );
+});
+
+test("an unsupported exact direct map request creates no visualization state", async (t) => {
+  const root = await fixture(t);
+  await runJson(root, ["setup"]);
+  const request = mapRequest();
+  request.version = 2;
+  request.question = "Show the scores in a three-dimensional view with orbit controls.";
+  request.representationIntent = {
+    version: 1,
+    mode: "exact",
+    constraints: [
+      { kind: "dimensionality", value: "3d" },
+      { kind: "interaction", value: "orbit" },
+    ],
+  };
+  await writeFile(join(root, "map.json"), JSON.stringify(request));
+
+  const output = capture();
+  await assert.rejects(
+    run(["map", "map.json", "--json"], {
+      cwd: root,
+      stdout: output.stream,
+      stderr: output.stream,
+    }),
+    (error) => error?.code === "UNSUPPORTED_REQUESTED_REPRESENTATION",
+  );
+  for (const path of ["analyses", "evidence", "sessions"]) {
+    await assert.rejects(
+      readdir(join(root, ".attend", "local", path)),
+      (error) => error?.code === "ENOENT",
+      path,
+    );
+  }
+  await assert.rejects(readFile(join(root, ".attend", "local", "current.json")), /ENOENT/u);
 });
 
 test("concurrent staged maps execute an experiment exactly once", async (t) => {

@@ -1,6 +1,13 @@
+import {
+  appendVisualizationInspector,
+  buildVisualizationInspectionIndex,
+  inspectionTargetKey,
+} from "./visualization-inspector.js";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 const WIDTH = 960;
 const HEIGHT = 450;
+const MAX_NODE_SELECTION_MARKS = 50;
 let chartCounter = 0;
 
 function element(name, attributes = {}, text) {
@@ -26,7 +33,8 @@ function canvas(root, title, description, height = HEIGHT) {
   const descriptionId = `family-chart-description-${chartCounter}`;
   const svg = element("svg", {
     viewBox: `0 0 ${WIDTH} ${height}`,
-    role: "img",
+    role: "group",
+    "aria-roledescription": "visualization",
     "aria-labelledby": `${titleId} ${descriptionId}`,
   });
   svg.append(
@@ -788,25 +796,36 @@ function renderNetwork(root, dataset, selectedId) {
     const target = positions.get(String(link.target));
     if (!source || !target) return;
     const markId = String(link.id);
-    svg.append(element("line", {
+    const relationship = element("g", {
+      class: "network-relationship",
+      "data-mark-id": markId,
+      "aria-label": `${linkedLabel(dataset, link.source)} ${String(link.type ?? "connects")} ${linkedLabel(dataset, link.target)}`,
+    });
+    const lineAttributes = {
       x1: source.x,
       y1: source.y,
       x2: target.x,
       y2: target.y,
-      class: markClass(markId, selectedId, `network-link strength-${Math.min(5, value(link, "strength", 1))}`),
-      "data-mark-id": markId,
-      "aria-label": `${linkedLabel(dataset, link.source)} ${String(link.type ?? "connects")} ${linkedLabel(dataset, link.target)}`,
+    };
+    relationship.append(element("line", {
+      ...lineAttributes,
+      class: "network-link-hit",
     }));
+    relationship.append(element("line", {
+      ...lineAttributes,
+      class: markClass(markId, selectedId, `network-link strength-${Math.min(5, value(link, "strength", 1))}`),
+    }));
+    svg.append(relationship);
   });
   records.forEach((record, index) => {
     const position = positions.get(id(record, dataset));
-    const markId = id(record, dataset);
+    const nodeId = id(record, dataset);
     svg.append(element("circle", {
       cx: position.x,
       cy: position.y,
       r: 14,
-      class: markClass(markId, selectedId, seriesClass(index)),
-      "data-mark-id": markId,
+      class: seriesClass(index),
+      "data-node-id": nodeId,
     }));
     const anchor = position.x < 480 ? "end" : "start";
     appendText(svg, position.x + (position.x < 480 ? -20 : 20), position.y + 4, label(record, dataset), undefined, anchor);
@@ -878,6 +897,7 @@ function renderFlow(root, dataset, selectedId) {
       rx: 3,
       class: seriesClass(index),
       "data-balance-gap": balanceGap,
+      "data-node-id": id(record, dataset),
     }));
     appendText(svg, position.x, position.y + 55, label(record, dataset), undefined, "middle");
     appendText(svg, position.x, position.y + 72, balanceLabel, "axis-label", "middle");
@@ -973,16 +993,14 @@ function renderMechanism(root, dataset, selectedId, { selectedNodeId = null } = 
   const selectedMarks = new Set(Array.isArray(selectedId) ? selectedId.map(String) : [String(selectedId ?? "")]);
   const selectedNode = selectedNodeId === null ? null : String(selectedNodeId);
   const relatedNodeIds = new Set(selectedNode ? [selectedNode] : []);
-  const relatedLinks = selectedNode
-    ? dataset.links.filter((link) => {
-      const related = String(link.source) === selectedNode || String(link.target) === selectedNode;
-      if (related) {
+  if (selectedNode) {
+    dataset.links.forEach((link) => {
+      if (String(link.source) === selectedNode || String(link.target) === selectedNode) {
         relatedNodeIds.add(String(link.source));
         relatedNodeIds.add(String(link.target));
       }
-      return related;
-    })
-    : [];
+    });
+  }
   dataset.links.forEach((link, linkIndex) => {
     const source = positions.get(String(link.source));
     const target = positions.get(String(link.target));
@@ -1095,30 +1113,6 @@ function renderMechanism(root, dataset, selectedId, { selectedNodeId = null } = 
     if (record.cyclic) appendText(node, position.x + nodeWidth / 2 - 11, position.y + 15, "↺", "mechanism-feedback-badge", "middle");
     svg.append(node);
   });
-
-  const detail = htmlElement("section", "mechanism-detail");
-  if (selectedNode && relatedLinks.length) {
-    const heading = htmlElement("p", "mechanism-detail-heading", `${linkedLabel(dataset, selectedNode)} · ${countLabel(relatedLinks.length, "relationship")}`);
-    const list = htmlElement("ol", "mechanism-relationship-list");
-    relatedLinks.forEach((link) => {
-      const item = htmlElement("li");
-      const button = htmlElement("button", "mechanism-relationship-button");
-      button.type = "button";
-      button.setAttribute("data-mark-id", String(link.id));
-      button.setAttribute("aria-label", `${linkedLabel(dataset, link.source)} ${String(link.type ?? "connects")} ${linkedLabel(dataset, link.target)}`);
-      button.append(
-        htmlElement("span", "mechanism-relationship-source", linkedLabel(dataset, link.source)),
-        htmlElement("strong", "mechanism-relationship-verb", String(link.type ?? "connects")),
-        htmlElement("span", "mechanism-relationship-target", linkedLabel(dataset, link.target)),
-      );
-      item.append(button);
-      list.append(item);
-    });
-    detail.append(heading, list);
-  } else if (dense) {
-    detail.append(htmlElement("p", "mechanism-detail-hint", `${countLabel(dataset.links.length, "typed relationship")}. Select a component to isolate its direct connections and read every verb.`));
-  }
-  if (detail.children.length) root.append(detail);
 }
 
 let usGeographyPromise;
@@ -1481,7 +1475,17 @@ const RENDERERS = Object.freeze({
 
 export const RENDERER_IDS = Object.freeze(Object.keys(RENDERERS));
 
-function decorateSelectableMarks(root, { selectedIds = [], selectableMarkIds, onSelect } = {}) {
+function inspectionLabel(index, target) {
+  const key = inspectionTargetKey(target);
+  return index.entries.find((entry) => inspectionTargetKey(entry.target) === key)?.label ?? null;
+}
+
+function decorateSelectableMarks(root, {
+  inspectionIndex,
+  selectedIds = [],
+  selectableMarkIds,
+  onSelect,
+} = {}) {
   const allowed = Array.isArray(selectableMarkIds) ? new Set(selectableMarkIds.map(String)) : null;
   const selected = new Set(Array.isArray(selectedIds) ? selectedIds.map(String) : []);
   for (const mark of root.querySelectorAll("[data-mark-id]")) {
@@ -1493,10 +1497,15 @@ function decorateSelectableMarks(root, { selectedIds = [], selectableMarkIds, on
       mark.removeAttribute("aria-pressed");
       continue;
     }
-    mark.setAttribute("tabindex", "0");
+    mark.setAttribute("tabindex", "-1");
     mark.setAttribute("role", "button");
     mark.setAttribute("aria-pressed", String(selected.has(markId)));
-    if (!mark.getAttribute("aria-label")) mark.setAttribute("aria-label", markId);
+    if (!mark.getAttribute("aria-label")) {
+      mark.setAttribute(
+        "aria-label",
+        inspectionLabel(inspectionIndex, { kind: "mark", markId }) ?? markId,
+      );
+    }
     mark.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
@@ -1509,6 +1518,7 @@ function decorateSelectableMarks(root, { selectedIds = [], selectableMarkIds, on
 
 function decorateSelectableNodes(root, {
   dataset,
+  inspectionIndex,
   selectedNodeId = null,
   selectableMarkIds,
   onSelect,
@@ -1524,14 +1534,31 @@ function decorateSelectableNodes(root, {
       node.removeAttribute("data-node-id");
       continue;
     }
+    if (relatedMarkIds.length > MAX_NODE_SELECTION_MARKS) {
+      node.removeAttribute("data-node-id");
+      node.setAttribute("data-inspection-node-id", nodeId);
+      node.setAttribute("tabindex", "-1");
+      node.setAttribute("role", "button");
+      node.setAttribute(
+        "aria-label",
+        `${inspectionLabel(inspectionIndex, { kind: "node", nodeId }) ?? nodeId}, inspect context only`,
+      );
+      continue;
+    }
     const selected = nodeId === String(selectedNodeId ?? "");
     const classNames = new Set(String(node.getAttribute("class") ?? "").split(/\s+/u).filter(Boolean));
     if (selected) classNames.add("is-selected");
     else classNames.delete("is-selected");
     node.setAttribute("class", [...classNames].join(" "));
-    node.setAttribute("tabindex", "0");
+    node.setAttribute("tabindex", "-1");
     node.setAttribute("role", "button");
     node.setAttribute("aria-pressed", String(selected));
+    if (!node.getAttribute("aria-label")) {
+      node.setAttribute(
+        "aria-label",
+        inspectionLabel(inspectionIndex, { kind: "node", nodeId }) ?? nodeId,
+      );
+    }
     const select = () => onSelect?.({ kind: "node", nodeId });
     node.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
@@ -1540,6 +1567,36 @@ function decorateSelectableNodes(root, {
     });
     node.addEventListener("click", select);
   }
+}
+
+function decorateRovingTargets(root) {
+  const targets = [
+    ...root.querySelectorAll("[data-mark-id]"),
+    ...root.querySelectorAll("[data-node-id]"),
+    ...root.querySelectorAll("[data-inspection-node-id]"),
+  ];
+  if (targets.length === 0) return;
+  let activeIndex = Math.max(0, targets.findIndex((target) => target.getAttribute("aria-pressed") === "true"));
+
+  function activate(index, moveFocus = false) {
+    activeIndex = (index + targets.length) % targets.length;
+    targets.forEach((target, targetIndex) => {
+      target.setAttribute("tabindex", targetIndex === activeIndex ? "0" : "-1");
+    });
+    if (moveFocus) targets[activeIndex].focus();
+  }
+
+  targets.forEach((target, index) => {
+    target.addEventListener("focus", () => activate(index));
+    target.addEventListener("keydown", (event) => {
+      if (!["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "End", "Home"].includes(event.key)) return;
+      event.preventDefault();
+      if (event.key === "Home") activate(0, true);
+      else if (event.key === "End") activate(targets.length - 1, true);
+      else activate(index + (["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1), true);
+    });
+  });
+  activate(activeIndex);
 }
 
 export async function renderFamily({
@@ -1555,15 +1612,45 @@ export async function renderFamily({
   const renderer = RENDERERS[dataset?.familyId];
   if (!renderer) throw new Error(`No renderer registered for ${String(dataset?.familyId)}`);
   const activeSelectedIds = Array.isArray(selectedIds) ? selectedIds : [selectedIds];
+  const activeSelectableMarkIds = Array.isArray(selectableMarkIds)
+    ? selectableMarkIds
+    : dataset.selectableMarkIds;
   const rendererSelection = activeSelectedIds.length > 0 ? activeSelectedIds : selectedId;
   await renderer(root, dataset, rendererSelection, { selectedNodeId });
-  decorateSelectableMarks(root, { selectedIds: activeSelectedIds, selectableMarkIds, onSelect });
-  decorateSelectableNodes(root, { dataset, selectedNodeId, selectableMarkIds, onSelect });
+  const inspectionIndex = buildVisualizationInspectionIndex(dataset, {
+    selectableMarkIds: activeSelectableMarkIds,
+  });
+  decorateSelectableMarks(root, {
+    inspectionIndex,
+    selectedIds: activeSelectedIds,
+    selectableMarkIds: activeSelectableMarkIds,
+    onSelect,
+  });
+  decorateSelectableNodes(root, {
+    dataset,
+    inspectionIndex,
+    selectedNodeId,
+    selectableMarkIds: activeSelectableMarkIds,
+    onSelect,
+  });
+  decorateRovingTargets(root);
+  appendVisualizationInspector({
+    root,
+    dataset,
+    index: inspectionIndex,
+    selectedMarkIds: activeSelectedIds,
+    selectedNodeId,
+  });
+  const renderedMarkIds = [...new Set(
+    [...root.querySelectorAll("[data-mark-id]")]
+      .map((mark) => mark.getAttribute("data-mark-id"))
+      .filter(Boolean),
+  )];
   return {
     familyId: dataset.familyId,
-    markCount: dataset.records.length,
+    markCount: renderedMarkIds.length,
     evidenceCount: evidenceCount(dataset),
-    selectableMarkIds: [...root.querySelectorAll("[data-mark-id]")].map((mark) => mark.getAttribute("data-mark-id")),
+    selectableMarkIds: renderedMarkIds,
     selectableNodeIds: [...root.querySelectorAll("[data-node-id]")].map((node) => node.getAttribute("data-node-id")),
   };
 }

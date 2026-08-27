@@ -1,0 +1,198 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import {
+  CATALOG_COUNTS,
+  CATALOG_FAMILIES,
+  CATALOG_VERSION,
+} from "../src/catalog/index.js";
+import { AUTHORED_FAMILY_ATLAS_CONTENT } from "../src/catalog/snapshot.js";
+import {
+  CANONICAL_INPUT_MEDIA,
+  MAP_FAMILIES,
+  MAP_FAMILY_GROUPS,
+} from "../src/map-families/registry.js";
+
+const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
+const OUTPUT_PATH = resolve(SCRIPT_DIRECTORY, "../viewer/family-catalog.js");
+const HTML_ENTITIES = Object.freeze({
+  amp: "&",
+  apos: "'",
+  gt: ">",
+  lt: "<",
+  nbsp: " ",
+  quot: '"',
+});
+
+function decodeHtmlEntity(entity, body) {
+  if (body.startsWith("#x") || body.startsWith("#X")) {
+    const codePoint = Number.parseInt(body.slice(2), 16);
+    if (Number.isInteger(codePoint) && codePoint <= 0x10ffff) return String.fromCodePoint(codePoint);
+    return entity;
+  }
+  if (body.startsWith("#")) {
+    const codePoint = Number.parseInt(body.slice(1), 10);
+    if (Number.isInteger(codePoint) && codePoint <= 0x10ffff) return String.fromCodePoint(codePoint);
+    return entity;
+  }
+  return HTML_ENTITIES[body.toLowerCase()] ?? entity;
+}
+
+function plainText(text) {
+  return text
+    .replace(/&(#x[0-9a-f]+|#[0-9]+|amp|apos|gt|lt|nbsp|quot);/giu, decodeHtmlEntity)
+    .replace(/<[^>]*>/gu, "");
+}
+
+function toPlainData(value) {
+  if (typeof value === "string") return plainText(value);
+  if (Array.isArray(value)) return value.map(toPlainData);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, toPlainData(child)]));
+  }
+  return value;
+}
+
+function requireIndexed(index, id, label) {
+  const value = index.get(id);
+  if (value) return value;
+  throw new Error(`Missing ${label} for family ${id}`);
+}
+
+function browserMember(catalogMember, authoredMember) {
+  return {
+    id: catalogMember.id,
+    name: catalogMember.name,
+    authoredBand: authoredMember.status,
+    status: catalogMember.status,
+    when: catalogMember.when,
+    rationale: catalogMember.rationale,
+    band: catalogMember.band,
+    lineage: catalogMember.lineage,
+    rejectionReason: catalogMember.rejectionReason ?? null,
+    unavailableReason: catalogMember.unavailableReason ?? null,
+    requirements: catalogMember.requirements ?? [],
+    representationCapabilities: catalogMember.representationCapabilities ?? null,
+    renderer: catalogMember.rendererId
+      ? {
+          id: catalogMember.rendererId,
+          version: catalogMember.rendererVersion,
+          variantId: catalogMember.rendererVariantId,
+        }
+      : null,
+    mediaPolicy: catalogMember.mediaPolicy ?? null,
+  };
+}
+
+function browserFamily(catalogFamily, authoredFamily, manifest) {
+  const authoredMembers = new Map(authoredFamily.members.map((member) => [member.id, member]));
+  return {
+    id: catalogFamily.id,
+    version: manifest.version,
+    title: catalogFamily.title,
+    group: catalogFamily.group,
+    question: catalogFamily.question,
+    oneLine: catalogFamily.oneLine,
+    summary: catalogFamily.summary,
+    executableMemberId: catalogFamily.executableMemberId,
+    maturity: manifest.maturity,
+    renderer: manifest.renderer,
+    questions: manifest.questions,
+    roles: {
+      required: catalogFamily.requiredRoles,
+      optional: catalogFamily.optionalRoles,
+      minimumRecords: manifest.data.minimumRecords,
+      maximumRecords: manifest.data.maximumRecords,
+    },
+    grammar: manifest.grammar,
+    transformations: {
+      deterministic: manifest.transformation,
+      enrichment: manifest.enrichment,
+    },
+    validation: manifest.validation,
+    evidence: manifest.evidence,
+    variants: manifest.variants,
+    multiples: manifest.multiples,
+    controls: manifest.controls,
+    selections: manifest.selections,
+    followUps: manifest.followUps,
+    mediaAdapters: manifest.mediaAdapters,
+    abstention: catalogFamily.abstention,
+    members: catalogFamily.members.map((member) => browserMember(
+      member,
+      requireIndexed(authoredMembers, member.id, "authored member"),
+    )),
+  };
+}
+
+export function buildFamilyBrowserCatalog() {
+  const authoredFamilies = new Map(AUTHORED_FAMILY_ATLAS_CONTENT.map((family) => [family.id, family]));
+  const manifests = new Map(MAP_FAMILIES.map((family) => [family.id, family]));
+  return toPlainData({
+    schemaVersion: 1,
+    catalogVersion: CATALOG_VERSION,
+    counts: CATALOG_COUNTS,
+    groups: MAP_FAMILY_GROUPS,
+    media: CANONICAL_INPUT_MEDIA,
+    families: CATALOG_FAMILIES.map((family) => browserFamily(
+      family,
+      requireIndexed(authoredFamilies, family.id, "authored content"),
+      requireIndexed(manifests, family.id, "production manifest"),
+    )),
+  });
+}
+
+export function renderFamilyBrowserCatalogModule(catalog = buildFamilyBrowserCatalog()) {
+  const json = JSON.stringify(catalog, null, 2);
+  return `// Generated by scripts/build-family-browser-catalog.mjs. Do not edit.
+
+function deepFreeze(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
+}
+
+export const FAMILY_BROWSER_CATALOG = deepFreeze(${json});
+
+export default FAMILY_BROWSER_CATALOG;
+`;
+}
+
+async function checkGeneratedModule(expected) {
+  let actual;
+  try {
+    actual = await readFile(OUTPUT_PATH, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    actual = null;
+  }
+  if (actual === expected) return;
+  process.stderr.write("viewer/family-catalog.js is out of date. Run node scripts/build-family-browser-catalog.mjs.\n");
+  process.exitCode = 1;
+}
+
+async function main(arguments_) {
+  if (arguments_.length > 1 || (arguments_.length === 1 && arguments_[0] !== "--check")) {
+    throw new Error("Usage: node scripts/build-family-browser-catalog.mjs [--check]");
+  }
+  const source = renderFamilyBrowserCatalogModule();
+  if (arguments_[0] === "--check") {
+    await checkGeneratedModule(source);
+    return;
+  }
+  await writeFile(OUTPUT_PATH, source, "utf8");
+  process.stdout.write("Wrote attend-cli/viewer/family-catalog.js.\n");
+}
+
+const isDirectRun = process.argv[1]
+  && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+
+if (isDirectRun) {
+  try {
+    await main(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  }
+}

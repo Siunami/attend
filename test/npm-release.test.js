@@ -12,7 +12,7 @@ test("the public package leads with a human-readable coding-agent install", asyn
     readFile(`${PACKAGE_ROOT}/README.md`, "utf8"),
   ]);
 
-  assert.equal(manifest.version, "0.5.3");
+  assert.equal(manifest.version, "0.5.4");
   assert.equal(manifest.name, "@siunami/attend");
   assert.equal(manifest.license, "MIT");
   assert.equal(manifest.author, "Siunami");
@@ -40,7 +40,7 @@ test("the public package leads with a human-readable coding-agent install", asyn
   )?.groups?.prompt;
   assert.ok(prompt, "coding-agent prompt is missing");
   assert.ok(prompt.split(/\s+/u).length <= 180, "coding-agent prompt is too long");
-  assert.match(prompt, /npm install --global @siunami\/attend@0\.5\.3/u);
+  assert.match(prompt, /npm install --global @siunami\/attend@0\.5\.4/u);
   assert.match(prompt, /attend bootstrap --yes/u);
   assert.match(prompt, /show me the output/iu);
   assert.match(prompt, /show me the actual error/iu);
@@ -61,7 +61,7 @@ test("the public package states its license and release history", async () => {
 
   assert.match(license, /^MIT License$/mu);
   assert.match(license, /Copyright \(c\) 2026 Siunami/u);
-  assert.match(changelog, /## \[0\.5\.3\] - 2026-08-27/u);
+  assert.match(changelog, /## \[0\.5\.4\] - 2026-08-27/u);
   assert.match(readme, /## License[\s\S]*\[MIT License\]\(LICENSE\)/u);
 });
 
@@ -115,9 +115,12 @@ test("the repository offers private security reporting", async () => {
 });
 
 test("the GitHub README links to a private-data-free visual gallery", async () => {
-  const [readme, gallery] = await Promise.all([
+  const [readme, gallery, datasets, familyLab, releaseStaging] = await Promise.all([
     readFile(`${PACKAGE_ROOT}/README.md`, "utf8"),
     readFile(`${PACKAGE_ROOT}/docs/visual-gallery.md`, "utf8"),
+    readFile(`${PACKAGE_ROOT}/viewer/family-datasets.js`, "utf8"),
+    readFile(`${PACKAGE_ROOT}/viewer/family-lab.js`, "utf8"),
+    readFile(`${PACKAGE_ROOT}/distribution/stage-release.mjs`, "utf8"),
   ]);
   const featured = ["distribution", "flow", "field", "collection-atlas"];
   const galleryImages = {
@@ -150,7 +153,7 @@ test("the GitHub README links to a private-data-free visual gallery", async () =
     );
   }
   assert.doesNotMatch(
-    readme + gallery,
-    /\.context\/|Apple Notes|Meeting Lab|Bay Area|personal archive|\/Users\//iu,
+    readme + gallery + datasets + familyLab + releaseStaging,
+    /\.context\/|Apple Notes|Meeting Lab|Bay Area|personal archive|\/Users\/|matthew|workers\.dev/iu,
   );
 });

@@ -3,7 +3,7 @@
 // grammars; it does not define or serialize a second package shape.
 
 export const ATLAS_SCHEMA_VERSION = 2;
-export const ATLAS_CATALOG_VERSION = "3bcb588eaf291763";
+export const ATLAS_CATALOG_VERSION = "3904c28aabcbc405";
 
 export const ATLAS_FAMILY_IDS = Object.freeze([
   "rank",

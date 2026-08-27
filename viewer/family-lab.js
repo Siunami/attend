@@ -1,4 +1,5 @@
 import SAMPLE_SOURCES from "./family-datasets.js";
+import { mountFamilyBrowser } from "./family-browser.js";
 import { RENDERER_IDS } from "./family-renderers.js";
 import { toCompilerRequest } from "./family-compiler-adapter.js";
 import { atlasPackageToRenderModel } from "./package-model.js";
@@ -17,6 +18,8 @@ const manifests = Array.isArray(MAP_FAMILIES) ? MAP_FAMILIES : Object.values(MAP
 const manifestById = new Map(manifests.map((manifest) => [manifest.id, manifest]));
 
 const elements = {
+  browser: document.getElementById("browse-view"),
+  browserRoot: document.getElementById("family-browser"),
   contract: document.getElementById("family-contract"),
   description: document.getElementById("family-description"),
   evidence: document.getElementById("pipeline-evidence"),
@@ -50,8 +53,9 @@ const state = {
   familyId: FAMILY_ORDER[0],
   galleryRenderRevision: 0,
   mediaRenderRevision: 0,
-  mode: "gallery",
+  mode: "browse",
   selectedId: null,
+  selectedNodeId: null,
 };
 
 function words(value) {
@@ -279,25 +283,54 @@ function locatorLabel(locator) {
 }
 
 function updateMarkSelect(dataset) {
-  const placeholder = makeOption("", "Choose a mark…");
-  const marks = document.createElement("optgroup");
-  marks.label = "Marks";
-  marks.append(...dataset.records.map((record) => makeOption(recordId(dataset, record), recordLabel(dataset, record))));
-  const options = [placeholder, marks];
+  const placeholder = makeOption("", "Choose a target…");
+  const selectableMarkIds = new Set(list(dataset.selectableMarkIds).map(String));
+  const markRecords = dataset.records.filter((record) => selectableMarkIds.has(recordId(dataset, record)));
+  const nodeRecords = dataset.records.filter((record) => (
+    !selectableMarkIds.has(recordId(dataset, record))
+    && list(dataset.links).some((link) => (
+      String(link.source) === recordId(dataset, record) || String(link.target) === recordId(dataset, record)
+    ))
+  ));
+  const options = [placeholder];
+  if (markRecords.length) {
+    const marks = document.createElement("optgroup");
+    marks.label = "Marks";
+    marks.append(...markRecords.map((record) => makeOption(`mark:${recordId(dataset, record)}`, recordLabel(dataset, record))));
+    options.push(marks);
+  }
+  if (nodeRecords.length) {
+    const nodes = document.createElement("optgroup");
+    nodes.label = "Components";
+    nodes.append(...nodeRecords.map((record) => makeOption(`node:${recordId(dataset, record)}`, recordLabel(dataset, record))));
+    options.push(nodes);
+  }
   if (list(dataset.links).length) {
     const relationships = document.createElement("optgroup");
     relationships.label = "Relationships";
-    relationships.append(...dataset.links.map((link) => makeOption(String(link.id), inspectableLabel(dataset, { kind: "relationship", item: link }))));
+    relationships.append(...dataset.links.map((link) => makeOption(`mark:${String(link.id)}`, inspectableLabel(dataset, { kind: "relationship", item: link }))));
     options.push(relationships);
   }
   elements.markSelect.replaceChildren(...options);
-  elements.markSelect.value = state.selectedId ?? "";
+  elements.markSelect.value = state.selectedNodeId
+    ? `node:${state.selectedNodeId}`
+    : state.selectedId ? `mark:${state.selectedId}` : "";
 }
 
 function updateSelection(dataset) {
+  if (state.selectedNodeId) {
+    const node = dataset.records.find((record) => recordId(dataset, record) === state.selectedNodeId);
+    const relationshipCount = list(dataset.links).filter((link) => (
+      String(link.source) === state.selectedNodeId || String(link.target) === state.selectedNodeId
+    )).length;
+    elements.selection.textContent = node
+      ? `${recordLabel(dataset, node)} · ${relationshipCount} connected relationship${relationshipCount === 1 ? "" : "s"} · See the Context ledger for attributes and typed connections.`
+      : "The selected component is no longer present in this visualization.";
+    return;
+  }
   const entry = inspectableItems(dataset).find((candidate) => recordId(dataset, candidate.item) === state.selectedId);
   if (!entry) {
-    elements.selection.textContent = "Choose a mark to inspect its evidence.";
+    elements.selection.textContent = "Choose a visual target to inspect its context.";
     return;
   }
   const record = entry.item;
@@ -346,6 +379,8 @@ async function renderGallery() {
       root: stagingRoot,
       packageValue,
       selectedMarkIds: state.selectedId ? [state.selectedId] : [],
+      selectedNodeId: state.selectedNodeId,
+      onSelect: (target) => selectVisualTarget(target),
     });
     if (revision === state.galleryRenderRevision) elements.visual.replaceChildren(...stagingRoot.childNodes);
   } catch (error) {
@@ -702,6 +737,7 @@ async function setFamily(familyId) {
   if (!SAMPLE_SOURCES[familyId]) return;
   state.familyId = familyId;
   state.selectedId = null;
+  state.selectedNodeId = null;
   updateNavigationState();
   await renderGallery();
   if (state.mode === "pipeline") await renderPipelineReceipt();
@@ -709,9 +745,11 @@ async function setFamily(familyId) {
 
 function setMode(mode) {
   state.mode = mode;
+  elements.browser.hidden = mode !== "browse";
   elements.gallery.hidden = mode !== "gallery";
   elements.pipeline.hidden = mode !== "pipeline";
   elements.media.hidden = mode !== "media";
+  document.body.classList.toggle("browse-mode", mode === "browse");
   document.querySelectorAll(".mode-button").forEach((button) => {
     const active = button.dataset.mode === mode;
     button.classList.toggle("is-active", active);
@@ -723,6 +761,18 @@ function setMode(mode) {
 
 async function selectMark(markId) {
   state.selectedId = markId || null;
+  state.selectedNodeId = null;
+  await renderGallery();
+}
+
+async function selectVisualTarget(target) {
+  if (target && typeof target === "object" && target.kind === "node") {
+    state.selectedId = null;
+    state.selectedNodeId = String(target.nodeId);
+  } else {
+    state.selectedId = target ? String(target) : null;
+    state.selectedNodeId = null;
+  }
   await renderGallery();
 }
 
@@ -732,10 +782,10 @@ elements.navigation.addEventListener("click", (event) => {
 });
 
 elements.familySelect.addEventListener("change", () => setFamily(elements.familySelect.value));
-elements.markSelect.addEventListener("change", () => selectMark(elements.markSelect.value));
-elements.visual.addEventListener("click", (event) => {
-  const mark = event.target.closest("[data-mark-id]");
-  if (mark) selectMark(mark.dataset.markId);
+elements.markSelect.addEventListener("change", () => {
+  const selection = elements.markSelect.value;
+  if (selection.startsWith("node:")) selectVisualTarget({ kind: "node", nodeId: selection.slice(5) });
+  else selectMark(selection.startsWith("mark:") ? selection.slice(5) : null);
 });
 document.querySelectorAll(".mode-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
 elements.mediaSelect.addEventListener("change", renderMediaPolicy);
@@ -772,7 +822,16 @@ function validateGalleryParity() {
 }
 
 validateGalleryParity();
+mountFamilyBrowser({
+  root: elements.browserRoot,
+  onOpenRuntime: async ({ familyId }) => {
+    await setFamily(familyId);
+    setMode("gallery");
+    elements.title.focus();
+  },
+});
 renderPipelineStages();
 initializeMediaOptions();
 renderNavigation();
 renderGallery();
+setMode("browse");

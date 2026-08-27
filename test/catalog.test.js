@@ -159,6 +159,29 @@ test("catalog members expose structured authored data requirements and honest re
   });
 });
 
+test("executable members publish finite representation capabilities", () => {
+  const mechanism = executableCatalogMemberForFamily("mechanism");
+  assert.deepEqual(mechanism.representationCapabilities, {
+    version: 1,
+    constraints: {
+      dimensionality: ["2d"],
+      form: ["flowchart", "system-schematic"],
+      interaction: ["selection"],
+      motion: ["static"],
+      projection: ["none"],
+    },
+  });
+
+  const pointMap = executableCatalogMemberForFamily("point-map");
+  assert.deepEqual(pointMap.representationCapabilities.constraints.interaction, [
+    "pan-zoom",
+    "selection",
+  ]);
+  assert.deepEqual(pointMap.representationCapabilities.constraints.projection, ["geographic"]);
+  assert.equal(mechanism.representationCapabilities.constraints.dimensionality.includes("3d"), false);
+  assert.equal(mechanism.representationCapabilities.constraints.interaction.includes("orbit"), false);
+});
+
 test("bundled catalog snapshot preserves the complete authored inventory", () => {
   const snapshotStatuses = AUTHORED_FAMILY_ATLAS_CONTENT.flatMap((family) =>
     family.members.map((member) => ({

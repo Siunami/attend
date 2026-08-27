@@ -42,6 +42,15 @@ test("setup installs, audits, and repairs the complete managed skill bundle", as
     await readFile(paths.skill, "utf8"),
     managedSkillContents(await readFile(SKILL_SOURCE, "utf8")),
   );
+  const installedSkill = await readFile(paths.skill, "utf8");
+  assert.match(installedSkill, /named visual (?:form|properties).*hard constraint/iu);
+  assert.match(installedSkill, /unsupported proactive opportunit(?:y|ies).*silent/iu);
+  assert.match(installedSkill, /explicit unsupported request.*defer/iu);
+  assert.match(installedSkill, /primary lane is proactive exploratory data analysis/iu);
+  assert.match(installedSkill, /ordinary just-in-time visualization workflow/iu);
+  assert.match(installedSkill, /search the repository for an existing example, template, or prior implementation/iu);
+  assert.match(installedSkill, /before setup, source inspection, exploration, compilation/iu);
+  assert.match(installedSkill, /"representationIntent"/u);
   assert.equal(
     await readFile(paths.skillMetadata.path, "utf8"),
     managedSkillMetadataContents(await readFile(METADATA_SOURCE, "utf8")),

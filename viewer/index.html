@@ -44,7 +44,7 @@
           </div>
           <ol id="phrase-list" class="phrase-list" aria-label="Recurring phrases"></ol>
           <section id="atlas-view" class="atlas-view" aria-labelledby="question-heading" hidden>
-            <div id="atlas-visual" class="atlas-visual" aria-live="polite" aria-busy="false"></div>
+            <div id="atlas-visual" class="atlas-visual" aria-busy="false"></div>
             <p id="atlas-abstention" class="atlas-abstention" role="status" hidden></p>
           </section>
         </section>
@@ -52,36 +52,43 @@
         <aside
           id="chat-pane"
           class="chat-pane"
-          aria-labelledby="chat-heading"
+          aria-label="Chat"
           aria-hidden="true"
           inert
         >
           <header class="chat-header">
-            <div class="chat-heading-group">
-              <h2 id="chat-heading">Ask about this view</h2>
-              <div id="chat-route" class="chat-route" aria-live="polite">
-                <p class="chat-route-label">
-                  <span id="chat-route-label">Private AI · gpt-oss-20b</span>
-                  <span id="chat-route-state" class="chat-route-state">On this Mac</span>
-                </p>
-                <p id="chat-route-disclosure" class="chat-route-disclosure">
-                  Questions and selected evidence stay on this Mac.
-                </p>
-              </div>
-            </div>
             <div class="chat-header-actions">
-              <span id="state-revision" class="revision">v—</span>
-              <button id="chat-close" class="chat-close" type="button" aria-label="Close chat">Close</button>
+              <button
+                id="chat-history"
+                class="chat-icon-button"
+                type="button"
+                aria-label="Chat history"
+                aria-controls="chat-history-panel"
+                aria-expanded="false"
+              >
+                <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+                  <path d="M12 4a8 8 0 1 0 8 8M12 7.5V12l3 2M4 4v5h5"></path>
+                </svg>
+              </button>
+              <button id="chat-new" class="chat-icon-button" type="button" aria-label="New chat">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14"></path>
+                </svg>
+              </button>
             </div>
+            <button id="chat-close" class="chat-close" type="button" aria-label="Close chat">×</button>
           </header>
 
           <div id="chat-scroll" class="chat-scroll">
+            <section id="chat-history-panel" class="chat-history-panel" hidden>
+              <ol id="chat-thread-list" class="chat-thread-list" aria-label="Chat history"></ol>
+            </section>
             <div id="conversation" class="conversation" aria-live="polite"></div>
           </div>
 
           <form id="chat-form" class="composer">
-            <section id="selection-panel" class="selection-panel" aria-live="polite" hidden></section>
             <div class="composer-field">
+              <section id="selection-panel" class="selection-panel" aria-live="polite" hidden></section>
               <div class="composer-input">
                 <label for="chat-input" class="sr-only">Ask a question about this view</label>
                 <textarea

@@ -4,6 +4,7 @@ import {
   readFile,
   rm,
   stat,
+  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -126,7 +127,7 @@ test("attachment expiry is enforced independently from listener presence", async
   );
 });
 
-test("route resolution uses the newest live attachment only within its session", async (t) => {
+test("explicit project attachments follow the viewer across sessions", async (t) => {
   const root = await fixture(t);
   await setChatRoute({ root, route: { kind: "host" } });
   const base = Date.parse("2026-08-24T18:00:00.000Z");
@@ -177,6 +178,23 @@ test("route resolution uses the newest live attachment only within its session",
     firstA.route,
     "an opened viewer remains bound to its original host attachment",
   );
+  assert.deepEqual(
+    await resolveChatRoute({
+      root,
+      sessionId: "session_b",
+      hostRoute: firstA.route,
+      requireHostRoute: true,
+      now: new Date(base + 3_000),
+    }),
+    firstA.route,
+  );
+  const firstAPath = join(
+    chatRoutePaths(root).attachments,
+    `${firstA.attachment.id}.json`,
+  );
+  const legacyRecord = JSON.parse(await readFile(firstAPath, "utf8"));
+  delete legacyRecord.scope;
+  await writeFile(firstAPath, `${JSON.stringify(legacyRecord)}\n`, { mode: 0o600 });
   assert.equal(
     await resolveChatRoute({
       root,
@@ -186,6 +204,7 @@ test("route resolution uses the newest live attachment only within its session",
       now: new Date(base + 3_000),
     }),
     null,
+    "attachments written before project scope remain session-bound",
   );
   assert.equal(
     await resolveChatRoute({

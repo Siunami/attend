@@ -4,9 +4,14 @@ import {
   CATALOG_VERSION,
   catalogReceiptForMember,
   requireCatalogFamily,
+  requireCatalogMember,
   requireExecutableCatalogMember,
 } from "../catalog/index.js";
 import { requireMapFamily } from "../map-families/registry.js";
+import {
+  assertRepresentationIntentSupported,
+  normalizeRepresentationIntent,
+} from "../representation-intent.js";
 import { compileMapWithEvidence } from "../pipeline/compile.js";
 import {
   loadSources,
@@ -15,9 +20,19 @@ import {
 } from "../sources.js";
 import { posix, win32 } from "node:path";
 
-const REQUEST_SCHEMA_VERSION = 1;
+const REQUEST_SCHEMA_VERSIONS = new Set([1, 2]);
 const SAFE_FIELD = /^[A-Za-z][A-Za-z0-9_]*$/u;
-const REQUEST_KEYS = new Set(["version", "question", "family", "member", "sources", "records", "evidence", "options"]);
+const REQUEST_KEYS = new Set([
+  "version",
+  "question",
+  "family",
+  "member",
+  "representationIntent",
+  "sources",
+  "records",
+  "evidence",
+  "options",
+]);
 const SOURCE_REF_KEYS = new Set(["path", "textProjection"]);
 const EVIDENCE_KEYS = new Set(["source", "quote", "occurrence", "recordKey", "field"]);
 const OPTIONS_KEYS = new Set(["title"]);
@@ -67,7 +82,9 @@ function normalizePositiveInteger(value, path) {
 function normalizeRequest(request) {
   if (!isPlainObject(request)) fail("INVALID_REQUEST", "must be an object");
   rejectUnknownKeys(request, REQUEST_KEYS, "request");
-  if (request.version !== REQUEST_SCHEMA_VERSION) fail("INVALID_REQUEST", `version must be ${REQUEST_SCHEMA_VERSION}`, "request.version");
+  if (!REQUEST_SCHEMA_VERSIONS.has(request.version)) {
+    fail("INVALID_REQUEST", "version must be 1 or 2", "request.version");
+  }
   const question = normalizeString(request.question, "request.question", { maximum: 4_000 });
   const family = normalizeString(request.family, "request.family", { maximum: 128 });
   const member = normalizeString(request.member, "request.member", { maximum: 128 });
@@ -76,10 +93,14 @@ function normalizeRequest(request) {
   if (!Array.isArray(request.evidence) || request.evidence.length === 0) fail("INVALID_REQUEST", "evidence must be a non-empty array", "request.evidence");
   if (request.options !== undefined && !isPlainObject(request.options)) fail("INVALID_OPTIONS", "must be an object", "request.options");
   return {
-    version: REQUEST_SCHEMA_VERSION,
+    version: request.version,
     question,
     family,
     member,
+    representationIntent: normalizeRepresentationIntent(request.representationIntent, {
+      path: "request.representationIntent",
+      required: request.version === 2,
+    }),
     sources: request.sources,
     records: request.records,
     evidence: request.evidence,
@@ -768,7 +789,20 @@ function evidenceRequiredFields(record) {
 export async function compileCatalogMapRequest({ root, request }) {
   const normalized = normalizeRequest(request);
   const family = requireCatalogFamily(normalized.family);
+  const requestedMember = requireCatalogMember(normalized.family, normalized.member);
+  if (normalized.representationIntent.mode === "exact" && requestedMember.status !== "executable") {
+    fail(
+      "UNSUPPORTED_REQUESTED_REPRESENTATION",
+      `${normalized.family}/${normalized.member} is not executable in this release`,
+      "request.member",
+    );
+  }
   const member = requireExecutableCatalogMember(normalized.family, normalized.member);
+  assertRepresentationIntentSupported(normalized.representationIntent, {
+    family: normalized.family,
+    member,
+    path: "request.representationIntent",
+  });
   const options = normalizeOptions(normalized.options);
   const recordSchema = member.recordSchema;
   const sourceRefs = uniqueSourceRefs(normalized.sources.map((source, index) =>
@@ -899,6 +933,7 @@ export async function compileCatalogMapRequest({ root, request }) {
 
   return {
     catalogVersion: CATALOG_VERSION,
+    representationIntent: normalized.representationIntent,
     dataPackage,
     evidenceStore,
     family,

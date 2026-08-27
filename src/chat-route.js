@@ -235,7 +235,7 @@ export async function resolveChatRoute({
     }
     if (
       !stored ||
-      stored.sessionId !== safeSessionId ||
+      !hostAttachmentCoversSession(stored, safeSessionId) ||
       stored.generation !== requested.generation ||
       Date.parse(stored.expiresAt) <= checkedAt
     ) {
@@ -322,6 +322,7 @@ function validateStoredAttachment(value, expectedId) {
     value.id !== expectedId ||
     !HOST_ATTACHMENT_ID.test(value.id ?? "") ||
     !SESSION_ID.test(value.sessionId ?? "") ||
+    ![undefined, "session", "project"].includes(value.scope) ||
     !Number.isSafeInteger(value.generation) ||
     value.generation < 1 ||
     !TICKET_DIGEST.test(value.ticketDigest ?? "") ||
@@ -330,17 +331,29 @@ function validateStoredAttachment(value, expectedId) {
   ) {
     throw routeError("HOST_ATTACHMENT_INVALID", "The host attachment record is invalid");
   }
-  return value;
+  return Object.freeze({
+    ...value,
+    scope: value.scope ?? "session",
+  });
 }
 
 function safeAttachment(value) {
   return Object.freeze({
     id: value.id,
     sessionId: value.sessionId,
+    scope: value.scope,
     generation: value.generation,
     createdAt: value.createdAt,
     expiresAt: value.expiresAt,
   });
+}
+
+export function hostAttachmentCoversSession(attachment, sessionId) {
+  return Boolean(
+    attachment &&
+    SESSION_ID.test(sessionId ?? "") &&
+    (attachment.scope === "project" || attachment.sessionId === sessionId),
+  );
 }
 
 function attachmentRoute(value) {
@@ -372,6 +385,7 @@ export async function registerHostAttachment({
     kind: "attend-host-attachment",
     id: attachmentId,
     sessionId: safeSessionId,
+    scope: "project",
     generation: 1,
     ticketDigest: ticketDigest(ticket),
     createdAt: isoTime(createdAtMs),
@@ -593,6 +607,7 @@ export async function beginHostAnswerLease({
   root,
   ticket,
   listener = null,
+  sessionId,
   questionId,
   ttlMs = DEFAULT_ANSWER_LEASE_TTL_MS,
   now,
@@ -613,6 +628,15 @@ export async function beginHostAnswerLease({
     ticket,
     ...(now === undefined ? {} : { now }),
   });
+  const targetSessionId = sessionId === undefined
+    ? verified.attachment.sessionId
+    : validateSessionId(sessionId);
+  if (!hostAttachmentCoversSession(verified.attachment, targetSessionId)) {
+    throw routeError(
+      "HOST_ATTACHMENT_MISMATCH",
+      "The host ticket does not cover this visualization session",
+    );
+  }
   if (listener !== null && !sameChatRoute(listener?.route, verified.route)) {
     throw routeError(
       "HOST_ATTACHMENT_MISMATCH",
@@ -621,7 +645,7 @@ export async function beginHostAnswerLease({
   }
   return withSessionResponseLock({
     root: boundary,
-    sessionId: verified.attachment.sessionId,
+    sessionId: targetSessionId,
     includeSession: true,
     async operation({ session }) {
       const turns = Array.isArray(session?.conversation)

@@ -229,6 +229,69 @@ test("map requests require a bounded literal user question", async (t) => {
   );
 });
 
+test("version 2 map requests require an explicit representation intent", async (t) => {
+  const root = await project(t);
+  const fixture = requestForFamily("mechanism");
+  fixture.request.version = 2;
+  await writeFile(join(root, fixture.sourcePath), fixture.sourceText);
+
+  await assert.rejects(
+    compileCatalogMapRequest({ root, request: fixture.request }),
+    { code: "MISSING_REPRESENTATION_INTENT", path: "request.representationIntent" },
+  );
+});
+
+test("exact representation intent compiles only when every requested capability matches", async (t) => {
+  const root = await project(t);
+  const fixture = requestForFamily("mechanism");
+  fixture.request.version = 2;
+  fixture.request.representationIntent = {
+    version: 1,
+    mode: "exact",
+    constraints: [
+      { kind: "form", value: "flowchart" },
+      { kind: "dimensionality", value: "2d" },
+      { kind: "interaction", value: "selection" },
+      { kind: "motion", value: "static" },
+    ],
+  };
+  await writeFile(join(root, fixture.sourcePath), fixture.sourceText);
+
+  const compiled = await compileCatalogMapRequest({ root, request: fixture.request });
+  assert.deepEqual(compiled.representationIntent, fixture.request.representationIntent);
+  assert.ok(compiled.member.representationCapabilities.constraints.form.includes("flowchart"));
+
+  for (const constraint of [
+    { kind: "dimensionality", value: "3d" },
+    { kind: "interaction", value: "orbit" },
+    { kind: "form", value: "custom" },
+  ]) {
+    const unsupported = structuredClone(fixture.request);
+    unsupported.representationIntent.constraints = [constraint];
+    await assert.rejects(
+      compileCatalogMapRequest({ root, request: unsupported }),
+      {
+        code: "UNSUPPORTED_REQUESTED_REPRESENTATION",
+        path: "request.representationIntent.constraints[0]",
+      },
+      `${constraint.kind}:${constraint.value}`,
+    );
+  }
+});
+
+test("legacy version 1 map requests remain explicit open-intent compatibility requests", async (t) => {
+  const root = await project(t);
+  const fixture = requestForFamily("mechanism");
+  await writeFile(join(root, fixture.sourcePath), fixture.sourceText);
+
+  const compiled = await compileCatalogMapRequest({ root, request: fixture.request });
+  assert.deepEqual(compiled.representationIntent, {
+    version: 1,
+    mode: "open",
+    constraints: [],
+  });
+});
+
 test("ambiguous quotes fail closed unless occurrence is supplied", async (t) => {
   const root = await project(t);
   await writeFile(join(root, "evidence.md"), "Alpha scored 8 points.\nAlpha scored 8 points.\nGamma scored 3 points.\n");

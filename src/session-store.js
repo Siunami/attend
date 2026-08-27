@@ -29,6 +29,7 @@ import { LOCAL_MODEL } from "./local-model.js";
 const SESSION_SCHEMA_VERSION = 1;
 const SESSION_DIRECTORY = ".attend/local/sessions";
 const SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const CHAT_THREAD_ID = /^(?:thread|legacy)_[a-f0-9]{24}$/u;
 const EXPLORATION_ID = /^exploration_[a-f0-9]{24}$/u;
 const EXPERIMENT_ID = /^experiment_[a-f0-9]{24}$/u;
 const MAX_INLINE_SOURCE_REFS = 50;
@@ -167,13 +168,19 @@ function contextSelectionOrigin(turns, question) {
   if (!question || question.role !== "user") return null;
   if (selectionCarriesVisualContext(question.selection)) return question;
 
+  const sameContextScope = (turn) => (
+    turn?.threadId === question.threadId &&
+    turn?.page?.sessionId === question.page?.sessionId
+  );
+
   const byId = new Map(
     turns
       .filter(
         (turn) =>
           turn?.role === "user" &&
           typeof turn.id === "string" &&
-          turn.id.length > 0,
+          turn.id.length > 0 &&
+          sameContextScope(turn),
       )
       .map((turn) => [turn.id, turn]),
   );
@@ -211,31 +218,46 @@ function questionReplySelection(session, question) {
 }
 
 function normalizeConversationContext(turns) {
-  let selectionTurnId = null;
+  let legacySelectionTurnId = null;
   const originsByQuestionId = new Map();
   for (const turn of turns) {
     compactSelectionSourceScope(turn?.selection);
     if (turn?.role !== "user" || typeof turn.id !== "string") continue;
 
+    let selectionTurnId = null;
     if (selectionCarriesVisualContext(turn.selection)) {
       selectionTurnId = turn.id;
     } else {
-      const requestedOrigin = turn.context?.selectionTurnId;
-      if (
-        typeof requestedOrigin === "string" &&
-        originsByQuestionId.has(requestedOrigin)
-      ) {
-        selectionTurnId = originsByQuestionId.get(requestedOrigin);
+      const explicitlyBound = Object.hasOwn(turn.context ?? {}, "selectionTurnId");
+      const requestedOrigin = turn.context?.selectionTurnId ?? null;
+      if (explicitlyBound) {
+        const requested = originsByQuestionId.get(requestedOrigin);
+        if (
+          typeof requestedOrigin === "string" &&
+          requested &&
+          requested.threadId === turn.threadId &&
+          requested.pageSessionId === turn.page?.sessionId
+        ) {
+          selectionTurnId = requested.selectionTurnId;
+        }
+      } else if (turn.threadId === undefined) {
+        selectionTurnId = legacySelectionTurnId;
       }
     }
 
     if (selectionTurnId) {
       turn.context = { selectionTurnId };
-      originsByQuestionId.set(turn.id, selectionTurnId);
+    } else if (turn.threadId !== undefined) {
+      turn.context = { selectionTurnId: null };
     } else {
       delete turn.context;
-      originsByQuestionId.set(turn.id, null);
     }
+    if (turn.threadId === undefined) legacySelectionTurnId = selectionTurnId;
+    originsByQuestionId.set(turn.id, {
+      selectionTurnId,
+      threadId: turn.threadId,
+      pageSessionId: turn.page?.sessionId,
+    });
   }
 }
 
@@ -699,6 +721,50 @@ export async function updateSession({
   });
 }
 
+function normalizeTurnPage(page, threadId) {
+  if (threadId === undefined && page === undefined) return undefined;
+  if (
+    typeof threadId !== "string" ||
+    !CHAT_THREAD_ID.test(threadId) ||
+    !page ||
+    typeof page !== "object" ||
+    Array.isArray(page) ||
+    typeof page.sessionId !== "string" ||
+    !SESSION_ID.test(page.sessionId) ||
+    typeof page.label !== "string" ||
+    !page.label.trim() ||
+    page.label.length > 500
+  ) {
+    throw new TypeError("A threaded turn requires a valid threadId and page");
+  }
+  return {
+    threadId,
+    page: { sessionId: page.sessionId, label: page.label.trim() },
+  };
+}
+
+function normalizeTurnContext(context, threadId) {
+  if (context === undefined) return undefined;
+  if (!context || typeof context !== "object" || Array.isArray(context)) {
+    throw new TypeError("turn.context must be an object when supplied");
+  }
+  const keys = Object.keys(context);
+  if (keys.length !== 1 || keys[0] !== "selectionTurnId") {
+    throw new TypeError("turn.context only supports selectionTurnId");
+  }
+  const selectionTurnId = context.selectionTurnId;
+  if (
+    selectionTurnId !== null &&
+    (typeof selectionTurnId !== "string" || selectionTurnId.length === 0)
+  ) {
+    throw new TypeError("turn.context.selectionTurnId must be a turn id or null");
+  }
+  if (threadId === undefined && selectionTurnId === null) {
+    throw new TypeError("Only a threaded turn can explicitly reset visual context");
+  }
+  return { selectionTurnId };
+}
+
 function normalizeTurn(turn) {
   if (!turn || typeof turn !== "object" || Array.isArray(turn)) {
     throw new TypeError("turn must be an object");
@@ -727,12 +793,24 @@ function normalizeTurn(turn) {
   const response = turn.response === undefined
     ? undefined
     : normalizeResponseState(turn.response, turn.role);
+  const thread = normalizeTurnPage(turn.page, turn.threadId);
+  const threadSequence = turn.threadSequence;
+  if (
+    threadSequence !== undefined &&
+    (!Number.isSafeInteger(threadSequence) || threadSequence < 0 || thread === undefined)
+  ) {
+    throw new TypeError("turn.threadSequence must be a non-negative integer on a threaded turn");
+  }
+  const suppliedContext = normalizeTurnContext(turn.context, thread?.threadId);
   return {
     id,
     role: turn.role,
     content,
     createdAt: turn.createdAt ?? new Date().toISOString(),
     suppliedSelection: turn.selection ?? {},
+    ...(thread === undefined ? {} : thread),
+    ...(threadSequence === undefined ? {} : { threadSequence }),
+    ...(suppliedContext === undefined ? {} : { suppliedContext }),
     ...(replyToTurnId === undefined ? {} : { replyToTurnId }),
     ...(response === undefined ? {} : { response }),
   };
@@ -782,11 +860,12 @@ function linkedAnswerFor(session, questionId) {
   );
 }
 
-function hasActiveResponseJob(session, exceptQuestionId) {
+function hasActiveResponseJob(session, exceptQuestionId, threadId) {
   return conversationTurns(session).some(
     (turn) =>
       turn?.role === "user" &&
       turn.id !== exceptQuestionId &&
+      turn.threadId === threadId &&
       (turn.response?.status === "queued" ||
         turn.response?.status === "running") &&
       !linkedAnswerFor(session, turn.id),
@@ -897,7 +976,7 @@ function pendingQuestionOrder(left, right) {
   return compareText(left.question.id, right.question.id);
 }
 
-async function storedSessionIds(root) {
+export async function storedSessionIds(root) {
   const directory = sessionsDirectory(root);
   await assertSafeWritePath(root, directory);
   let entries;
@@ -1030,10 +1109,13 @@ export async function appendConversationTurns({
         session.conversation.turns.map((item) => item.id),
       );
       for (const entry of entries) {
+        if (entry.page && entry.page.sessionId !== session.id) {
+          throw new TypeError("A threaded turn page must match its owning session");
+        }
         if (
           entry.role === "user" &&
           entry.response?.status === "queued" &&
-          hasActiveResponseJob(session)
+          hasActiveResponseJob(session, undefined, entry.threadId)
         ) {
           throw responseError(
             "ACTIVE_RESPONSE_EXISTS",
@@ -1063,6 +1145,13 @@ export async function appendConversationTurns({
           content: entry.content,
           createdAt: entry.createdAt,
           selection: cloneJson(turnSelection, "turn selection"),
+          ...(entry.threadId === undefined ? {} : { threadId: entry.threadId }),
+          ...(entry.threadSequence === undefined
+            ? {}
+            : { threadSequence: entry.threadSequence }),
+          ...(entry.page === undefined
+            ? {}
+            : { page: cloneJson(entry.page, "turn page") }),
           ...(question ? { replyToTurnId: question.id } : {}),
           ...(entry.response === undefined
             ? {}
@@ -1070,16 +1159,41 @@ export async function appendConversationTurns({
         };
         if (entry.role === "user") {
           const priorQuestions = session.conversation.turns.filter(
-            (turn) => turn?.role === "user",
+            (turn) =>
+              turn?.role === "user" &&
+              turn.threadId === entry.threadId &&
+              turn.page?.sessionId === entry.page?.sessionId,
           );
           const priorQuestion = priorQuestions.at(-1);
           const priorOrigin = priorQuestion
             ? contextSelectionOrigin(session.conversation.turns, priorQuestion)
             : null;
-          const selectionTurnId = selectionCarriesVisualContext(turnSelection)
-            ? entry.id
-            : priorOrigin?.id;
-          if (selectionTurnId) {
+          let selectionTurnId = null;
+          if (selectionCarriesVisualContext(turnSelection)) {
+            selectionTurnId = entry.id;
+          } else if (entry.suppliedContext !== undefined) {
+            const requested = entry.suppliedContext.selectionTurnId;
+            if (requested !== null) {
+              const requestedQuestion = session.conversation.turns.find(
+                (turn) => turn?.role === "user" && turn.id === requested,
+              );
+              const requestedOrigin = requestedQuestion
+                ? contextSelectionOrigin(session.conversation.turns, requestedQuestion)
+                : null;
+              if (
+                !requestedQuestion ||
+                requestedQuestion.threadId !== entry.threadId ||
+                requestedQuestion.page?.sessionId !== entry.page?.sessionId ||
+                !requestedOrigin
+              ) {
+                throw new TypeError("turn context does not belong to the same chat and page");
+              }
+              selectionTurnId = requestedOrigin.id;
+            }
+          } else if (entry.threadId === undefined) {
+            selectionTurnId = priorOrigin?.id ?? null;
+          }
+          if (selectionTurnId !== null || entry.threadId !== undefined) {
             storedTurn.context = { selectionTurnId };
           }
         }
@@ -1304,7 +1418,7 @@ export async function retryQuestionResponse({
           `Question belongs to a different explicit chat route: ${question.id}`,
         );
       }
-      if (hasActiveResponseJob(session, question.id)) {
+      if (hasActiveResponseJob(session, question.id, question.threadId)) {
         throw responseError(
           "ACTIVE_RESPONSE_EXISTS",
           "This session already has an active response job",

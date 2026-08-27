@@ -123,6 +123,48 @@ test("the shared builder derives evidence only from stored immutable context", a
   }]);
 });
 
+test("threaded questions use cross-page thread history without page events", async (t) => {
+  const root = await fixture(t);
+  const source = storedContext({ kind: "detached", adapter: "codex-cli" });
+  source.question.threadId = "thread_0123456789abcdef01234567";
+  source.conversation = [{
+    id: "turn_wrong_chat",
+    role: "assistant",
+    content: "Same page, wrong chat",
+  }, source.question];
+  const threadConversation = [{
+    id: "turn_other_page",
+    role: "assistant",
+    content: "Prior answer from another page",
+    originSessionId: "session_other_page",
+  }, source.question];
+  let requestedThread;
+
+  const context = await buildQuestionContext({
+    root,
+    sessionId: "session_exact",
+    questionId: "turn_current",
+    async loadContext() {
+      return source;
+    },
+    async loadThreadConversation({ threadId }) {
+      requestedThread = threadId;
+      return threadConversation;
+    },
+    async evidenceForSelection() {
+      return { kind: "attend-evidence-packet", sources: [] };
+    },
+  });
+
+  assert.equal(requestedThread, source.question.threadId);
+  assert.deepEqual(context.conversation, [{
+    id: "turn_other_page",
+    role: "assistant",
+    content: "Prior answer from another page",
+  }]);
+  assert.equal(JSON.stringify(context.conversation).includes("page-context"), false);
+});
+
 test("a host packet carries exact reply guards and rejects another route", async (t) => {
   const root = await fixture(t);
   const route = {
