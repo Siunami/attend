@@ -83,31 +83,59 @@ ATTEND_BIN="$ATTEND_BIN_DIR/attend"
 [ "$("$ATTEND_NODE" "$ATTEND_BIN" --version)" = "$ATTEND_VERSION" ] || fail "The installed Attend version does not match this installer."
 
 ATTEND_SETUP="$ATTEND_TMP/setup.json"
+ATTEND_MODEL="$ATTEND_TMP/model.json"
 ATTEND_DOCTOR="$ATTEND_TMP/doctor.json"
 ATTEND_FAMILIES="$ATTEND_TMP/families.json"
 "$ATTEND_NODE" "$ATTEND_BIN" setup --json >"$ATTEND_SETUP"
+printf '%s\n' "Attend will now download and load the roughly 12 GB gpt-oss-20b model." >&2
+"$ATTEND_NODE" "$ATTEND_BIN" model install --json >"$ATTEND_MODEL"
 "$ATTEND_NODE" "$ATTEND_BIN" doctor --json >"$ATTEND_DOCTOR"
 "$ATTEND_NODE" "$ATTEND_BIN" families --json >"$ATTEND_FAMILIES"
 
-"$ATTEND_NODE" - "$ATTEND_SETUP" "$ATTEND_DOCTOR" "$ATTEND_FAMILIES" "$ATTEND_CATALOG_RECEIPT" <<'NODE'
+"$ATTEND_NODE" - "$ATTEND_SETUP" "$ATTEND_MODEL" "$ATTEND_DOCTOR" "$ATTEND_FAMILIES" "$ATTEND_CATALOG_RECEIPT" <<'NODE'
 const fs = require("node:fs");
 
 const readJson = (path) => JSON.parse(fs.readFileSync(path, "utf8"));
 const setup = readJson(process.argv[2]);
-const doctor = readJson(process.argv[3]);
-const catalog = readJson(process.argv[4]);
-const expected = JSON.parse(process.argv[5]);
+const model = readJson(process.argv[3]);
+const doctor = readJson(process.argv[4]);
+const catalog = readJson(process.argv[5]);
+const expected = JSON.parse(process.argv[6]);
 
 if (setup.ok !== true || setup.conflicts?.length) {
   throw new Error("Attend setup did not complete cleanly.");
 }
+if (model.ok !== true || model.model?.model !== "gpt-oss-20b") {
+  throw new Error("Attend did not install gpt-oss-20b.");
+}
 if (doctor.ok !== true || doctor.checks?.some((check) => check.status === "fail")) {
   throw new Error("Attend doctor reported a failed check.");
 }
-for (const id of ["project", "agent-skill-agents", "agent-skill-claude"]) {
+for (const id of [
+  "project",
+  "agent-skill-agents",
+  "agent-skill-claude",
+  "chat-route",
+  "local-model",
+]) {
   if (!doctor.checks?.some((check) => check.id === id && check.status === "pass")) {
     throw new Error(`Attend doctor did not pass ${id}.`);
   }
+}
+if (doctor.readiness?.core !== true) {
+  throw new Error("Attend doctor did not report core visualization readiness.");
+}
+if (doctor.readiness?.localModel?.ready !== true) {
+  throw new Error("Attend doctor did not report local-model readiness.");
+}
+const selectedRoute = doctor.chat?.route;
+if (
+  selectedRoute?.kind !== "host" &&
+  !(selectedRoute?.kind === "local" && selectedRoute.model === "gpt-oss-20b") &&
+  !(selectedRoute?.kind === "detached" &&
+    (selectedRoute.adapter === "codex-cli" || selectedRoute.adapter === "claude-cli"))
+) {
+  throw new Error("Attend doctor did not report a valid selected chat route.");
 }
 
 const actualReceipt = {
@@ -123,13 +151,30 @@ if (JSON.stringify(actualReceipt) !== JSON.stringify(expected)) {
   throw new Error("The installed Family Atlas catalog does not match this release.");
 }
 
-const codex = doctor.checks.find((check) => check.id === "codex-chat");
+const detachedAdapters = doctor.checks
+  .filter((check) => check.id === "adapter:codex-cli" || check.id === "adapter:claude-cli")
+  .map((check) => {
+    const label = check.id === "adapter:claude-cli" ? "Claude CLI" : "Codex CLI";
+    return `${label}: ${check.status === "info" ? "not probed" : check.status}`;
+  });
 console.log(
   `Attend ${setup.packageVersion ?? "{{VERSION}}"} installed: ` +
   `${catalog.counts.families} families, ${catalog.counts.executable} executable, ` +
   `${catalog.counts.unavailable ?? 0} unavailable.`,
 );
-if (codex) console.log(`Codex chat: ${codex.status}. ${codex.detail}`);
+if (selectedRoute.kind === "local") {
+  console.log("Chat route: private gpt-oss-20b on this machine.");
+} else if (selectedRoute.kind === "host") {
+  console.log("Chat route: host attached. Sidebar questions return to the coding agent that opens the view.");
+} else {
+  const provider = selectedRoute.adapter === "claude-cli" ? "Claude CLI" : "Codex CLI";
+  console.log(`Chat route: explicit detached fallback ${provider} remains selected. Sidebar questions do not return to the opening coding agent unless the route is explicitly changed to host.`);
+}
+console.log(
+  "Optional detached fallbacks (not required): " +
+  (detachedAdapters.length ? detachedAdapters.join(", ") : "not probed") +
+  ".",
+);
 NODE
 
 case ":$ATTEND_ORIGINAL_PATH:" in

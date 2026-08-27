@@ -17,6 +17,7 @@ import {
   appendQueuedQuestion,
   appendConversationTurn,
   appendConversationTurns,
+  completeHostQuestionResponse,
   completeQuestionResponse,
   createSession,
   loadSession,
@@ -26,6 +27,7 @@ import {
   oldestUnansweredQuestion,
   oldestUnansweredQuestionAcrossSessions,
   pendingQuestionResponseJobs,
+  rebindQueuedHostQuestionResponse,
   retryQuestionResponse,
   sessionFilePath,
   updateSession,
@@ -146,6 +148,53 @@ test("createSession writes a phrase-list v1 session at revision zero", async (t)
   assert.match(
     sessionFilePath({ root, sessionId: session.id }),
     /\.attend\/local\/sessions\/session_fixture\.json$/,
+  );
+});
+
+test("exploration render sessions keep validated immutable provenance", async (t) => {
+  const root = await fixture(t);
+  const packageValue = dataPackage();
+  const created = await createSession({
+    root,
+    id: "session_exploration_preview",
+    dataPackage: packageValue,
+    exploration: {
+      explorationId: "exploration_0123456789abcdef01234567",
+      experimentId: "experiment_fedcba9876543210fedcba98",
+    },
+  });
+
+  assert.deepEqual(created.exploration, {
+    explorationId: "exploration_0123456789abcdef01234567",
+    experimentId: "experiment_fedcba9876543210fedcba98",
+  });
+  assert.deepEqual(
+    (await loadSession({ root, sessionId: created.id })).exploration,
+    created.exploration,
+  );
+  await assert.rejects(
+    () => createSession({
+      root,
+      id: "session_invalid_exploration_preview",
+      dataPackage: packageValue,
+      exploration: {
+        explorationId: "not-an-exploration",
+        experimentId: "experiment_fedcba9876543210fedcba98",
+      },
+    }),
+    /valid explorationId and experimentId/u,
+  );
+  await assert.rejects(
+    () => createSession({
+      root,
+      id: "session_legacy_length_provenance",
+      dataPackage: packageValue,
+      exploration: {
+        explorationId: "exploration_0123456789abcdef",
+        experimentId: "experiment_fedcba9876543210",
+      },
+    }),
+    /valid explorationId and experimentId/u,
   );
 });
 
@@ -859,6 +908,260 @@ test("response jobs preserve historical selection and newer view state through c
   );
 });
 
+test("host responses stay queued until an attachment-bound guarded reply commits", async (t) => {
+  const root = await fixture(t);
+  const packageValue = dataPackage();
+  const created = await createSession({
+    root,
+    dataPackage: packageValue,
+    id: "session_host_response",
+  });
+  const selected = await updateSession({
+    root,
+    sessionId: created.id,
+    expectedRevision: 0,
+    patch: { selectedIds: ["phrase_attention"] },
+  });
+  const selection = buildSelection(packageValue, selected.state);
+  const route = {
+    kind: "host",
+    attachmentId: "host_0123456789abcdef",
+    generation: 1,
+  };
+  const queued = await appendQueuedQuestion({
+    root,
+    sessionId: created.id,
+    expectedRevision: selected.state.revision,
+    route,
+    turn: {
+      id: "turn_host_response",
+      role: "user",
+      content: "What does the selected phrase show?",
+      selection,
+    },
+  });
+  assert.equal(queued.conversation.turns[0].response.status, "queued");
+  assert.deepEqual(queued.conversation.turns[0].response.route, route);
+
+  await assert.rejects(
+    completeHostQuestionResponse({
+      root,
+      sessionId: created.id,
+      questionId: "turn_host_response",
+      expectedRevision: queued.state.revision,
+      expectedSelectionId: selection.id,
+      route: { ...route, attachmentId: "host_ffffffffffffffff" },
+      content: "It recurs across both notes.",
+    }),
+    (error) => error.code === "QUESTION_RESPONSE_ROUTE_MISMATCH",
+  );
+
+  const completed = await completeHostQuestionResponse({
+    root,
+    sessionId: created.id,
+    questionId: "turn_host_response",
+    expectedRevision: queued.state.revision,
+    expectedSelectionId: selection.id,
+    route,
+    content: "It recurs across both notes.",
+  });
+  assert.equal(completed.repeated, false);
+  assert.equal(completed.question.response.status, "completed");
+  assert.equal(completed.answer.content, "It recurs across both notes.");
+
+  const repeated = await completeHostQuestionResponse({
+    root,
+    sessionId: created.id,
+    questionId: "turn_host_response",
+    expectedRevision: queued.state.revision,
+    expectedSelectionId: selection.id,
+    route,
+    content: "It recurs across both notes.",
+  });
+  assert.equal(repeated.repeated, true);
+  assert.equal(repeated.session.state.revision, completed.session.state.revision);
+
+  await assert.rejects(
+    completeHostQuestionResponse({
+      root,
+      sessionId: created.id,
+      questionId: "turn_host_response",
+      expectedRevision: queued.state.revision,
+      expectedSelectionId: selection.id,
+      route,
+      content: "A different answer must not replace it.",
+    }),
+    (error) => error.code === "QUESTION_ALREADY_ANSWERED",
+  );
+});
+
+test("a queued host question rebinds once under revision control and preserves its selection", async (t) => {
+  const root = await fixture(t);
+  const packageValue = dataPackage();
+  const created = await createSession({
+    root,
+    dataPackage: packageValue,
+    id: "session_host_rebind",
+  });
+  const selected = await updateSession({
+    root,
+    sessionId: created.id,
+    expectedRevision: created.state.revision,
+    patch: { selectedIds: ["phrase_attention"] },
+  });
+  const selection = buildSelection(packageValue, selected.state);
+  const originalRoute = {
+    kind: "host",
+    attachmentId: "host_0123456789abcdef",
+    generation: 1,
+  };
+  const queued = await appendQueuedQuestion({
+    root,
+    sessionId: created.id,
+    expectedRevision: selected.state.revision,
+    route: originalRoute,
+    turn: {
+      id: "turn_host_rebind",
+      role: "user",
+      content: "Recover this question without changing its evidence.",
+      selection,
+    },
+  });
+  const frozenSelection = queued.conversation.turns[0].selection;
+  const targetRoutes = [
+    {
+      kind: "host",
+      attachmentId: "host_1111111111111111",
+      generation: 1,
+    },
+    {
+      kind: "host",
+      attachmentId: "host_2222222222222222",
+      generation: 1,
+    },
+  ];
+
+  const attempts = await Promise.allSettled(targetRoutes.map((route) =>
+    rebindQueuedHostQuestionResponse({
+      root,
+      sessionId: created.id,
+      questionId: "turn_host_rebind",
+      expectedRevision: queued.state.revision,
+      route,
+    })));
+  const fulfilled = attempts.filter((attempt) => attempt.status === "fulfilled");
+  const rejected = attempts.filter((attempt) => attempt.status === "rejected");
+  assert.equal(fulfilled.length, 1);
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].reason.code, "CONFLICT");
+
+  const winner = fulfilled[0].value;
+  const reboundRoute = winner.question.response.route;
+  assert.equal(winner.repeated, false);
+  assert.equal(winner.question.response.status, "queued");
+  assert.equal(winner.question.response.rebindCount, 1);
+  assert.match(winner.question.response.reboundAt, /^\d{4}-\d\d-\d\dT/u);
+  assert.deepEqual(winner.question.selection, frozenSelection);
+  assert.equal(winner.session.state.revision, queued.state.revision + 1);
+
+  const replay = await rebindQueuedHostQuestionResponse({
+    root,
+    sessionId: created.id,
+    questionId: "turn_host_rebind",
+    expectedRevision: queued.state.revision,
+    route: reboundRoute,
+  });
+  assert.equal(replay.repeated, true);
+  assert.equal(replay.changed, false);
+  assert.equal(replay.session.state.revision, winner.session.state.revision);
+  assert.deepEqual(replay.question.selection, frozenSelection);
+});
+
+test("host rebind never captures detached work or bypasses a stale session revision", async (t) => {
+  const root = await fixture(t);
+  const packageValue = dataPackage();
+  const created = await createSession({
+    root,
+    dataPackage: packageValue,
+    id: "session_host_rebind_guards",
+  });
+  const selection = buildSelection(packageValue, created.state);
+  const detached = await appendQueuedQuestion({
+    root,
+    sessionId: created.id,
+    expectedRevision: created.state.revision,
+    route: { kind: "detached", adapter: "codex-cli" },
+    turn: {
+      id: "turn_detached_rebind",
+      role: "user",
+      content: "Keep this with its selected detached adapter.",
+      selection,
+    },
+  });
+  const nextRoute = {
+    kind: "host",
+    attachmentId: "host_3333333333333333",
+    generation: 1,
+  };
+
+  await assert.rejects(
+    rebindQueuedHostQuestionResponse({
+      root,
+      sessionId: created.id,
+      questionId: "turn_detached_rebind",
+      expectedRevision: detached.state.revision,
+      route: nextRoute,
+    }),
+    (error) => error.code === "QUESTION_RESPONSE_ROUTE_MISMATCH",
+  );
+
+  const hostSession = await createSession({
+    root,
+    dataPackage: packageValue,
+    id: "session_host_rebind_stale",
+  });
+  const hostRoute = {
+    kind: "host",
+    attachmentId: "host_4444444444444444",
+    generation: 1,
+  };
+  const hostQueued = await appendQueuedQuestion({
+    root,
+    sessionId: hostSession.id,
+    expectedRevision: hostSession.state.revision,
+    route: hostRoute,
+    turn: {
+      id: "turn_stale_rebind",
+      role: "user",
+      content: "Do not rebind from a stale session read.",
+      selection: buildSelection(packageValue, hostSession.state),
+    },
+  });
+  await updateSession({
+    root,
+    sessionId: hostSession.id,
+    expectedRevision: hostQueued.state.revision,
+    patch: { query: "attention" },
+  });
+  await assert.rejects(
+    rebindQueuedHostQuestionResponse({
+      root,
+      sessionId: hostSession.id,
+      questionId: "turn_stale_rebind",
+      expectedRevision: hostQueued.state.revision,
+      route: nextRoute,
+    }),
+    (error) => error.code === "CONFLICT",
+  );
+  const stored = await loadSession({ root, sessionId: created.id });
+  assert.deepEqual(
+    stored.conversation.turns[0].response.route,
+    { kind: "detached", adapter: "codex-cli" },
+  );
+  const staleStored = await loadSession({ root, sessionId: hostSession.id });
+  assert.deepEqual(staleStored.conversation.turns[0].response.route, hostRoute);
+});
+
 test("failed response jobs retry explicitly and active jobs bound session concurrency", async (t) => {
   const root = await fixture(t);
   const packageValue = dataPackage();
@@ -925,10 +1228,26 @@ test("failed response jobs retry explicitly and active jobs bound session concur
     (error) => error.code === "QUESTION_RESPONSE_NOT_RUNNING",
   );
 
+  await assert.rejects(
+    retryQuestionResponse({
+      root,
+      sessionId: created.id,
+      questionId: "turn_retry_question",
+      expectedRoute: { kind: "detached", adapter: "claude-cli" },
+    }),
+    (error) => error.code === "QUESTION_RESPONSE_ROUTE_MISMATCH",
+  );
+  assert.equal(
+    (await loadSession({ root, sessionId: created.id }))
+      .conversation.turns[0].response.status,
+    "failed",
+  );
+
   const retried = await retryQuestionResponse({
     root,
     sessionId: created.id,
     questionId: "turn_retry_question",
+    expectedRoute: { kind: "detached", adapter: "codex-cli" },
   });
   assert.equal(retried.changed, true);
   assert.equal(retried.question.response.status, "queued");
@@ -950,6 +1269,72 @@ test("failed response jobs retry explicitly and active jobs bound session concur
     }),
     (error) => error.code === "QUESTION_RESPONSE_NOT_RETRYABLE",
   );
+});
+
+test("retry preserves a failed response while a different response is active", async (t) => {
+  const root = await fixture(t);
+  const packageValue = dataPackage();
+
+  for (const activeStatus of ["queued", "running"]) {
+    const created = await createSession({
+      root,
+      dataPackage: packageValue,
+      id: `session_retry_with_${activeStatus}`,
+    });
+    const first = await appendQueuedQuestion({
+      root,
+      sessionId: created.id,
+      expectedRevision: created.state.revision,
+      turn: {
+        id: `turn_failed_before_${activeStatus}`,
+        role: "user",
+        content: "This response failed first.",
+        selection: buildSelection(packageValue, created.state),
+      },
+    });
+    const failed = await markQuestionResponseFailed({
+      root,
+      sessionId: created.id,
+      questionId: first.conversation.turns[0].id,
+      errorCode: "runner_failed",
+    });
+    await appendQueuedQuestion({
+      root,
+      sessionId: created.id,
+      expectedRevision: failed.session.state.revision,
+      turn: {
+        id: `turn_active_${activeStatus}`,
+        role: "user",
+        content: "This response now owns the active slot.",
+        selection: buildSelection(packageValue, failed.session.state),
+      },
+    });
+    if (activeStatus === "running") {
+      await markQuestionResponseRunning({
+        root,
+        sessionId: created.id,
+        questionId: `turn_active_${activeStatus}`,
+      });
+    }
+    const beforeRetry = await loadSession({ root, sessionId: created.id });
+
+    await assert.rejects(
+      retryQuestionResponse({
+        root,
+        sessionId: created.id,
+        questionId: `turn_failed_before_${activeStatus}`,
+      }),
+      (error) => error.code === "ACTIVE_RESPONSE_EXISTS",
+    );
+
+    const afterRetry = await loadSession({ root, sessionId: created.id });
+    assert.deepEqual(afterRetry, beforeRetry);
+    assert.equal(afterRetry.conversation.turns[0].response.status, "failed");
+    assert.equal(
+      afterRetry.conversation.turns[1].response.status,
+      activeStatus,
+    );
+  }
 });
 
 test("restart recovery enumerates every queued or running explicit job", async (t) => {
@@ -987,11 +1372,13 @@ test("restart recovery enumerates every queued or running explicit job", async (
       sessionId: "session_jobs_a",
       questionId: "turn_session_jobs_a",
       status: "queued",
+      route: { kind: "detached", adapter: "codex-cli" },
     },
     {
       sessionId: "session_jobs_b",
       questionId: "turn_session_jobs_b",
       status: "running",
+      route: { kind: "detached", adapter: "codex-cli" },
     },
   ]);
 
@@ -1011,8 +1398,50 @@ test("restart recovery enumerates every queued or running explicit job", async (
       sessionId: "session_jobs_b",
       questionId: "turn_session_jobs_b",
       status: "running",
+      route: { kind: "detached", adapter: "codex-cli" },
     },
   ]);
+});
+
+test("restart recovery leaves a route-less legacy job unbound", async (t) => {
+  const root = await fixture(t);
+  const packageValue = dataPackage();
+  const session = await createSession({
+    root,
+    dataPackage: packageValue,
+    id: "session_legacy_unbound_job",
+  });
+  await appendQueuedQuestion({
+    root,
+    sessionId: session.id,
+    expectedRevision: 0,
+    turn: {
+      id: "turn_legacy_unbound_job",
+      role: "user",
+      content: "Do not guess which detached agent should answer this.",
+      selection: buildSelection(packageValue, session.state),
+    },
+  });
+  const path = sessionFilePath({ root, sessionId: session.id });
+  const stored = JSON.parse(await readFile(path, "utf8"));
+  delete stored.conversation.turns[0].response.route;
+  await writeFile(path, `${JSON.stringify(stored, null, 2)}\n`);
+
+  assert.deepEqual(await pendingQuestionResponseJobs({ root }), [{
+    sessionId: session.id,
+    questionId: "turn_legacy_unbound_job",
+    status: "queued",
+    route: null,
+    legacyRouteMissing: true,
+  }]);
+  assert.equal(
+    Object.hasOwn(
+      (await loadSession({ root, sessionId: session.id }))
+        .conversation.turns[0].response,
+      "route",
+    ),
+    false,
+  );
 });
 
 test("a stale attached-question mutation writes and clears nothing", async (t) => {

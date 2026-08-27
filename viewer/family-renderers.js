@@ -837,19 +837,50 @@ function renderFlow(root, dataset, selectedId) {
 
 function renderMechanism(root, dataset, selectedId) {
   const layerField = role(dataset, "group", "layer");
-  const layers = [...new Set(dataset.records.map((record) => String(record[layerField] ?? "Layer")))];
+  const stageField = role(dataset, "stage", "stage");
+  const firstSeen = new Map();
+  const recordsByLayer = new Map();
+  dataset.records.forEach((record, index) => {
+    const layer = String(record[layerField] ?? "Layer");
+    if (!firstSeen.has(layer)) firstSeen.set(layer, index);
+    const records = recordsByLayer.get(layer) ?? [];
+    records.push(record);
+    recordsByLayer.set(layer, records);
+  });
+  const layers = [...recordsByLayer.keys()].sort((left, right) => {
+    const stage = (layer) => {
+      const declared = Math.min(...recordsByLayer.get(layer).map((record) => {
+        const value = Number(record[stageField]);
+        return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
+      }));
+      if (Number.isFinite(declared)) return declared;
+      const numbered = /^Stage\s+(\d+)$/iu.exec(layer);
+      return numbered ? Number(numbered[1]) - 1 : Number.POSITIVE_INFINITY;
+    };
+    const leftStage = stage(left);
+    const rightStage = stage(right);
+    if (leftStage !== rightStage) return leftStage - rightStage;
+    return firstSeen.get(left) - firstSeen.get(right);
+  });
+  const rowGap = 132;
+  const top = 95;
+  const maximumRows = Math.max(1, ...layers.map((layer) => recordsByLayer.get(layer).length));
+  const height = Math.max(HEIGHT, top + (maximumRows - 1) * rowGap + 105);
+  const verticalCenter = top + ((maximumRows - 1) * rowGap) / 2;
   const positions = new Map();
   layers.forEach((layer, layerIndex) => {
-    const records = dataset.records.filter((record) => String(record[layerField] ?? "Layer") === layer);
+    const records = recordsByLayer.get(layer);
+    const layerTop = verticalCenter - ((records.length - 1) * rowGap) / 2;
     records.forEach((record, recordIndex) => {
       positions.set(id(record, dataset), {
         x: 100 + layerIndex * (760 / Math.max(layers.length - 1, 1)),
-        y: 95 + recordIndex * 170,
+        y: layerTop + recordIndex * rowGap,
       });
     });
   });
-  const svg = canvas(root, dataset.title, `An evidence flowchart with ${dataset.records.length} named components and ${dataset.links.length} verb-labelled links. Layout shows topological reading order, not causal strength.`);
+  const svg = canvas(root, dataset.title, `An evidence flowchart with ${dataset.records.length} named components and ${dataset.links.length} verb-labelled links. Read stages from left to right. Layout shows topological reading order, not causal strength.`, height);
   svg.setAttribute("data-layout", "evidence-flowchart");
+  svg.setAttribute("data-reading-order", "left-to-right");
   const marker = element("marker", { id: `arrow-${chartCounter}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" });
   marker.append(element("path", { d: "M 0 0 L 10 5 L 0 10 z", class: "arrow-head" }));
   const defs = element("defs");
@@ -877,17 +908,27 @@ function renderMechanism(root, dataset, selectedId) {
       "middle",
     );
   });
-  dataset.records.forEach((record, index) => {
+  dataset.records.forEach((record) => {
     const position = positions.get(id(record, dataset));
-    svg.append(element("rect", {
+    const nodeId = id(record, dataset);
+    const relationCount = dataset.links.filter(
+      (link) => String(link.source) === nodeId || String(link.target) === nodeId,
+    ).length;
+    const node = element("g", {
+      class: "mechanism-node",
+      "data-node-id": nodeId,
+      "aria-label": `${label(record, dataset)} component with ${countLabel(relationCount, "connected relationship")}`,
+    });
+    node.append(element("rect", {
       x: position.x - 58,
       y: position.y,
       width: 116,
       height: 50,
       rx: 3,
-      class: seriesClass(index),
+      class: "mark-primary",
     }));
-    appendText(svg, position.x, position.y + 72, label(record, dataset), undefined, "middle");
+    appendText(node, position.x, position.y + 72, label(record, dataset), undefined, "middle");
+    svg.append(node);
   });
 }
 
@@ -1277,12 +1318,48 @@ function decorateSelectableMarks(root, { selectedIds = [], selectableMarkIds, on
   }
 }
 
+function decorateSelectableNodes(root, {
+  dataset,
+  selectedNodeId = null,
+  selectableMarkIds,
+  onSelect,
+} = {}) {
+  const allowed = new Set(Array.isArray(selectableMarkIds) ? selectableMarkIds.map(String) : []);
+  for (const node of root.querySelectorAll("[data-node-id]")) {
+    const nodeId = String(node.getAttribute("data-node-id") ?? "");
+    const relatedMarkIds = dataset.links
+      .filter((link) => String(link.source) === nodeId || String(link.target) === nodeId)
+      .map((link) => String(link.id))
+      .filter((markId) => allowed.has(markId));
+    if (!nodeId || relatedMarkIds.length === 0) {
+      node.removeAttribute("data-node-id");
+      continue;
+    }
+    const selected = nodeId === String(selectedNodeId ?? "");
+    const classNames = new Set(String(node.getAttribute("class") ?? "").split(/\s+/u).filter(Boolean));
+    if (selected) classNames.add("is-selected");
+    else classNames.delete("is-selected");
+    node.setAttribute("class", [...classNames].join(" "));
+    node.setAttribute("tabindex", "0");
+    node.setAttribute("role", "button");
+    node.setAttribute("aria-pressed", String(selected));
+    const select = () => onSelect?.({ kind: "node", nodeId });
+    node.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      select();
+    });
+    node.addEventListener("click", select);
+  }
+}
+
 export async function renderFamily({
   root,
   dataset,
   selectedId = null,
   selectedIds = selectedId === null ? [] : [selectedId],
   selectableMarkIds,
+  selectedNodeId = null,
   onSelect,
 }) {
   if (!(root instanceof HTMLElement)) throw new TypeError("renderer root must be an HTMLElement");
@@ -1292,10 +1369,12 @@ export async function renderFamily({
   const rendererSelection = activeSelectedIds.length > 0 ? activeSelectedIds : selectedId;
   await renderer(root, dataset, rendererSelection);
   decorateSelectableMarks(root, { selectedIds: activeSelectedIds, selectableMarkIds, onSelect });
+  decorateSelectableNodes(root, { dataset, selectedNodeId, selectableMarkIds, onSelect });
   return {
     familyId: dataset.familyId,
     markCount: dataset.records.length,
     evidenceCount: evidenceCount(dataset),
     selectableMarkIds: [...root.querySelectorAll("[data-mark-id]")].map((mark) => mark.getAttribute("data-mark-id")),
+    selectableNodeIds: [...root.querySelectorAll("[data-node-id]")].map((node) => node.getAttribute("data-node-id")),
   };
 }

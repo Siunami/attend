@@ -1,0 +1,398 @@
+{
+  "schemaVersion": 1,
+  "kind": "attend-opportunity-fixture-corpus",
+  "fixtures": [
+    {
+      "id": "ranked-comparison",
+      "label": "positive",
+      "requestedAction": "compare-records",
+      "sourceShape": {
+        "kind": "tabular-records",
+        "sourceCount": 1,
+        "recordCount": 12,
+        "numericFieldCount": 1,
+        "dateFieldCount": 0,
+        "relationshipCount": 0,
+        "locationCount": 0,
+        "omissionCount": 0
+      },
+      "resultShape": {
+        "kind": "ordered-values",
+        "resultCount": 12,
+        "comparisonCount": 11,
+        "complete": true,
+        "evidenceState": "bounded"
+      },
+      "allowedSourceScope": {
+        "kind": "project-files",
+        "authorization": "authorized",
+        "maxSources": 1
+      },
+      "expectedAnalyticJobs": ["comparison"],
+      "eligibleRepresentations": [
+        { "family": "rank", "member": "bar-list" }
+      ],
+      "visualShouldBeMentioned": true,
+      "acceptableAbstentionReasons": ["evidence-not-bounded", "no-executable-family"]
+    },
+    {
+      "id": "dated-change",
+      "label": "positive",
+      "requestedAction": "review-history",
+      "sourceShape": {
+        "kind": "dated-events",
+        "sourceCount": 2,
+        "recordCount": 18,
+        "numericFieldCount": 1,
+        "dateFieldCount": 2,
+        "relationshipCount": 0,
+        "locationCount": 0,
+        "omissionCount": 0
+      },
+      "resultShape": {
+        "kind": "dated-intervals",
+        "resultCount": 18,
+        "comparisonCount": 17,
+        "complete": true,
+        "evidenceState": "bounded"
+      },
+      "allowedSourceScope": {
+        "kind": "project-files",
+        "authorization": "authorized",
+        "maxSources": 2
+      },
+      "expectedAnalyticJobs": ["change", "sequence"],
+      "eligibleRepresentations": [
+        { "family": "timeline", "member": "interval" },
+        { "family": "trend", "member": "line" }
+      ],
+      "visualShouldBeMentioned": true,
+      "acceptableAbstentionReasons": ["evidence-not-bounded", "weak-hypothesis"]
+    },
+    {
+      "id": "paired-measures",
+      "label": "positive",
+      "requestedAction": "analyze-relationship",
+      "sourceShape": {
+        "kind": "paired-measures",
+        "sourceCount": 1,
+        "recordCount": 24,
+        "numericFieldCount": 2,
+        "dateFieldCount": 0,
+        "relationshipCount": 24,
+        "locationCount": 0,
+        "omissionCount": 0
+      },
+      "resultShape": {
+        "kind": "paired-observations",
+        "resultCount": 24,
+        "comparisonCount": 24,
+        "complete": true,
+        "evidenceState": "bounded"
+      },
+      "allowedSourceScope": {
+        "kind": "project-files",
+        "authorization": "authorized",
+        "maxSources": 1
+      },
+      "expectedAnalyticJobs": ["relationship"],
+      "eligibleRepresentations": [
+        { "family": "relationship", "member": "scatter" }
+      ],
+      "visualShouldBeMentioned": true,
+      "acceptableAbstentionReasons": ["evidence-not-bounded", "weak-hypothesis"]
+    },
+    {
+      "id": "explicit-network",
+      "label": "positive",
+      "requestedAction": "inspect-network",
+      "sourceShape": {
+        "kind": "explicit-edges",
+        "sourceCount": 3,
+        "recordCount": 30,
+        "numericFieldCount": 0,
+        "dateFieldCount": 0,
+        "relationshipCount": 44,
+        "locationCount": 0,
+        "omissionCount": 0
+      },
+      "resultShape": {
+        "kind": "explicit-links",
+        "resultCount": 44,
+        "comparisonCount": 44,
+        "complete": true,
+        "evidenceState": "bounded"
+      },
+      "allowedSourceScope": {
+        "kind": "project-files",
+        "authorization": "authorized",
+        "maxSources": 3
+      },
+      "expectedAnalyticJobs": ["network", "relationship"],
+      "eligibleRepresentations": [
+        { "family": "network", "member": "local" }
+      ],
+      "visualShouldBeMentioned": true,
+      "acceptableAbstentionReasons": ["evidence-not-bounded", "no-executable-family"]
+    },
+    {
+      "id": "short-conversation",
+      "label": "negative",
+      "requestedAction": "answer-conversation",
+      "sourceShape": {
+        "kind": "none",
+        "sourceCount": 0,
+        "recordCount": 0,
+        "numericFieldCount": 0,
+        "dateFieldCount": 0,
+        "relationshipCount": 0,
+        "locationCount": 0,
+        "omissionCount": 0
+      },
+      "resultShape": {
+        "kind": "none",
+        "resultCount": 0,
+        "comparisonCount": 0,
+        "complete": true,
+        "evidenceState": "none"
+      },
+      "allowedSourceScope": {
+        "kind": "none",
+        "authorization": "not-required",
+        "maxSources": 0
+      },
+      "expectedAnalyticJobs": [],
+      "eligibleRepresentations": [],
+      "visualShouldBeMentioned": false,
+      "acceptableAbstentionReasons": ["no-bounded-evidence", "no-analytic-job", "text-suffices"]
+    },
+    {
+      "id": "single-value-answer",
+      "label": "negative",
+      "requestedAction": "report-single-value",
+      "sourceShape": {
+        "kind": "single-value",
+        "sourceCount": 1,
+        "recordCount": 1,
+        "numericFieldCount": 1,
+        "dateFieldCount": 0,
+        "relationshipCount": 0,
+        "locationCount": 0,
+        "omissionCount": 0
+      },
+      "resultShape": {
+        "kind": "single-scalar",
+        "resultCount": 1,
+        "comparisonCount": 0,
+        "complete": true,
+        "evidenceState": "bounded"
+      },
+      "allowedSourceScope": {
+        "kind": "command-results",
+        "authorization": "authorized",
+        "maxSources": 1
+      },
+      "expectedAnalyticJobs": [],
+      "eligibleRepresentations": [],
+      "visualShouldBeMentioned": false,
+      "acceptableAbstentionReasons": ["text-suffices", "too-few-records"]
+    },
+    {
+      "id": "unfinished-debugging",
+      "label": "negative",
+      "requestedAction": "debug-failure",
+      "sourceShape": {
+        "kind": "partial-debug-state",
+        "sourceCount": 2,
+        "recordCount": 4,
+        "numericFieldCount": 0,
+        "dateFieldCount": 0,
+        "relationshipCount": 0,
+        "locationCount": 0,
+        "omissionCount": 2
+      },
+      "resultShape": {
+        "kind": "incomplete-diagnostic",
+        "resultCount": 1,
+        "comparisonCount": 0,
+        "complete": false,
+        "evidenceState": "partial"
+      },
+      "allowedSourceScope": {
+        "kind": "project-files",
+        "authorization": "authorized",
+        "maxSources": 2
+      },
+      "expectedAnalyticJobs": [],
+      "eligibleRepresentations": [],
+      "visualShouldBeMentioned": false,
+      "acceptableAbstentionReasons": ["task-incomplete", "text-suffices"]
+    },
+    {
+      "id": "unapproved-private-source",
+      "label": "negative",
+      "requestedAction": "summarize-private-corpus",
+      "sourceShape": {
+        "kind": "private-unscoped",
+        "sourceCount": 1,
+        "recordCount": 0,
+        "numericFieldCount": 0,
+        "dateFieldCount": 0,
+        "relationshipCount": 0,
+        "locationCount": 0,
+        "omissionCount": 1
+      },
+      "resultShape": {
+        "kind": "none",
+        "resultCount": 0,
+        "comparisonCount": 0,
+        "complete": false,
+        "evidenceState": "unavailable"
+      },
+      "allowedSourceScope": {
+        "kind": "private-source",
+        "authorization": "missing",
+        "maxSources": 0
+      },
+      "expectedAnalyticJobs": [],
+      "eligibleRepresentations": [],
+      "visualShouldBeMentioned": false,
+      "acceptableAbstentionReasons": ["source-not-authorized", "evidence-not-bounded"]
+    },
+    {
+      "id": "small-status-table",
+      "label": "ambiguous",
+      "requestedAction": "summarize-status",
+      "sourceShape": {
+        "kind": "tabular-records",
+        "sourceCount": 1,
+        "recordCount": 4,
+        "numericFieldCount": 2,
+        "dateFieldCount": 0,
+        "relationshipCount": 0,
+        "locationCount": 0,
+        "omissionCount": 0
+      },
+      "resultShape": {
+        "kind": "status-rows",
+        "resultCount": 4,
+        "comparisonCount": 3,
+        "complete": true,
+        "evidenceState": "bounded"
+      },
+      "allowedSourceScope": {
+        "kind": "command-results",
+        "authorization": "authorized",
+        "maxSources": 1
+      },
+      "expectedAnalyticJobs": ["comparison"],
+      "eligibleRepresentations": [
+        { "family": "rank", "member": "bar-list" },
+        { "family": "profile", "member": "parallel" }
+      ],
+      "visualShouldBeMentioned": false,
+      "acceptableAbstentionReasons": ["text-suffices", "interruption-cost"]
+    },
+    {
+      "id": "build-duration-spread",
+      "label": "ambiguous",
+      "requestedAction": "review-variability",
+      "sourceShape": {
+        "kind": "tabular-records",
+        "sourceCount": 1,
+        "recordCount": 9,
+        "numericFieldCount": 1,
+        "dateFieldCount": 0,
+        "relationshipCount": 0,
+        "locationCount": 0,
+        "omissionCount": 0
+      },
+      "resultShape": {
+        "kind": "sampled-values",
+        "resultCount": 9,
+        "comparisonCount": 9,
+        "complete": true,
+        "evidenceState": "bounded"
+      },
+      "allowedSourceScope": {
+        "kind": "command-results",
+        "authorization": "authorized",
+        "maxSources": 1
+      },
+      "expectedAnalyticJobs": ["distribution"],
+      "eligibleRepresentations": [
+        { "family": "distribution", "member": "strip" }
+      ],
+      "visualShouldBeMentioned": true,
+      "acceptableAbstentionReasons": ["weak-hypothesis", "interruption-cost"]
+    },
+    {
+      "id": "ordered-process",
+      "label": "ambiguous",
+      "requestedAction": "explain-process",
+      "sourceShape": {
+        "kind": "ordered-stages",
+        "sourceCount": 1,
+        "recordCount": 6,
+        "numericFieldCount": 0,
+        "dateFieldCount": 0,
+        "relationshipCount": 5,
+        "locationCount": 0,
+        "omissionCount": 0
+      },
+      "resultShape": {
+        "kind": "ordered-steps",
+        "resultCount": 6,
+        "comparisonCount": 5,
+        "complete": true,
+        "evidenceState": "bounded"
+      },
+      "allowedSourceScope": {
+        "kind": "project-files",
+        "authorization": "authorized",
+        "maxSources": 1
+      },
+      "expectedAnalyticJobs": ["sequence"],
+      "eligibleRepresentations": [
+        { "family": "sequence", "member": "step-strip" },
+        { "family": "mechanism", "member": "flowchart" }
+      ],
+      "visualShouldBeMentioned": false,
+      "acceptableAbstentionReasons": ["text-suffices", "interruption-cost"]
+    },
+    {
+      "id": "located-hierarchy",
+      "label": "ambiguous",
+      "requestedAction": "locate-records",
+      "sourceShape": {
+        "kind": "located-records",
+        "sourceCount": 2,
+        "recordCount": 16,
+        "numericFieldCount": 1,
+        "dateFieldCount": 0,
+        "relationshipCount": 15,
+        "locationCount": 16,
+        "omissionCount": 0
+      },
+      "resultShape": {
+        "kind": "parent-child-records",
+        "resultCount": 16,
+        "comparisonCount": 16,
+        "complete": true,
+        "evidenceState": "bounded"
+      },
+      "allowedSourceScope": {
+        "kind": "project-files",
+        "authorization": "authorized",
+        "maxSources": 2
+      },
+      "expectedAnalyticJobs": ["hierarchy", "location"],
+      "eligibleRepresentations": [
+        { "family": "hierarchy", "member": "tidy" },
+        { "family": "point-map", "member": "exact-points" }
+      ],
+      "visualShouldBeMentioned": true,
+      "acceptableAbstentionReasons": ["weak-hypothesis", "interruption-cost"]
+    }
+  ]
+}

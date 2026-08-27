@@ -1,0 +1,42 @@
+name: Publish Attend Local
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'Siunami/attend-local'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm ci
+      - id: release
+        name: Check the release version
+        shell: bash
+        run: |
+          package_version=$(node -p 'require("./package.json").version')
+          if [[ "$GITHUB_REF_NAME" != "v$package_version" ]]; then
+            echo "Release tag $GITHUB_REF_NAME does not match package version $package_version." >&2
+            exit 1
+          fi
+          if [[ "$package_version" == *-* ]]; then
+            echo "npm-tag=next" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm-tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+      - run: npm run verify
+      - run: npm publish --access public --tag "${{ steps.release.outputs.npm-tag }}"
