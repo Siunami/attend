@@ -19,6 +19,10 @@ const MARK_KINDS = new Set([
   "segment",
   "group",
 ]);
+const AUTHORIZED_CATALOG_VERSIONS = new Set([
+  CATALOG_VERSION,
+  "3bcb588eaf291763",
+]);
 const FAMILY_MARK_KINDS = Object.freeze({
   rank: "band",
   distribution: "point",
@@ -79,7 +83,7 @@ function resolveRenderer(dataPackage) {
     error.code = "ATLAS_CATALOG_UNAUTHORIZED";
     throw error;
   }
-  if (catalog.version !== CATALOG_VERSION || catalog.family !== manifest.id) {
+  if (!AUTHORIZED_CATALOG_VERSIONS.has(catalog.version) || catalog.family !== manifest.id) {
     const error = new TypeError("Atlas catalog receipt does not match the bundled catalog version or family");
     error.code = "ATLAS_CATALOG_UNAUTHORIZED";
     throw error;

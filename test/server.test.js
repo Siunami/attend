@@ -253,7 +253,7 @@ test("serves only the tokenized viewer and explicit read endpoints", async (t) =
     ok: true,
     service: "attend-library",
     protocolVersion: 4,
-    packageVersion: "0.5.4",
+    packageVersion: "0.5.5",
     instanceId: TEST_INSTANCE_ID,
     sessionCount: 1,
   });
