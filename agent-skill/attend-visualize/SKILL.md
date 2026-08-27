@@ -52,7 +52,7 @@ Write a strict, content-free version-1 request such as:
   },
   "host": {
     "kind": "codex",
-    "skillVersion": "attend-visualize/0.5.0"
+    "skillVersion": "attend-visualize/0.5.1"
   },
   "taskShape": {
     "action": "review",
