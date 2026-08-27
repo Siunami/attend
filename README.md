@@ -42,6 +42,22 @@ The host agent does not write chart code. It asks Attend for the installed Famil
 
 This release includes all 19 visualization families. The bundled Family Atlas catalog records every authored form and rejection. Eighteen families have one tested executable member. Annotated specimen is marked `unavailable` because the text-only request contract cannot bind its required visible specimen yet. Other approved designs remain `documented`; rejected designs remain `rejected`. Attend never falls back to an unimplemented member or generates a substitute chart.
 
+## What Attend can make
+
+Every label and value in these screenshots is fabricated demo data. No user files, accounts, or private sources were used to make them.
+
+| Distribution | Flow |
+| --- | --- |
+| [![A distribution plot comparing fabricated session lengths across three kinds of work](docs/images/visual-gallery/distribution.png)](docs/images/visual-gallery/distribution.png) | [![A flow diagram tracing fabricated material through a generic workflow](docs/images/visual-gallery/flow.png)](docs/images/visual-gallery/flow.png) |
+| Reveal shape, spread, gaps, and outliers. | Trace movement, loss, and conversion through a process. |
+
+| Field | Collection atlas |
+| --- | --- |
+| [![A field heatmap showing fabricated attention values by weekday and time](docs/images/visual-gallery/field.png)](docs/images/visual-gallery/field.png) | [![A collection atlas grouping fabricated records into a browsable visual field](docs/images/visual-gallery/collection-atlas.png)](docs/images/visual-gallery/collection-atlas.png) |
+| Show intensity across time or space. | Browse a collection without flattening it into a single score. |
+
+[Open the visual gallery](docs/visual-gallery.md) for six full-resolution examples suitable for a case study.
+
 The Attend service handles sidebar questions with `gpt-oss-20b` by default. It owns the loopback page server, durable question queue, and llama.cpp process as one lifecycle. The page URL is not returned until the model is healthy, so a visible page has a working chat path without depending on a coding-agent listener. Codex CLI, Claude CLI, and host-agent routing remain explicit compatibility modes.
 
 For development from a checkout, run these commands in the directory containing this README:
