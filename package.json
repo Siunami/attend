@@ -1,11 +1,11 @@
 {
-  "name": "attend-local",
+  "name": "@siunami/attend",
   "version": "0.5.1",
   "description": "Evidence-backed visualizations for coding agents in a private local workspace.",
-  "homepage": "https://www.npmjs.com/package/attend-local",
+  "homepage": "https://github.com/Siunami/attend#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Siunami/attend-local.git"
+    "url": "git+https://github.com/Siunami/attend.git"
   },
   "keywords": [
     "agents",

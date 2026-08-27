@@ -1,11 +1,11 @@
-# Legacy Attend Local release site
+# Legacy Attend release site
 
-Attend Local 0.5.0 and later publish through npm. The release workflow in
+Attend 0.5.0 and later publishes through npm. The release workflow in
 `.github/workflows/publish.yml` verifies a GitHub release tag, runs the full
 test and package audit, and publishes with npm trusted publishing.
 
-Keep this directory for the immutable release URLs issued before the npm
-cutover. Do not remove an existing release or republish a released version.
+Keep this directory for the immutable `attend-local` release URLs issued before
+the npm cutover. Do not remove an existing release or republish a released version.
 The staged site never contains a corpus, session, private evidence store, npm
 credentials, or repository checkout.
 

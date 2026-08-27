@@ -13,14 +13,15 @@ test("the public package leads with a human-readable coding-agent install", asyn
   ]);
 
   assert.equal(manifest.version, "0.5.1");
+  assert.equal(manifest.name, "@siunami/attend");
   assert.deepEqual(manifest.publishConfig, {
     access: "public",
     registry: "https://registry.npmjs.org/",
   });
-  assert.equal(manifest.homepage, "https://www.npmjs.com/package/attend-local");
+  assert.equal(manifest.homepage, "https://github.com/Siunami/attend#readme");
   assert.deepEqual(manifest.repository, {
     type: "git",
-    url: "git+https://github.com/Siunami/attend-local.git",
+    url: "git+https://github.com/Siunami/attend.git",
   });
   const agentHeading = "## Install with a coding agent";
   const terminalHeading = "## Install from a terminal";
@@ -31,7 +32,7 @@ test("the public package leads with a human-readable coding-agent install", asyn
   )?.groups?.prompt;
   assert.ok(prompt, "coding-agent prompt is missing");
   assert.ok(prompt.split(/\s+/u).length <= 180, "coding-agent prompt is too long");
-  assert.match(prompt, /npm install --global attend-local@0\.5\.1/u);
+  assert.match(prompt, /npm install --global @siunami\/attend@0\.5\.1/u);
   assert.match(prompt, /attend bootstrap --yes/u);
   assert.match(prompt, /show me the output/iu);
   assert.match(prompt, /show me the actual error/iu);
@@ -43,7 +44,7 @@ test("the public package leads with a human-readable coding-agent install", asyn
   assert.doesNotMatch(readme, /workers\.dev|curl -fsSL/u);
 });
 
-test("the dedicated release workflow publishes verified tags with npm OIDC", async () => {
+test("the canonical release workflow publishes verified tags with npm OIDC", async () => {
   const workflow = await readFile(
     `${PACKAGE_ROOT}/.github/workflows/publish.yml`,
     "utf8",
@@ -54,6 +55,8 @@ test("the dedicated release workflow publishes verified tags with npm OIDC", asy
   assert.match(workflow, /npm run verify/u);
   assert.match(workflow, /npm publish --access public/u);
   assert.match(workflow, /GITHUB_REF_NAME/u);
+  assert.match(workflow, /github\.repository == 'Siunami\/attend'/u);
+  assert.doesNotMatch(workflow, /Siunami\/attend-local/u);
   assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN/u);
 });
 

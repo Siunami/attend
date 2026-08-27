@@ -1,6 +1,6 @@
 # Third-party browser assets
 
-Attend Local is UNLICENSED. The files in this directory are separate
+Attend is UNLICENSED. The files in this directory are separate
 third-party works distributed under their own licenses.
 
 | Packaged file | Upstream package | Version | SHA-256 |

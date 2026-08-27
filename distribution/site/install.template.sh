@@ -52,14 +52,14 @@ if ! prefix_is_writable "$ATTEND_NPM_PREFIX"; then
 fi
 ATTEND_BIN_DIR="$ATTEND_NPM_PREFIX/bin"
 
-ATTEND_TMP=$(mktemp -d "${TMPDIR:-/tmp}/attend-local.XXXXXX") || fail "Could not create a temporary directory."
+ATTEND_TMP=$(mktemp -d "${TMPDIR:-/tmp}/attend.XXXXXX") || fail "Could not create a temporary directory."
 cleanup() {
   rm -rf "$ATTEND_TMP"
 }
 trap cleanup 0
 trap 'exit 1' 1 2 3 15
 
-ATTEND_TARBALL="$ATTEND_TMP/attend-local-$ATTEND_VERSION.tgz"
+ATTEND_TARBALL="$ATTEND_TMP/siunami-attend-$ATTEND_VERSION.tgz"
 if command -v curl >/dev/null 2>&1; then
   curl --fail --silent --show-error --location "$ATTEND_TARBALL_URL" --output "$ATTEND_TARBALL"
 elif command -v wget >/dev/null 2>&1; then

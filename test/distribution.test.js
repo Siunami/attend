@@ -413,7 +413,7 @@ printf '%s\\n' "$*" >"$ATTEND_TEST_NPM_LOG"
 [ "$3" = "--prefix" ] || exit 73
 [ "$4" = "$ATTEND_TEST_EXPECTED_PREFIX" ] || exit 73
 case "$5" in
-  */attend-local-\${ATTEND_TEST_VERSION}.tgz) ;;
+  */siunami-attend-\${ATTEND_TEST_VERSION}.tgz) ;;
   *) exit 73 ;;
 esac
 mkdir -p "$ATTEND_TEST_EXPECTED_PREFIX/bin"
@@ -473,7 +473,7 @@ switch (process.argv[2]) {
   );
   const npmInvocation = await readFile(npmLog, "utf8");
   assert.ok(npmInvocation.startsWith(`install --global --prefix ${expectedPrefix} `));
-  assert.ok(npmInvocation.endsWith(`/attend-local-${version}.tgz\n`));
+  assert.ok(npmInvocation.endsWith(`/siunami-attend-${version}.tgz\n`));
 
   const detachedDoctor = structuredClone(readyDoctor);
   detachedDoctor.chat.route = { kind: "detached", adapter: "codex-cli" };
@@ -522,7 +522,7 @@ switch (process.argv[2]) {
   assert.equal(packedPackage.dependencies, undefined);
   assert.deepEqual(packedPackage.repository, {
     type: "git",
-    url: "git+https://github.com/Siunami/attend-local.git",
+    url: "git+https://github.com/Siunami/attend.git",
   });
 
   const packedBin = join(extracted, "package", "bin", "attend.js");

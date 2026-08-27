@@ -1,6 +1,6 @@
 ---
 name: attend-visualize
-description: Create and operate evidence-backed visual answers with Attend Local. Use for explicit visualization questions and at eligible natural task boundaries when bounded evidence or results may contain a useful comparison, distribution, change, relationship, hierarchy, network, location, or sequence. Also use when a visualization would benefit from permission-gated data enrichment, when choosing a governed Family Atlas design, when opening an Attend artifact, or when working with its private local chat.
+description: Create and operate evidence-backed visual answers with Attend. Use for explicit visualization questions and at eligible natural task boundaries when bounded evidence or results may contain a useful comparison, distribution, change, relationship, hierarchy, network, location, or sequence. Also use when a visualization would benefit from permission-gated data enrichment, when choosing a governed Family Atlas design, when opening an Attend artifact, or when working with its private local chat.
 ---
 
 # Attend Visualize

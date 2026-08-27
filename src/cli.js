@@ -89,7 +89,7 @@ const SKILL_METADATA_SOURCE = fileURLToPath(
 );
 const VIEWER_ASSETS = fileURLToPath(new URL("../viewer", import.meta.url));
 
-const HELP = `Attend Local ${PACKAGE_VERSION}
+const HELP = `Attend ${PACKAGE_VERSION}
 
 Usage:
   attend bootstrap --yes [--timeout <minutes>] [--json]

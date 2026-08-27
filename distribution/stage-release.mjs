@@ -32,6 +32,10 @@ const DEFAULT_OUTPUT = join(DISTRIBUTION_ROOT, ".deploy");
 const DEFAULT_BASE_URL = "https://attend-cli.matthewwilsonsiu.workers.dev";
 const TOKEN = /\{\{([A-Z0-9_]+)\}\}/gu;
 const RELEASE_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
+const RELEASE_FILENAMES = Object.freeze({
+  "@siunami/attend": (version) => `siunami-attend-${version}.tgz`,
+  "attend-local": (version) => `attend-local-${version}.tgz`,
+});
 
 function parseArguments(argv) {
   const options = { output: DEFAULT_OUTPUT, baseUrl: DEFAULT_BASE_URL };
@@ -121,16 +125,17 @@ function releaseUrlPath(value, label) {
 async function validateRetainedRelease(directory, version) {
   const manifestPath = join(directory, "manifest.json");
   const manifest = await releaseManifest(manifestPath);
+  const expectedFilename = RELEASE_FILENAMES[manifest.package]?.(version);
   if (
     manifest.schemaVersion !== 1 ||
     manifest.kind !== "attend-cli-release" ||
-    manifest.package !== "attend-local" ||
+    !expectedFilename ||
     manifest.version !== version
   ) {
     throw new Error(`Retained release manifest does not match releases/${version}`);
   }
 
-  const filename = `attend-local-${version}.tgz`;
+  const filename = expectedFilename;
   if (manifest.tarball?.filename !== filename) {
     throw new Error(`Retained release ${version} has an unexpected tarball filename`);
   }
@@ -275,7 +280,7 @@ function installPrompt({ version, installScriptUrl, digest, catalog }) {
     `${counts.unavailable ?? 0} unavailable`,
   ].join(", ");
   return [
-    "Install Attend Local " + version + " in this project for me.",
+    "Install Attend " + version + " in this project for me.",
     "",
     "Treat the current repository as the only project root. Do not upload its files or scan outside it.",
     "",

@@ -1604,7 +1604,7 @@ test("CLI exposes the fixed-root host bridge over stdio MCP", async (t) => {
   assert.equal(stderr.text(), "");
   const messages = stdout.text().trim().split("\n").map((line) => JSON.parse(line));
   assert.deepEqual(messages.map((message) => message.id), [1, 2]);
-  assert.equal(messages[0].result.serverInfo.name, "attend-local");
+  assert.equal(messages[0].result.serverInfo.name, "@siunami/attend");
   assert.deepEqual(
     messages[1].result.tools.map((tool) => tool.name),
     ["attend_wait_for_question", "attend_rebind_question", "attend_reply"],
