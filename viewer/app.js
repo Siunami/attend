@@ -2,6 +2,33 @@ import { atlasPackageToRenderModel, isAtlasPackage } from "./package-model.js";
 import { atlasSelectionSummary, renderAtlasPackage } from "./package-renderer.js";
 
 const basePath = `${window.location.pathname.replace(/[^/]*$/, "").replace(/\/+$/, "")}/`;
+const hostAttachmentRoute = (() => {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const attachmentId = params.get("attend-host");
+  const generation = Number(params.get("attend-generation"));
+  if (
+    !/^host_[a-f0-9]{16}$/u.test(attachmentId ?? "") ||
+    !Number.isSafeInteger(generation) ||
+    generation < 1
+  ) {
+    return null;
+  }
+  return { kind: "host", attachmentId, generation };
+})();
+
+function hostBoundHref(href) {
+  const url = new URL(href, window.location.href);
+  if (hostAttachmentRoute) {
+    url.hash = new URLSearchParams({
+      "attend-host": hostAttachmentRoute.attachmentId,
+      "attend-generation": String(hostAttachmentRoute.generation),
+    }).toString();
+  }
+  return url.href;
+}
+
+const libraryReturn = document.querySelector(".library-return");
+if (libraryReturn) libraryReturn.href = hostBoundHref(libraryReturn.href);
 
 const elements = {
   workspace: document.getElementById("workspace"),
@@ -10,6 +37,10 @@ const elements = {
   chatToggle: document.getElementById("chat-toggle"),
   chatClose: document.getElementById("chat-close"),
   chatScroll: document.getElementById("chat-scroll"),
+  chatRoute: document.getElementById("chat-route"),
+  chatRouteLabel: document.getElementById("chat-route-label"),
+  chatRouteState: document.getElementById("chat-route-state"),
+  chatRouteDisclosure: document.getElementById("chat-route-disclosure"),
   corpusMeta: document.getElementById("corpus-meta"),
   question: document.getElementById("question-heading"),
   target: document.getElementById("question-target"),
@@ -32,6 +63,7 @@ const elements = {
 
 let dataPackage;
 let session;
+let chat;
 let pending = false;
 let chatOpen = false;
 let chatPinned = true;
@@ -39,7 +71,12 @@ let draftSelectionKey = null;
 let atlasRenderRevision = 0;
 
 function apiUrl(path) {
-  return `${basePath}api/${path}`;
+  const url = new URL(`${basePath}api/${path}`, window.location.origin);
+  if (hostAttachmentRoute) {
+    url.searchParams.set("attend-host", hostAttachmentRoute.attachmentId);
+    url.searchParams.set("attend-generation", String(hostAttachmentRoute.generation));
+  }
+  return url.href;
 }
 
 async function request(path, options = {}) {
@@ -68,6 +105,91 @@ function unwrapSession(payload) {
 
 function unwrapArtifact(payload) {
   return payload.package || payload.artifact || payload.dataPackage || payload;
+}
+
+function chatProjection(payload) {
+  return payload?.chat ?? payload?.session?.chat ?? null;
+}
+
+function acceptChatProjection(payload) {
+  const next = chatProjection(payload);
+  if (!next) return false;
+  const changed = JSON.stringify(next) !== JSON.stringify(chat);
+  chat = next;
+  return changed;
+}
+
+function activeChatRoute() {
+  const active = chat?.active;
+  if (active?.kind === "local" && active.model === "gpt-oss-20b") {
+    return active;
+  }
+  if (
+    active?.kind === "detached" &&
+    (active.adapter === "codex-cli" || active.adapter === "claude-cli")
+  ) {
+    return active;
+  }
+  if (active?.kind === "host") return active;
+  return {
+    kind: "local",
+    model: "gpt-oss-20b",
+    label: "Private AI on this Mac",
+    available: false,
+    disclosure: "Checking the private local model.",
+  };
+}
+
+function detachedProviderLabel(adapter) {
+  return adapter === "claude-cli" ? "Claude CLI" : "Codex CLI";
+}
+
+function renderChatRoute() {
+  const route = activeChatRoute();
+  elements.chatRoute.dataset.routeKind = route.kind;
+  if (route.kind === "local") {
+    elements.chatRoute.dataset.capability = route.available === false ? "restarting" : "ready";
+    elements.chatRouteLabel.textContent = "Private AI · gpt-oss-20b";
+    elements.chatRouteState.textContent = route.available === false ? "Restarting" : "On this Mac";
+    elements.chatRouteDisclosure.textContent = route.disclosure
+      || "Questions and selected evidence stay on this Mac.";
+    return;
+  }
+  if (route.kind === "detached") {
+    const provider = detachedProviderLabel(route.adapter);
+    elements.chatRouteLabel.textContent = `Detached fallback: ${provider}`;
+    if (route.available === false) {
+      elements.chatRoute.dataset.capability = "unavailable";
+      elements.chatRouteState.textContent = "Unavailable";
+    } else if (route.authenticated === false) {
+      elements.chatRoute.dataset.capability = "sign-in-required";
+      elements.chatRouteState.textContent = "Sign-in required";
+    } else {
+      elements.chatRoute.dataset.capability = "ready";
+      elements.chatRouteState.textContent = "Ready";
+    }
+    elements.chatRouteDisclosure.textContent = route.disclosure
+      || `Selected evidence is sent to the explicitly selected ${provider} fallback.`;
+    return;
+  }
+
+  if (route.ownership === "unattached" || route.registered === false) {
+    elements.chatRoute.dataset.capability = "unattached";
+    elements.chatRouteLabel.textContent = "Host not attached";
+    elements.chatRouteState.textContent = "Open from Attend";
+    elements.chatRouteDisclosure.textContent = route.disclosure
+      || "Sidebar chat is unavailable from this unbound library link.";
+    return;
+  }
+  elements.chatRoute.dataset.capability = route.listener || "not-listening";
+  elements.chatRouteLabel.textContent = `Host attached · ${route.label || "Opening coding agent"}`;
+  elements.chatRouteState.textContent = route.listener === "delivered"
+    ? "Delivered"
+    : route.listener === "listening"
+      ? "Listening"
+      : "No active listener";
+  elements.chatRouteDisclosure.textContent = route.disclosure
+    || "Questions and selected evidence return to the coding agent that opened this view through that agent's configured provider route.";
 }
 
 function countLabel(count) {
@@ -117,6 +239,12 @@ function atlasSelectedMarks(value = session) {
   }
 }
 
+function atlasSelectedFocus(value = session) {
+  const focus = value?.selection?.focus ?? value?.state?.focus ?? null;
+  if (focus?.kind !== "node" || typeof focus.id !== "string" || !focus.id) return null;
+  return { kind: "node", id: focus.id, label: focus.label ?? focus.id };
+}
+
 function markContextSummary(mark) {
   return `${mark.occurrenceCount} ${countLabel(mark.occurrenceCount)} across ${mark.distinctSourceCount} ${sourceLabel(mark.distinctSourceCount)}`;
 }
@@ -129,6 +257,8 @@ function currentSuggestedQuestion() {
   if (atlasMode()) {
     const marks = atlasSelectedMarks();
     if (!marks.length) return "";
+    const focus = atlasSelectedFocus();
+    if (focus) return `What role does the selected “${focus.label}” component play in this view?`;
     if (marks.length === 1) return `What does the selected “${marks[0].label}” reveal about this view?`;
     return `What patterns connect these ${marks.length} selected marks?`;
   }
@@ -151,6 +281,7 @@ function semanticAttachmentKey(value = session) {
     dataHash: selection.dataHash,
     map: selection.map,
     selectedMarkIds: selection.selectedMarkIds,
+    focus: selection.focus,
     predicate: selection.predicate,
     filters: selection.filters,
     aggregation: selection.aggregation,
@@ -209,20 +340,26 @@ function closeChat({ restoreFocus = true } = {}) {
 function syncComposer() {
   const suggestedQuestion = currentSuggestedQuestion();
   const responseActive = hasActiveResponse();
+  const route = activeChatRoute();
+  const hostUnattached = route.kind === "host" && route.registered === false;
   const showSuggestion = Boolean(
-    suggestedQuestion && elements.input.value === "" && !responseActive,
+    suggestedQuestion && elements.input.value === "" && !responseActive && !hostUnattached,
   );
   elements.suggestion.hidden = !showSuggestion;
   elements.suggestionText.textContent = showSuggestion ? suggestedQuestion : "";
-  elements.input.placeholder = showSuggestion ? "" : "Ask about this view";
+  elements.input.placeholder = hostUnattached
+    ? "Sidebar chat is unavailable from this library link."
+    : showSuggestion
+      ? ""
+      : "Ask about this view";
   if (showSuggestion) {
     elements.input.setAttribute("aria-describedby", "suggested-question");
   } else {
     elements.input.removeAttribute("aria-describedby");
   }
-  elements.input.disabled = responseActive;
+  elements.input.disabled = responseActive || hostUnattached;
   elements.submit.disabled =
-    pending || responseActive || !elements.input.value.trim() || draftNeedsReview();
+    pending || responseActive || hostUnattached || !elements.input.value.trim() || draftNeedsReview();
 }
 
 function renderHeader() {
@@ -324,7 +461,8 @@ async function renderAtlasVisualization() {
       root: elements.atlasVisual,
       packageValue: dataPackage,
       selectedMarkIds,
-      onSelect: (markId) => selectAtlasMark(markId),
+      selectedNodeId: atlasSelectedFocus()?.id,
+      onSelect: (target) => selectAtlasTarget(target),
     });
     if (revision !== atlasRenderRevision) return;
   } catch (error) {
@@ -339,8 +477,10 @@ async function renderAtlasVisualization() {
   }
 }
 
-async function copyAtlasSelection(marks) {
-  const text = marks.map((mark) => `${mark.id}: ${mark.label}`).join("\n");
+async function copyAtlasSelection(marks, focus = null) {
+  const lines = marks.map((mark) => `${mark.id}: ${mark.label}`);
+  if (focus) lines.unshift(`component: ${focus.label}`);
+  const text = lines.join("\n");
   try {
     if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable");
     await navigator.clipboard.writeText(text);
@@ -354,6 +494,7 @@ function renderSelection() {
   elements.selection.replaceChildren();
   if (atlasMode()) {
     const marks = atlasSelectedMarks();
+    const focus = atlasSelectedFocus();
     elements.selection.hidden = marks.length === 0;
     if (!marks.length) {
       syncComposer();
@@ -365,13 +506,17 @@ function renderSelection() {
     copy.className = "attachment-copy";
     const label = document.createElement("span");
     label.className = "attachment-label";
-    label.textContent = "Attach selected marks to next message";
+    label.textContent = focus
+      ? "Attach selected component to next message"
+      : "Attach selected marks to next message";
     const names = document.createElement("strong");
     names.className = "attachment-phrase";
-    names.textContent = marks.map((mark) => mark.label).join(" · ");
+    names.textContent = focus?.label ?? marks.map((mark) => mark.label).join(" · ");
     const meta = document.createElement("span");
     meta.className = "attachment-meta";
-    meta.textContent = `${marks.length} selected mark${marks.length === 1 ? "" : "s"} · ${marks.reduce((count, mark) => count + mark.evidenceRefs.length, 0)} evidence references`;
+    meta.textContent = focus
+      ? `${marks.length} connected relationship${marks.length === 1 ? "" : "s"} · ${marks.reduce((count, mark) => count + mark.evidenceRefs.length, 0)} evidence references`
+      : `${marks.length} selected mark${marks.length === 1 ? "" : "s"} · ${marks.reduce((count, mark) => count + mark.evidenceRefs.length, 0)} evidence references`;
     copy.append(label, names, meta);
 
     const actions = document.createElement("div");
@@ -380,11 +525,11 @@ function renderSelection() {
     copyButton.type = "button";
     copyButton.className = "selection-copy";
     copyButton.textContent = "Copy selection";
-    copyButton.addEventListener("click", () => copyAtlasSelection(marks));
+    copyButton.addEventListener("click", () => copyAtlasSelection(marks, focus));
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "selection-remove attachment-remove";
-    remove.setAttribute("aria-label", "Remove selected marks");
+    remove.setAttribute("aria-label", focus ? `Remove attached component ${focus.label}` : "Remove selected marks");
     remove.textContent = "×";
     remove.addEventListener("click", clearSelection);
     actions.append(copyButton, remove);
@@ -435,13 +580,18 @@ function isLegacyContextReceipt(turn) {
 function historicalAttachment(turn) {
   if (atlasMode()) {
     const turnMarks = Array.isArray(turn.selection?.marks) ? turn.selection.marks : [];
+    const focus = turn.selection?.focus?.kind === "node" ? turn.selection.focus : null;
     const labels = turnMarks.map((mark) => mark.label ?? mark.id ?? mark.markId).filter(Boolean);
     const selectedIds = turn.selection?.selectedMarkIds ?? turn.selection?.markIds ?? [];
-    const names = labels.length ? labels : (Array.isArray(selectedIds) ? selectedIds : []);
+    const names = focus
+      ? [focus.label ?? focus.id]
+      : labels.length ? labels : (Array.isArray(selectedIds) ? selectedIds : []);
     if (!names.length) return null;
     const attachment = document.createElement("div");
     attachment.className = "turn-attachment";
-    attachment.setAttribute("aria-label", "Attached visual context for selected marks");
+    attachment.setAttribute("aria-label", focus
+      ? `Attached visual context for component ${names[0]}`
+      : "Attached visual context for selected marks");
     const label = document.createElement("span");
     label.className = "turn-attachment-label";
     label.textContent = "From visualization";
@@ -450,7 +600,9 @@ function historicalAttachment(turn) {
     selected.textContent = names.join(" · ");
     const meta = document.createElement("span");
     meta.className = "turn-attachment-meta";
-    meta.textContent = `${names.length} selected mark${names.length === 1 ? "" : "s"}`;
+    meta.textContent = focus
+      ? `${turnMarks.length} connected relationship${turnMarks.length === 1 ? "" : "s"}`
+      : `${names.length} selected mark${names.length === 1 ? "" : "s"}`;
     attachment.append(label, selected, meta);
     return attachment;
   }
@@ -478,14 +630,19 @@ function historicalAttachment(turn) {
 function linkedQuestionReference(turn) {
   if (atlasMode()) {
     const marks = Array.isArray(turn.selection?.marks) ? turn.selection.marks : [];
+    const focus = turn.selection?.focus?.kind === "node" ? turn.selection.focus : null;
     const ids = turn.selection?.selectedMarkIds ?? turn.selection?.markIds ?? [];
     const names = marks.map((mark) => mark.label ?? mark.id ?? mark.markId).filter(Boolean);
-    const selected = names.length ? names : (Array.isArray(ids) ? ids : []);
+    const selected = focus
+      ? [focus.label ?? focus.id]
+      : names.length ? names : (Array.isArray(ids) ? ids : []);
     if (!selected.length) return null;
     const reference = document.createElement("div");
     reference.className = "turn-reply-reference";
     const text = document.createElement("span");
-    text.textContent = `Using ${selected.length} selected mark${selected.length === 1 ? "" : "s"} as context · ${selected.join(" · ")}`;
+    text.textContent = focus
+      ? `Using the ${selected[0]} component and ${marks.length} connected relationship${marks.length === 1 ? "" : "s"} as context`
+      : `Using ${selected.length} selected mark${selected.length === 1 ? "" : "s"} as context · ${selected.join(" · ")}`;
     reference.append(text);
     return reference;
   }
@@ -671,16 +828,60 @@ function failedResponseMessage(errorCode) {
   return "The answer could not be generated.";
 }
 
+function questionRoute(turn) {
+  const route = turn.response?.route;
+  if (route?.kind === "local" && route.model === "gpt-oss-20b") {
+    return route;
+  }
+  if (
+    route?.kind === "detached" &&
+    (route.adapter === "codex-cli" || route.adapter === "claude-cli")
+  ) {
+    return route;
+  }
+  return { kind: "host" };
+}
+
+function activeResponseMessage(turn) {
+  const route = questionRoute(turn);
+  if (route.kind === "local") {
+    return turn.response?.status === "running"
+      ? "Answering privately on this Mac."
+      : "Waiting for the private local model.";
+  }
+  if (route.kind === "detached") {
+    const provider = detachedProviderLabel(route.adapter);
+    return turn.response?.status === "running"
+      ? `Detached fallback: ${provider} is answering.`
+      : `Detached fallback: ${provider}. Waiting for the provider.`;
+  }
+
+  const activeRoute = activeChatRoute();
+  if (activeRoute.kind === "host" && activeRoute.ownership === "another-host") {
+    return "Another coding agent owns this queued question.";
+  }
+  const listener = activeRoute.kind === "host"
+    ? activeRoute.listener
+    : "not-listening";
+  if (listener === "delivered") {
+    return "Question delivered to the coding agent that opened this view; waiting for its guarded reply.";
+  }
+  if (listener === "listening") {
+    return "Waiting for the coding agent that opened this view.";
+  }
+  return "Saved locally. Attend cannot wake an inactive agent.";
+}
+
 function responseState(turn, answeredQuestionIds) {
   if (turn.role !== "user" || answeredQuestionIds.has(turn.id)) return null;
   const status = turn.response?.status;
   let response;
   if (status === "queued" || status === "running") {
-    const thinking = document.createElement("span");
-    thinking.className = "turn-response turn-response-thinking";
-    thinking.setAttribute("role", "status");
-    thinking.textContent = "Thinking…";
-    response = thinking;
+    const active = document.createElement("span");
+    active.className = "turn-response turn-response-active";
+    active.setAttribute("role", "status");
+    active.textContent = activeResponseMessage(turn);
+    response = active;
   } else if (status === "failed") {
     const failure = document.createElement("div");
     failure.className = "turn-response turn-response-failed";
@@ -773,6 +974,7 @@ function renderConversation({ follow = false, focusTurnId = null } = {}) {
 
 function renderState({ followConversation = false, focusConversationTurnId = null } = {}) {
   elements.revision.textContent = `v${sessionRevision()}`;
+  renderChatRoute();
   renderPhrases();
   renderSelection();
   renderConversation({
@@ -782,10 +984,17 @@ function renderState({ followConversation = false, focusConversationTurnId = nul
   if (atlasMode()) renderAtlasVisualization().catch(() => {});
 }
 
-async function selectAtlasMark(markId) {
+async function selectAtlasTarget(target) {
   if (!atlasMode() || pending) return;
+  const isNode = target?.kind === "node";
+  const markId = isNode || typeof target !== "string" ? null : target;
+  if ((isNode && (typeof target.nodeId !== "string" || !target.nodeId)) || (!isNode && !markId)) return;
   const selected = atlasSelectedMarkIds();
-  if (selected.includes(String(markId))) {
+  const focus = atlasSelectedFocus();
+  const alreadySelected = isNode
+    ? focus?.id === target.nodeId
+    : focus === null && selected.includes(markId);
+  if (alreadySelected) {
     pinDraftToCurrentSelection();
     syncComposer();
     setStatus("");
@@ -795,17 +1004,20 @@ async function selectAtlasMark(markId) {
   }
   pending = true;
   syncComposer();
-  setStatus("Attaching the selected mark…");
+  setStatus(isNode ? "Attaching the selected component…" : "Attaching the selected mark…");
   try {
     const payload = await request("selection", {
       method: "POST",
-      // Atlas selection is deliberately the small untrusted browser envelope.
+      // The service re-derives a node's connected marks from the canonical package.
       body: JSON.stringify({
         sessionId: atlasSessionId(),
         revision: sessionRevision(),
-        markId: String(markId),
+        ...(target.kind === "node"
+          ? { nodeId: target.nodeId }
+          : { markId }),
       }),
     });
+    acceptChatProjection(payload);
     session = unwrapSession(payload);
     pinDraftToCurrentSelection();
     renderState();
@@ -844,6 +1056,7 @@ async function selectRow(rowId) {
         selectedIds: [rowId],
       }),
     });
+    acceptChatProjection(payload);
     session = unwrapSession(payload);
     pinDraftToCurrentSelection();
     renderState();
@@ -872,6 +1085,7 @@ async function clearSelection() {
       method: "POST",
       body: JSON.stringify(body),
     });
+    acceptChatProjection(payload);
     session = unwrapSession(payload);
     pinDraftToCurrentSelection();
     renderState();
@@ -906,6 +1120,7 @@ async function sendMessage(message) {
         message,
       }),
     });
+    acceptChatProjection(payload);
     session = unwrapSession(payload);
     elements.input.value = "";
     draftSelectionKey = null;
@@ -937,6 +1152,7 @@ async function retryQuestion(questionId) {
       method: "POST",
       body: JSON.stringify({ questionId }),
     });
+    acceptChatProjection(payload);
     session = unwrapSession(payload);
     chatPinned = true;
     renderState({ followConversation: true });
@@ -951,7 +1167,9 @@ async function retryQuestion(questionId) {
 }
 
 async function refreshState() {
-  const next = unwrapSession(await request("state"));
+  const payload = await request("state");
+  const chatChanged = acceptChatProjection(payload);
+  const next = unwrapSession(payload);
   const explicitStateRevisionIsNewer = Boolean(
     next?.state?.revision !== undefined
       && session?.state?.revision !== undefined
@@ -974,6 +1192,9 @@ async function refreshState() {
         ? "The selected marks changed while you were writing. Select them again before asking."
         : "The attached phrase changed while you were writing. Select a phrase again before asking.", true);
     }
+  } else if (chatChanged) {
+    renderChatRoute();
+    renderConversation();
   }
 }
 
@@ -1055,10 +1276,13 @@ document.addEventListener("keydown", (event) => {
 async function boot() {
   setChatOpen(false);
   try {
-    [dataPackage, session] = await Promise.all([
-      request("data").then(unwrapArtifact),
-      request("state").then(unwrapSession),
+    const [dataPayload, statePayload] = await Promise.all([
+      request("data"),
+      request("state"),
     ]);
+    dataPackage = unwrapArtifact(dataPayload);
+    acceptChatProjection(statePayload);
+    session = unwrapSession(statePayload);
     renderHeader();
     renderState({ followConversation: true });
     setStatus("");

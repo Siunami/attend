@@ -21,12 +21,20 @@ import {
   sessionPaths,
   updateSession,
 } from "./session-store.js";
+import {
+  FEEDBACK_KINDS,
+  appendExperimentEvent,
+  loadExploration,
+  publicExperiment,
+  publicExploration,
+} from "./exploration-store.js";
 import { PACKAGE_VERSION } from "./constants.js";
 
 const MAX_JSON_BYTES = 64 * 1024;
 const MAX_CHAT_CHARS = 4_000;
 const MAX_QUERY_CHARS = 500;
 const MAX_SELECTIONS = 50;
+const WORKSPACE_MUTATION_ID = /^mutation_[A-Za-z0-9._-]{8,80}$/u;
 
 const VIEWER_STATIC_ASSETS = new Map([
   ["", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -51,6 +59,13 @@ const LIBRARY_STATIC_ASSETS = new Map([
   ["index.html", { file: "library.html", type: "text/html; charset=utf-8" }],
   ["library.js", { file: "library.js", type: "text/javascript; charset=utf-8" }],
   ["library.css", { file: "library.css", type: "text/css; charset=utf-8" }],
+]);
+
+const WORKSPACE_STATIC_ASSETS = new Map([
+  ["", { file: "workspace.html", type: "text/html; charset=utf-8" }],
+  ["index.html", { file: "workspace.html", type: "text/html; charset=utf-8" }],
+  ["workspace.js", { file: "workspace.js", type: "text/javascript; charset=utf-8" }],
+  ["workspace.css", { file: "workspace.css", type: "text/css; charset=utf-8" }],
 ]);
 
 const FAMILY_LAB_STATIC_ASSETS = new Map([
@@ -78,13 +93,18 @@ const FAMILY_LAB_STATIC_ASSETS = new Map([
 
 export const PACKAGED_ATLAS_ASSET_FILES = Object.freeze(
   [...new Set(
-    [...VIEWER_STATIC_ASSETS.values(), ...FAMILY_LAB_STATIC_ASSETS.values()]
+    [
+      ...VIEWER_STATIC_ASSETS.values(),
+      ...FAMILY_LAB_STATIC_ASSETS.values(),
+      ...WORKSPACE_STATIC_ASSETS.values(),
+    ]
       .map((asset) => asset.file),
   )].sort((left, right) => left.localeCompare(right)),
 );
 
 const SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
-const LIBRARY_PROTOCOL_VERSION = 2;
+const HOST_ATTACHMENT_ID = /^host_[a-f0-9]{16}$/u;
+const LIBRARY_PROTOCOL_VERSION = 4;
 
 const SECURITY_HEADERS = Object.freeze({
   "Cache-Control": "no-store",
@@ -261,7 +281,9 @@ async function libraryPayload(root) {
   let unavailableSessionCount = 0;
   for (const sessionId of ids) {
     try {
-      sessions.push(libraryEntry(await loadSession(root, sessionId)));
+      const session = await loadSession(root, sessionId);
+      if (session.exploration) continue;
+      sessions.push(libraryEntry(session));
     } catch (error) {
       // A session may be removed between directory discovery and its read.
       if (isMissing(error)) continue;
@@ -307,7 +329,7 @@ function selectionFor(session) {
   return buildArtifactSelection(dataPackageFor(session), session.state ?? {});
 }
 
-function publicSession(session) {
+function publicSession(session, chat = null) {
   return {
     schemaVersion: session.schemaVersion,
     id: session.id,
@@ -321,12 +343,36 @@ function publicSession(session) {
     conversation: {
       turns: conversationTurns(session).map(publicConversationTurn),
     },
+    ...(chat === null ? {} : { chat }),
   };
 }
 
 function conversationTurns(session) {
   if (Array.isArray(session?.conversation)) return session.conversation;
   return Array.isArray(session?.conversation?.turns) ? session.conversation.turns : [];
+}
+
+function activeQuestionResponse(session) {
+  const turns = conversationTurns(session);
+  const answered = new Set(
+    turns
+      .filter(
+        (turn) =>
+          turn?.role === "assistant" &&
+          typeof turn.replyToTurnId === "string",
+      )
+      .map((turn) => turn.replyToTurnId),
+  );
+  const active = turns.find(
+    (turn) =>
+      turn?.role === "user" &&
+      typeof turn.id === "string" &&
+      !answered.has(turn.id) &&
+      (turn.response?.status === "queued" || turn.response?.status === "running"),
+  );
+  return active
+    ? { questionId: active.id, route: active.response.route }
+    : null;
 }
 
 function publicConversationTurn(turn) {
@@ -357,18 +403,47 @@ function validateSelection(body, dataPackage, sessionId) {
     return { revision, patch: { selectedIds } };
   }
 
-  assertOnlyKeys(body, new Set(["sessionId", "revision", "markId"]));
+  assertOnlyKeys(body, new Set(["sessionId", "revision", "markId", "nodeId"]));
   if (body.sessionId !== sessionId) {
     throw new HttpError(400, "invalid_selection", "Atlas selection sessionId does not match the routed session");
   }
   const revision = expectedRevision(body.revision);
+  const hasMarkId = Object.hasOwn(body, "markId");
+  const hasNodeId = Object.hasOwn(body, "nodeId");
+  if (hasMarkId === hasNodeId) {
+    throw new HttpError(400, "invalid_selection", "Atlas selection requires exactly one markId or nodeId");
+  }
+  if (hasNodeId) {
+    if (typeof body.nodeId !== "string" || body.nodeId.length === 0) {
+      throw new HttpError(400, "invalid_selection", "nodeId must be a selectable graph node id");
+    }
+    const knownNodes = new Set(
+      Array.isArray(dataPackage.payload?.nodes) ? dataPackage.payload.nodes.map(String) : [],
+    );
+    if (!knownNodes.has(body.nodeId)) {
+      throw new HttpError(400, "invalid_selection", `unknown Atlas node id: ${String(body.nodeId)}`);
+    }
+    const markIds = dataPackage.marks
+      .filter((mark) => String(mark.values?.source) === body.nodeId || String(mark.values?.target) === body.nodeId)
+      .map((mark) => mark.id);
+    if (markIds.length === 0 || markIds.length > MAX_SELECTIONS) {
+      throw new HttpError(400, "invalid_selection", `node must resolve to between 1 and ${MAX_SELECTIONS} evidence marks`);
+    }
+    return {
+      revision,
+      patch: { markIds, focus: { kind: "node", id: body.nodeId } },
+    };
+  }
   if (body.markId !== null && (typeof body.markId !== "string" || body.markId.length === 0)) {
     throw new HttpError(400, "invalid_selection", "markId must be a selectable mark id or null");
   }
   if (body.markId !== null && !new Set(selectableIdsForArtifact(dataPackage)).has(body.markId)) {
     throw new HttpError(400, "invalid_selection", `unknown Atlas mark id: ${String(body.markId)}`);
   }
-  return { revision, patch: { markIds: body.markId === null ? [] : [body.markId] } };
+  return {
+    revision,
+    patch: { markIds: body.markId === null ? [] : [body.markId], focus: null },
+  };
 }
 
 function validateSort(value, currentSort) {
@@ -447,7 +522,7 @@ function validateViewState(body, dataPackage, state) {
   return { revision, patch };
 }
 
-async function appendQuestion(root, analysisId, revision, message, selection) {
+async function appendQuestion(root, analysisId, revision, message, selection, route) {
   const turns = [{
     id: `turn_${randomUUID()}`,
     role: "user",
@@ -461,6 +536,7 @@ async function appendQuestion(root, analysisId, revision, message, selection) {
     expectedRevision: revision,
     turn: turns[0],
     consumeSelectedIds: true,
+    route,
   });
   const persisted = conversationTurns(session).at(-1) ?? turns[0];
   return {
@@ -484,17 +560,36 @@ function enqueueCommittedQuestion(enqueueQuestion, job) {
 }
 
 function isConflict(error) {
-  return error?.code === "CONFLICT" || error?.code === "revision_conflict" || error?.status === 409;
+  return error?.code === "CONFLICT"
+    || error?.code === "revision_conflict"
+    || error?.code === "EXPERIMENT_REVISION_CONFLICT"
+    || error?.code === "EXPERIMENT_EVENT_BUSY"
+    || error?.status === 409;
 }
 
 function isMissing(error) {
-  return error?.code === "ENOENT" || error?.code === "NOT_FOUND" || error?.code === "SESSION_NOT_FOUND" || error?.status === 404;
+  return error?.code === "ENOENT"
+    || error?.code === "NOT_FOUND"
+    || error?.code === "SESSION_NOT_FOUND"
+    || error?.code === "EXPLORATION_NOT_FOUND"
+    || error?.code === "EXPERIMENT_NOT_FOUND"
+    || error?.status === 404;
 }
 
-async function conflictResponse(response, root, analysisId) {
+async function conflictResponse(
+  response,
+  root,
+  analysisId,
+  projectChat,
+  hostRoute,
+) {
   let current;
   try {
-    current = publicSession(await loadSession(root, analysisId));
+    const session = await loadSession(root, analysisId);
+    current = publicSession(
+      session,
+      projectChat ? await projectChat(session, hostRoute) : null,
+    );
   } catch {
     current = undefined;
   }
@@ -515,6 +610,30 @@ function validateChat(body) {
     throw new HttpError(400, "invalid_chat", `message must contain 1-${MAX_CHAT_CHARS} characters`);
   }
   return { revision, selectionId: body.selectionId.trim(), message: body.message.trim() };
+}
+
+function hostRouteFromRequestTarget(target) {
+  const queryIndex = String(target ?? "").indexOf("?");
+  if (queryIndex < 0) return null;
+  const params = new URLSearchParams(String(target).slice(queryIndex + 1));
+  const attachmentIds = params.getAll("attend-host");
+  const generations = params.getAll("attend-generation");
+  if (attachmentIds.length === 0 && generations.length === 0) return null;
+  if (attachmentIds.length !== 1 || generations.length !== 1) return null;
+  const generation = Number(generations[0]);
+  if (
+    !HOST_ATTACHMENT_ID.test(attachmentIds[0]) ||
+    !/^\d+$/u.test(generations[0]) ||
+    !Number.isSafeInteger(generation) ||
+    generation < 1
+  ) {
+    return null;
+  }
+  return {
+    kind: "host",
+    attachmentId: attachmentIds[0],
+    generation,
+  };
 }
 
 function validateChatRetry(body) {
@@ -551,6 +670,20 @@ function responseLifecycleHttpError(error) {
       "only a failed response can be retried",
     );
   }
+  if (error?.code === "QUESTION_RESPONSE_ROUTE_MISMATCH") {
+    return new HttpError(
+      409,
+      "response_route_mismatch",
+      "This response belongs to a different explicit chat route. Select that route and reopen the view before retrying.",
+    );
+  }
+  if (error?.code === "ACTIVE_RESPONSE_EXISTS") {
+    return new HttpError(
+      409,
+      "active_response_exists",
+      "wait for the current response to finish before retrying another question",
+    );
+  }
   return null;
 }
 
@@ -566,6 +699,143 @@ function parseSessionRoute(route) {
     throw new HttpError(404, "not_found", "not found");
   }
   return { sessionId: match[1], route: match[2] };
+}
+
+function parseExplorationRoute(route) {
+  const match = /^e\/(exploration_[a-f0-9]{24})\/(.*)$/u.exec(route);
+  if (!match) return null;
+  return { explorationId: match[1], route: match[2] };
+}
+
+function parseWorkspaceMutationRoute(route) {
+  const match = /^api\/experiments\/(experiment_[a-f0-9]{24})\/(star|feedback)$/u.exec(route);
+  return match ? { experimentId: match[1], action: match[2] } : null;
+}
+
+function workspaceMutationId(body) {
+  if (typeof body.mutationId !== "string" || !WORKSPACE_MUTATION_ID.test(body.mutationId)) {
+    throw new HttpError(400, "invalid_request", "mutationId must be a valid workspace mutation id");
+  }
+  return body.mutationId;
+}
+
+function feedbackCounts(feedback) {
+  const counts = {};
+  for (const item of feedback) counts[item.kind] = (counts[item.kind] ?? 0) + 1;
+  return counts;
+}
+
+function workspaceExperiment(experiment) {
+  const started = experiment.events.filter((event) => event.kind === "execution-started");
+  const completed = [...experiment.events].reverse().find(
+    (event) => event.kind === "execution-completed",
+  );
+  const failed = [...experiment.events].reverse().find(
+    (event) => event.kind === "execution-failed",
+  );
+  const lastEvent = experiment.events.at(-1);
+  return {
+    id: experiment.id,
+    explorationId: experiment.explorationId,
+    revision: experiment.events.length,
+    createdAt: experiment.admittedAt,
+    updatedAt: lastEvent?.at ?? experiment.admittedAt,
+    hypothesis: {
+      text: experiment.hypothesis,
+      whyUseful: experiment.whyUseful,
+      baseline: experiment.baseline,
+      origin: experiment.origin,
+      analysisMode: experiment.analysisMode,
+      timing: experiment.timing,
+    },
+    representation: experiment.representation,
+    sourceScope: experiment.sourceScope,
+    comparisonCount: experiment.comparisonCount,
+    ...(experiment.parentExperimentId === undefined
+      ? {}
+      : { parentExperimentId: experiment.parentExperimentId }),
+    execution: {
+      status: experiment.execution,
+      attemptCount: started.length || (completed || failed ? 1 : 0),
+      ...(started.length ? { startedAt: started.at(-1).at } : {}),
+      ...(completed ? { completedAt: completed.at } : {}),
+      ...(failed ? { failedAt: failed.at, error: failed.payload } : {}),
+    },
+    outcome: experiment.assessment
+      ? {
+          kind: experiment.outcome,
+          summary: experiment.assessment.summary,
+        }
+      : null,
+    assessment: experiment.assessment
+      ? {
+          whatSurfaced: experiment.assessment.summary,
+          rationale: experiment.assessment.rationale,
+          evidenceStrength: experiment.assessment.evidenceStrength,
+          interestingness: experiment.assessment.interestingness,
+          transformations: experiment.assessment.transformations,
+          omissions: experiment.assessment.omissions,
+          limitations: experiment.assessment.limitations,
+          factors: [
+            ...experiment.assessment.transformations,
+            ...experiment.assessment.omissions,
+          ],
+        }
+      : null,
+    promotion: experiment.promotion
+      ? {
+          promotedAt: experiment.promotion.at,
+          rationale: experiment.promotion.rationale,
+        }
+      : null,
+    human: {
+      starred: experiment.humanStarred,
+      starredAt: experiment.starChangedAt,
+      disposition: experiment.humanDisposition,
+    },
+    feedbackSummary: feedbackCounts(experiment.feedback),
+    feedback: experiment.feedback,
+    artifact: experiment.result
+      ? {
+          analysisId: experiment.result.analysisId,
+          sessionId: experiment.result.sessionId,
+          packageHash: experiment.result.packageHash,
+          href: `../../s/${encodeURIComponent(experiment.result.sessionId)}/`,
+        }
+      : null,
+    history: experiment.events,
+  };
+}
+
+async function workspacePayload(root, explorationId) {
+  const projected = await publicExploration({ root, explorationId });
+  return {
+    schemaVersion: 1,
+    exploration: {
+      ...projected.exploration,
+      counts: {
+        experiments: projected.counts.total,
+        queued: projected.counts.queued,
+        running: projected.counts.running,
+        completed: projected.counts.completed,
+        failed: projected.counts.failed,
+        attempted: projected.counts.attempted,
+        comparisonsDeclared: projected.counts.comparisonsDeclared,
+        comparisonsAttempted: projected.counts.comparisonsAttempted,
+        promoted: projected.counts.promoted,
+        starred: projected.counts.starred,
+      },
+    },
+    experiments: projected.experiments.map(workspaceExperiment),
+  };
+}
+
+async function workspaceExperimentResponse(root, explorationId, experimentId) {
+  const experiment = await publicExperiment({ root, experimentId });
+  if (experiment.explorationId !== explorationId) {
+    throw new HttpError(404, "not_found", "not found");
+  }
+  return { ok: true, experiment: workspaceExperiment(experiment) };
 }
 
 /**
@@ -586,6 +856,9 @@ export async function createViewerServer({
   token: suppliedToken,
   instanceId: suppliedInstanceId,
   enqueueQuestion,
+  resolveQuestionRoute,
+  chatCapability,
+  serviceChat,
 }) {
   if (typeof root !== "string" || !root) throw new TypeError("root is required");
   if (analysisId !== undefined && (typeof analysisId !== "string" || !SESSION_ID.test(analysisId))) {
@@ -597,6 +870,15 @@ export async function createViewerServer({
   if (enqueueQuestion !== undefined && typeof enqueueQuestion !== "function") {
     throw new TypeError("enqueueQuestion must be a function when supplied");
   }
+  if (resolveQuestionRoute !== undefined && typeof resolveQuestionRoute !== "function") {
+    throw new TypeError("resolveQuestionRoute must be a function when supplied");
+  }
+  if (chatCapability !== undefined && typeof chatCapability !== "function") {
+    throw new TypeError("chatCapability must be a function when supplied");
+  }
+  if (serviceChat !== undefined && (!serviceChat || typeof serviceChat !== "object" || Array.isArray(serviceChat))) {
+    throw new TypeError("serviceChat must be an object when supplied");
+  }
 
   const token = makeToken(suppliedToken);
   const instanceId = makeInstanceId(suppliedInstanceId);
@@ -604,6 +886,34 @@ export async function createViewerServer({
   const assetRoot = resolve(assetsDir);
   let origin = null;
   let authority = null;
+
+  const questionRouteFor = async (sessionId, hostRoute) => {
+    const route = resolveQuestionRoute
+      ? await resolveQuestionRoute({ root, sessionId, hostRoute })
+      : enqueueQuestion
+        ? { kind: "detached", adapter: "codex-cli" }
+        : null;
+    if (route === null) return null;
+    if (!route || typeof route !== "object" || Array.isArray(route)) {
+      throw new Error("The configured chat route is invalid");
+    }
+    return route;
+  };
+  const projectChat = async (session, hostRoute) => {
+    if (!chatCapability) return null;
+    const activeResponse = activeQuestionResponse(session);
+    return chatCapability({
+      root,
+      sessionId: session.id,
+      hostRoute,
+      responseRoute: activeResponse?.route ?? null,
+      responseQuestionId: activeResponse?.questionId ?? null,
+    });
+  };
+  const publicProjectSession = async (session, hostRoute) => publicSession(
+    session,
+    await projectChat(session, hostRoute),
+  );
 
   // Fail before opening a socket if a backwards-compatible default session was
   // requested but does not satisfy the minimal viewer contract.
@@ -620,7 +930,9 @@ export async function createViewerServer({
       // Route against the raw request target. URL parsing normalizes dot
       // segments before pathname inspection, which could otherwise turn a
       // traversal-shaped request into a valid library route.
-      const rawPath = String(request.url ?? "/").split("?", 1)[0];
+      const rawTarget = String(request.url ?? "/");
+      const rawPath = rawTarget.split("?", 1)[0];
+      const requestHostRoute = hostRouteFromRequestTarget(rawTarget);
       if (!rawPath.startsWith(basePath)) {
         throw new HttpError(404, "not_found", "not found");
       }
@@ -632,6 +944,25 @@ export async function createViewerServer({
           if (!familyAsset) throw new HttpError(404, "not_found", "not found");
           await sendAsset(response, request.method, assetRoot, familyAsset);
           return;
+        }
+
+        const explorationRoute = parseExplorationRoute(route);
+        if (explorationRoute) {
+          await loadExploration({ root, explorationId: explorationRoute.explorationId });
+          const workspaceAsset = WORKSPACE_STATIC_ASSETS.get(explorationRoute.route);
+          if (workspaceAsset) {
+            await sendAsset(response, request.method, assetRoot, workspaceAsset);
+            return;
+          }
+          if (explorationRoute.route === "api/exploration") {
+            sendJson(
+              response,
+              200,
+              await workspacePayload(root, explorationRoute.explorationId),
+            );
+            return;
+          }
+          throw new HttpError(404, "not_found", "not found");
         }
 
         const libraryAsset = LIBRARY_STATIC_ASSETS.get(route);
@@ -647,7 +978,8 @@ export async function createViewerServer({
             protocolVersion: LIBRARY_PROTOCOL_VERSION,
             packageVersion: PACKAGE_VERSION,
             instanceId,
-            sessionCount: (await sessionIds(root)).length,
+            sessionCount: (await libraryPayload(root)).sessions.length,
+            ...(serviceChat === undefined ? {} : { chat: serviceChat }),
           });
           return;
         }
@@ -668,12 +1000,14 @@ export async function createViewerServer({
           return;
         }
         if (sessionRoute.route === "api/health") {
+          const projectedChat = await projectChat(session, requestHostRoute);
           sendJson(response, 200, {
             ok: true,
             analysisId: session.analysisId ?? dataPackageFor(session).id,
             sessionId: session.id,
             revision: session.state?.revision ?? 0,
             dataPackageId: dataPackageFor(session).id,
+            ...(projectedChat === null ? {} : { chat: projectedChat }),
           });
           return;
         }
@@ -686,13 +1020,97 @@ export async function createViewerServer({
           return;
         }
         if (sessionRoute.route === "api/state") {
-          sendJson(response, 200, publicSession(session));
+          sendJson(response, 200, await publicProjectSession(session, requestHostRoute));
           return;
         }
         throw new HttpError(404, "not_found", "not found");
       }
 
       if (request.method === "POST") {
+        const explorationRoute = parseExplorationRoute(route);
+        if (explorationRoute) {
+          await loadExploration({ root, explorationId: explorationRoute.explorationId });
+          if (request.headers.origin !== origin) {
+            throw new HttpError(403, "origin_forbidden", "mutation requires the viewer's exact Origin header");
+          }
+          const mutation = parseWorkspaceMutationRoute(explorationRoute.route);
+          if (!mutation) throw new HttpError(404, "not_found", "not found");
+          const experiment = await publicExperiment({ root, experimentId: mutation.experimentId });
+          if (experiment.explorationId !== explorationRoute.explorationId) {
+            throw new HttpError(404, "not_found", "not found");
+          }
+          const body = await readJsonBody(request);
+          if (mutation.action === "star") {
+            assertOnlyKeys(body, new Set(["starred", "mutationId", "expectedRevision"]));
+            if (typeof body.starred !== "boolean") {
+              throw new HttpError(400, "invalid_request", "starred must be a boolean");
+            }
+            const mutationId = workspaceMutationId(body);
+            const revision = expectedRevision(body.expectedRevision);
+            await appendExperimentEvent({
+              root,
+              experimentId: mutation.experimentId,
+              kind: "human-star-changed",
+              payload: { starred: body.starred },
+              actor: "human",
+              idempotencyKey: mutationId,
+              expectedRevision: revision,
+              dedupeConsecutive: true,
+            });
+          } else {
+            assertOnlyKeys(body, new Set(["kind", "note", "mutationId", "expectedRevision"]));
+            if (typeof body.kind !== "string") {
+              throw new HttpError(400, "invalid_request", "feedback kind must be a string");
+            }
+            const mutationId = workspaceMutationId(body);
+            const revision = expectedRevision(body.expectedRevision);
+            if (["dismissed", "acted-upon"].includes(body.kind)) {
+              if (body.note !== undefined) {
+                throw new HttpError(400, "invalid_request", "dispositions do not accept a note");
+              }
+              await appendExperimentEvent({
+                root,
+                experimentId: mutation.experimentId,
+                kind: "human-disposition-recorded",
+                payload: { disposition: body.kind },
+                actor: "human",
+                idempotencyKey: mutationId,
+                expectedRevision: revision,
+                dedupeConsecutive: true,
+              });
+            } else {
+              if (!FEEDBACK_KINDS.includes(body.kind)) {
+                throw new HttpError(400, "invalid_request", "feedback kind is not supported");
+              }
+              if (body.note !== undefined && (typeof body.note !== "string" || !body.note.trim())) {
+                throw new HttpError(400, "invalid_request", "feedback note must be a non-empty string");
+              }
+              await appendExperimentEvent({
+                root,
+                experimentId: mutation.experimentId,
+                kind: "feedback-recorded",
+                payload: {
+                  kind: body.kind,
+                  ...(body.note === undefined ? {} : { note: body.note }),
+                },
+                actor: "human",
+                idempotencyKey: mutationId,
+                expectedRevision: revision,
+              });
+            }
+          }
+          sendJson(
+            response,
+            200,
+            await workspaceExperimentResponse(
+              root,
+              explorationRoute.explorationId,
+              mutation.experimentId,
+            ),
+          );
+          return;
+        }
+
         const sessionRoute = parseSessionRoute(route);
         if (!sessionRoute) throw new HttpError(404, "not_found", "not found");
         routedSessionId = sessionRoute.sessionId;
@@ -707,9 +1125,17 @@ export async function createViewerServer({
           const { revision, patch } = validateSelection(body, dataPackage, routedSessionId);
           try {
             const updated = await patchSession(root, routedSessionId, revision, patch);
-            sendJson(response, 200, publicSession(updated));
+            sendJson(response, 200, await publicProjectSession(updated, requestHostRoute));
           } catch (error) {
-            if (isConflict(error)) return conflictResponse(response, root, routedSessionId);
+            if (isConflict(error)) {
+              return conflictResponse(
+                response,
+                root,
+                routedSessionId,
+                projectChat,
+                requestHostRoute,
+              );
+            }
             throw error;
           }
           return;
@@ -718,9 +1144,17 @@ export async function createViewerServer({
           const { revision, patch } = validateViewState(body, dataPackage, session.state);
           try {
             const updated = await patchSession(root, routedSessionId, revision, patch);
-            sendJson(response, 200, publicSession(updated));
+            sendJson(response, 200, await publicProjectSession(updated, requestHostRoute));
           } catch (error) {
-            if (isConflict(error)) return conflictResponse(response, root, routedSessionId);
+            if (isConflict(error)) {
+              return conflictResponse(
+                response,
+                root,
+                routedSessionId,
+                projectChat,
+                requestHostRoute,
+              );
+            }
             throw error;
           }
           return;
@@ -729,17 +1163,32 @@ export async function createViewerServer({
           const questionId = validateChatRetry(body);
           let retried;
           try {
+            const retryRoute = await questionRouteFor(
+              routedSessionId,
+              requestHostRoute,
+            );
+            if (!retryRoute) {
+              throw new HttpError(
+                409,
+                "chat_route_unavailable",
+                "No coding agent is attached to this visualization. Open it again from Attend before retrying.",
+              );
+            }
             retried = await retryQuestionResponse({
               root,
               sessionId: routedSessionId,
               questionId,
+              expectedRoute: retryRoute,
             });
           } catch (error) {
             const httpError = responseLifecycleHttpError(error);
             if (httpError) throw httpError;
             throw error;
           }
-          const publicUpdated = publicSession(retried.session);
+          const publicUpdated = await publicProjectSession(
+            retried.session,
+            requestHostRoute,
+          );
           sendJson(response, 200, {
             ok: true,
             status: "queued",
@@ -751,6 +1200,7 @@ export async function createViewerServer({
             root,
             sessionId: routedSessionId,
             questionId,
+            route: retried.question.response?.route,
           });
           return;
         }
@@ -758,10 +1208,34 @@ export async function createViewerServer({
           const { revision, selectionId, message } = validateChat(body);
           const selection = selectionFor(session);
           if (session.state?.revision !== revision || selection.id !== selectionId) {
-            return conflictResponse(response, root, routedSessionId);
+            return conflictResponse(
+              response,
+              root,
+              routedSessionId,
+              projectChat,
+              requestHostRoute,
+            );
           }
           try {
-            const appended = await appendQuestion(root, routedSessionId, revision, message, selection);
+            const questionRoute = await questionRouteFor(
+              routedSessionId,
+              requestHostRoute,
+            );
+            if (!questionRoute) {
+              throw new HttpError(
+                409,
+                "chat_route_unavailable",
+                "No coding agent is attached to this visualization. Open it again from Attend before asking.",
+              );
+            }
+            const appended = await appendQuestion(
+              root,
+              routedSessionId,
+              revision,
+              message,
+              selection,
+              questionRoute,
+            );
             const updated = appended.session;
             const publicQuestion = publicConversationTurn(
               appended.persistedQuestion,
@@ -772,15 +1246,24 @@ export async function createViewerServer({
               revision: updated.state?.revision ?? revision + 1,
               selectionId,
               question: publicQuestion,
-              session: publicSession(updated),
+              session: await publicProjectSession(updated, requestHostRoute),
             });
             enqueueCommittedQuestion(enqueueQuestion, {
               root,
               sessionId: routedSessionId,
               questionId: appended.persistedQuestion.id,
+              route: questionRoute,
             });
           } catch (error) {
-            if (isConflict(error)) return conflictResponse(response, root, routedSessionId);
+            if (isConflict(error)) {
+              return conflictResponse(
+                response,
+                root,
+                routedSessionId,
+                projectChat,
+                requestHostRoute,
+              );
+            }
             if (error?.code === "ACTIVE_RESPONSE_EXISTS") {
               throw new HttpError(
                 409,
@@ -808,7 +1291,13 @@ export async function createViewerServer({
       }
       if (isConflict(error)) {
         if (routedSessionId) {
-          await conflictResponse(response, root, routedSessionId);
+          await conflictResponse(
+            response,
+            root,
+            routedSessionId,
+            projectChat,
+            requestHostRoute,
+          );
           return;
         }
         sendJson(response, 409, errorBody("revision_conflict", "the viewer state changed"));

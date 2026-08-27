@@ -93,6 +93,7 @@ class MiniElement {
     this.attributes = new Map();
     this.children = [];
     this.parentNode = null;
+    this.listeners = new Map();
     this._text = "";
     const owner = this;
     this.dataset = new Proxy({}, {
@@ -119,13 +120,22 @@ class MiniElement {
   setAttribute(name, value) { this.attributes.set(String(name), String(value)); }
   getAttribute(name) { return this.attributes.get(String(name)) ?? null; }
   removeAttribute(name) { this.attributes.delete(String(name)); }
-  addEventListener() {}
-  dispatchEvent() { return true; }
+  addEventListener(type, listener) {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+  dispatchEvent(event) {
+    for (const listener of this.listeners.get(event.type) ?? []) listener(event);
+    return true;
+  }
+  click() { this.dispatchEvent({ type: "click" }); }
   querySelectorAll(selector) {
+    const attribute = /^\[([a-z-]+)\]$/u.exec(selector)?.[1] ?? null;
     const matches = [];
     const visit = (node) => {
       for (const child of node.children ?? []) {
-        if (child?.getAttribute?.("data-mark-id") !== null && selector === "[data-mark-id]") matches.push(child);
+        if (attribute && child?.getAttribute?.(attribute) !== null) matches.push(child);
         visit(child);
       }
     };
@@ -691,6 +701,7 @@ test("sequence, flow, mechanism, and region views preserve their governed semant
     );
     assert.ok(flow.querySelectorAll("[data-mark-id]").every((node) => /value/u.test(node.getAttribute("aria-label") ?? "")));
 
+    const selectedTargets = [];
     const mechanism = new MiniElement("div");
     await renderFamily({
       root: mechanism,
@@ -699,22 +710,48 @@ test("sequence, flow, mechanism, and region views preserve their governed semant
         title: "Observed system",
         roles: { id: "id", label: "label", group: "group" },
         records: [
-          { id: "source", label: "Source", group: "Stage 1" },
           { id: "check", label: "Check", group: "Stage 2" },
+          { id: "normalize", label: "Normalize", group: "Stage 2" },
+          { id: "compile", label: "Compile", group: "Stage 2" },
+          { id: "resolve", label: "Resolve", group: "Stage 2" },
           { id: "view", label: "View", group: "Stage 3" },
+          { id: "source", label: "Source", group: "Stage 1" },
         ],
         links: [
           { id: "mechanism-a", source: "source", target: "check", type: "validates" },
-          { id: "mechanism-b", source: "check", target: "view", type: "renders" },
+          { id: "mechanism-b", source: "source", target: "normalize", type: "normalizes" },
+          { id: "mechanism-c", source: "source", target: "compile", type: "compiles" },
+          { id: "mechanism-d", source: "source", target: "resolve", type: "resolves" },
+          { id: "mechanism-e", source: "check", target: "view", type: "renders" },
         ],
       },
-      selectableMarkIds: ["mechanism-a", "mechanism-b"],
+      selectableMarkIds: ["mechanism-a", "mechanism-b", "mechanism-c", "mechanism-d", "mechanism-e"],
+      onSelect: (target) => selectedTargets.push(target),
     });
     const mechanismSvg = descendants(mechanism).find((node) => node.tagName === "svg");
     assert.equal(mechanismSvg?.getAttribute("data-layout"), "evidence-flowchart");
     assert.match(mechanism.textContent, /validates/u);
     assert.match(mechanism.textContent, /renders/u);
     assert.match(mechanism.textContent, /not causal strength/u);
+    assert.ok(
+      Number(mechanismSvg?.getAttribute("viewBox")?.split(" ").at(-1)) > 450,
+      "the canvas must grow when a stage contains more nodes than the default height fits",
+    );
+    const stageLabels = descendants(mechanism)
+      .filter((node) => /^Stage [123]$/u.test(node.textContent))
+      .sort((left, right) => Number(left.getAttribute("x")) - Number(right.getAttribute("x")))
+      .map((node) => node.textContent);
+    assert.deepEqual(stageLabels, ["Stage 1", "Stage 2", "Stage 3"]);
+    const sourceNode = mechanism.querySelectorAll("[data-node-id]")
+      .find((node) => node.getAttribute("data-node-id") === "source");
+    assert.deepEqual(
+      [...new Set(mechanism.querySelectorAll("[data-node-id]").map((node) => node.children[0]?.getAttribute("class")))],
+      ["mark-primary"],
+      "peer components cannot imply unsupported categories through decorative color",
+    );
+    assert.equal(sourceNode?.getAttribute("role"), "button");
+    sourceNode?.click();
+    assert.deepEqual(selectedTargets, [{ kind: "node", nodeId: "source" }]);
 
     const region = new MiniElement("div");
     await renderFamily({

@@ -18,14 +18,23 @@ import {
   readJson,
   writeJsonAtomic,
 } from "./project.js";
-import { createCodexAgentRunner } from "./agent-runner.js";
+import { createDetachedAgentRunner } from "./agent-runner.js";
+import {
+  readChatRoute,
+  resolveChatRoute,
+  safeChatCapability,
+  sameChatRoute,
+  setChatRoute,
+} from "./chat-route.js";
 import { createQuestionWorker } from "./question-worker.js";
 import { createLibraryServer } from "./server.js";
+import { pendingQuestionResponseJobs } from "./session-store.js";
+import { createLlamaCppModelRunner, LOCAL_MODEL } from "./local-model.js";
 import { PACKAGE_VERSION } from "./constants.js";
 
 const SERVICE_SCHEMA_VERSION = 1;
-const SERVICE_PROTOCOL_VERSION = 2;
-const START_TIMEOUT_MS = 8_000;
+const SERVICE_PROTOCOL_VERSION = 4;
+const START_TIMEOUT_MS = 150_000;
 const STOP_TIMEOUT_MS = 5_000;
 const HEALTH_TIMEOUT_MS = 500;
 const AGENT_PROBE_TIMEOUT_MS = 4_000;
@@ -109,11 +118,137 @@ function validateRuntime(value, config) {
     return null;
   }
   const agent = safeAgentCapability(value.agent);
-  const { agent: _untrustedAgent, ...runtime } = value;
+  const chat = safeServiceChat(value.chat);
+  const { agent: _untrustedAgent, chat: _untrustedChat, ...runtime } = value;
   return {
     ...runtime,
     ...(agent ? { agent } : {}),
+    ...(chat ? { chat } : {}),
   };
+}
+
+function safeServiceChat(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (
+    value.defaultRoute === "local" &&
+    value.transport === "owned-local-model" &&
+    value.model === LOCAL_MODEL.id
+  ) {
+    return Object.freeze({
+      defaultRoute: "local",
+      transport: "owned-local-model",
+      model: LOCAL_MODEL.id,
+    });
+  }
+  if (value.defaultRoute === "host" && value.transport === "host-bridge") {
+    return Object.freeze({ defaultRoute: "host", transport: "host-bridge" });
+  }
+  if (
+    value.defaultRoute === "detached" &&
+    value.transport === "detached-adapter" &&
+    (value.adapter === "codex-cli" || value.adapter === "claude-cli")
+  ) {
+    return Object.freeze({
+      defaultRoute: "detached",
+      transport: "detached-adapter",
+      adapter: value.adapter,
+    });
+  }
+  return null;
+}
+
+function serviceChatForRoute(route) {
+  if (route.kind === "host") {
+    return Object.freeze({ defaultRoute: "host", transport: "host-bridge" });
+  }
+  if (route.kind === "local") {
+    return Object.freeze({
+      defaultRoute: "local",
+      transport: "owned-local-model",
+      model: LOCAL_MODEL.id,
+    });
+  }
+  return Object.freeze({
+    defaultRoute: "detached",
+    transport: "detached-adapter",
+    adapter: route.adapter,
+  });
+}
+
+function routeForServiceChat(chat) {
+  const normalized = safeServiceChat(chat);
+  if (!normalized) throw new TypeError("service chat route is invalid");
+  if (normalized.defaultRoute === "host") return Object.freeze({ kind: "host" });
+  if (normalized.defaultRoute === "local") {
+    return Object.freeze({ kind: "local", model: normalized.model });
+  }
+  return Object.freeze({ kind: "detached", adapter: normalized.adapter });
+}
+
+function sameServiceChat(left, right) {
+  return Boolean(
+    left &&
+    right &&
+    left.defaultRoute === right.defaultRoute &&
+    left.transport === right.transport &&
+    left.adapter === right.adapter &&
+    left.model === right.model,
+  );
+}
+
+function configuredChatRoute(route) {
+  if (route?.kind === "host") return Object.freeze({ kind: "host" });
+  if (route?.kind === "local" && route.model === LOCAL_MODEL.id) {
+    return Object.freeze({ kind: "local", model: LOCAL_MODEL.id });
+  }
+  if (
+    route?.kind === "detached" &&
+    (route.adapter === "codex-cli" || route.adapter === "claude-cli")
+  ) {
+    return Object.freeze({ kind: "detached", adapter: route.adapter });
+  }
+  throw new TypeError("route must select gpt-oss-20b, host, codex-cli, or claude-cli");
+}
+
+function sameConfiguredChatRoute(left, right) {
+  return Boolean(
+    left &&
+    right &&
+    left.kind === right.kind &&
+    (left.kind === "host" ||
+      (left.kind === "local" ? left.model === right.model : left.adapter === right.adapter)),
+  );
+}
+
+function incompatibleActiveJob(activeJobs, requestedRoute) {
+  if (!Array.isArray(activeJobs)) {
+    throw new TypeError("listJobs must return an array");
+  }
+  return activeJobs.find(
+    (job) => !sameConfiguredChatRoute(job?.route, requestedRoute),
+  ) ?? null;
+}
+
+function activeRouteChangeError(job, { serviceRestarted = false } = {}) {
+  if (job?.legacyRouteMissing === true || job?.route == null) {
+    const error = new Error(
+      `Attend cannot choose a detached agent for route-less legacy question ${job.questionId}. Run \`attend context --json\`, answer it with \`attend reply --question-id ${job.questionId} ...\`, then run \`attend setup\` again.`,
+    );
+    error.code = "LEGACY_RESPONSE_ROUTE_REQUIRED";
+    error.sessionId = job.sessionId;
+    error.questionId = job.questionId;
+    error.serviceRestarted = serviceRestarted;
+    error.recoveryCommand = "attend context --json";
+    return error;
+  }
+  const error = new Error(
+    `Attend cannot change chat routes while question ${job.questionId} is ${job.status} for a different recipient. Answer or explicitly recover that question first.`,
+  );
+  error.code = "ACTIVE_RESPONSE_ROUTE_CHANGE";
+  error.sessionId = job.sessionId;
+  error.questionId = job.questionId;
+  error.serviceRestarted = serviceRestarted;
+  return error;
 }
 
 function currentRuntime(value) {
@@ -136,6 +271,9 @@ function safeAgentCapability(value) {
     adapter: value.adapter,
     available: value.available,
     authenticated: value.authenticated,
+    ...(value.model === LOCAL_MODEL.id ? { model: value.model } : {}),
+    ...(value.runtime === "llama.cpp" ? { runtime: value.runtime } : {}),
+    ...(value.privacy === "local-only" ? { privacy: value.privacy } : {}),
     ...(typeof value.version === "string" &&
     value.version.length <= 64 &&
     /^[A-Za-z0-9.+_-]+$/u.test(value.version)
@@ -252,6 +390,15 @@ function refuseUnverifiedLiveService(status) {
   throw error;
 }
 
+function refuseVerifiedServiceWithoutPid(status) {
+  if (status?.state !== "stale" || !status.verifiedStale || status.pidAlive) return;
+  const error = new Error(
+    "Attend verified an incompatible service at its tokenized URL, but the recorded process is no longer live. The runtime record was preserved and no process was signaled. Stop the process that owns the local URL, then run `attend setup` again.",
+  );
+  error.code = "SERVICE_PID_UNVERIFIED";
+  throw error;
+}
+
 export async function serviceStatus({ root }) {
   const projectRoot = resolve(root);
   const paths = servicePaths(projectRoot);
@@ -263,6 +410,8 @@ export async function serviceStatus({ root }) {
       state: "stopped",
       running: false,
       configured: false,
+      compatibility: "not-running",
+      hostBridgeActive: false,
       url: null,
     };
   }
@@ -278,6 +427,18 @@ export async function serviceStatus({ root }) {
   const healthy = identityMatches && currentRuntime(runtime) && currentHealth(health);
   const verifiedStale = identityMatches && !healthy;
   const pidAlive = runtime ? processExists(runtime.pid) : false;
+  const compatibility = healthy
+    ? "current"
+    : verifiedStale
+      ? "incompatible"
+      : pidAlive
+        ? "unverified"
+        : "not-running";
+  const hostBridgeActive = Boolean(
+    healthy &&
+    runtime.chat?.defaultRoute === "host" &&
+    runtime.chat.transport === "host-bridge",
+  );
 
   return {
     ok: true,
@@ -285,10 +446,13 @@ export async function serviceStatus({ root }) {
     state: healthy ? "running" : storedRuntime ? "stale" : "stopped",
     running: healthy,
     configured: true,
+    compatibility,
+    hostBridgeActive,
     url: healthy ? runtime.url : libraryUrl(config),
     preferredPort: config.preferredPort,
     ...(healthy ? { pid: runtime.pid, instanceId: runtime.instanceId, health } : {}),
     ...(healthy && runtime.agent ? { agent: runtime.agent } : {}),
+    ...(healthy && runtime.chat ? { chat: runtime.chat } : {}),
     ...(storedRuntime && !healthy ? {
       stalePid: runtime?.pid ?? null,
       staleInstanceId: runtime?.instanceId ?? null,
@@ -360,9 +524,6 @@ async function acquireStartLock(root, deadline) {
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
     }
-
-    const status = await serviceStatus({ root });
-    if (status.running) return null;
 
     await assertSafeWritePath(root, paths.lock);
     const lockStat = await stat(paths.lock).catch(() => null);
@@ -455,33 +616,114 @@ export async function startService({
   port,
   binPath = DEFAULT_BIN,
   timeoutMs = START_TIMEOUT_MS,
+  listJobs = pendingQuestionResponseJobs,
 } = {}) {
   const projectRoot = resolve(root);
   if (host !== undefined && !isLoopbackHost(host)) {
     throw new TypeError("Attend's local service host must be loopback-only");
   }
   if (port !== undefined) validatePort(port);
+  if (typeof listJobs !== "function") {
+    throw new TypeError("listJobs must be a function");
+  }
 
   const existing = await serviceStatus({ root: projectRoot });
-  if (existing.running) return { ...existing, reused: true };
   refuseUnverifiedLiveService(existing);
+  refuseVerifiedServiceWithoutPid(existing);
 
   const deadline = Date.now() + timeoutMs;
   const release = await acquireStartLock(projectRoot, deadline);
-  if (!release) {
-    const concurrent = await serviceStatus({ root: projectRoot });
-    if (concurrent.running) return { ...concurrent, reused: true };
-    throw new Error("Attend's concurrent service start did not become healthy.");
-  }
 
   try {
     let afterLock = await serviceStatus({ root: projectRoot });
-    if (afterLock.running) return { ...afterLock, reused: true };
+    const lockedRoute = await readChatRoute({ root: projectRoot });
+    const lockedChat = serviceChatForRoute(lockedRoute);
+    if (afterLock.running && sameServiceChat(afterLock.chat, lockedChat)) {
+      return { ...afterLock, reused: true };
+    }
+    if (afterLock.running) {
+      const priorRoute = routeForServiceChat(afterLock.chat);
+      const blockedJob = incompatibleActiveJob(
+        await listJobs({ root: projectRoot }),
+        lockedRoute,
+      );
+      if (blockedJob) throw activeRouteChangeError(blockedJob);
+      await stopService({ root: projectRoot });
+      afterLock = await serviceStatus({ root: projectRoot });
+      const arrivedDuringQuiesce = incompatibleActiveJob(
+        await listJobs({ root: projectRoot }),
+        lockedRoute,
+      );
+      if (arrivedDuringQuiesce) {
+        if (arrivedDuringQuiesce.route != null) {
+          await setChatRoute({ root: projectRoot, route: priorRoute });
+        }
+        const restarted = await launchOnce({
+          root: projectRoot,
+          binPath,
+          deadline: Date.now() + timeoutMs,
+        });
+        throw activeRouteChangeError(arrivedDuringQuiesce, {
+          serviceRestarted: restarted.running,
+        });
+      }
+    }
     refuseUnverifiedLiveService(afterLock);
+    refuseVerifiedServiceWithoutPid(afterLock);
     if (afterLock.verifiedStale && afterLock.pidAlive) {
+      const blockedJob = incompatibleActiveJob(
+        await listJobs({ root: projectRoot }),
+        lockedRoute,
+      );
+      if (blockedJob) throw activeRouteChangeError(blockedJob);
       await stopVerifiedStaleService({ root: projectRoot, status: afterLock });
       afterLock = await serviceStatus({ root: projectRoot });
       if (afterLock.running) return { ...afterLock, reused: true };
+      const arrivedDuringUpgrade = incompatibleActiveJob(
+        await listJobs({ root: projectRoot }),
+        lockedRoute,
+      );
+      if (arrivedDuringUpgrade) {
+        if (arrivedDuringUpgrade.route != null) {
+          await setChatRoute({
+            root: projectRoot,
+            route: configuredChatRoute(arrivedDuringUpgrade.route),
+          });
+        }
+        const restarted = await launchOnce({
+          root: projectRoot,
+          binPath,
+          deadline: Date.now() + timeoutMs,
+        });
+        throw activeRouteChangeError(arrivedDuringUpgrade, {
+          serviceRestarted: restarted.running,
+        });
+      }
+    }
+
+    const blockedBeforeLaunch = incompatibleActiveJob(
+      await listJobs({ root: projectRoot }),
+      lockedRoute,
+    );
+    if (blockedBeforeLaunch) {
+      if (blockedBeforeLaunch.route != null) {
+        await setChatRoute({
+          root: projectRoot,
+          route: configuredChatRoute(blockedBeforeLaunch.route),
+        });
+      }
+      await unlink(servicePaths(projectRoot).runtime).catch((error) => {
+        if (error?.code !== "ENOENT") throw error;
+      });
+      await ensureConfig(projectRoot, { host, port });
+      const restarted = await launchOnce({
+        root: projectRoot,
+        binPath,
+        deadline: Date.now() + timeoutMs,
+      });
+      throw activeRouteChangeError(blockedBeforeLaunch, {
+        serviceRestarted: restarted.running,
+      });
     }
 
     await unlink(servicePaths(projectRoot).runtime).catch((error) => {
@@ -507,12 +749,84 @@ export async function startService({
   }
 }
 
+/**
+ * Change the machine-local chat route only after quiescing the service. Active
+ * jobs keep their snapshotted recipient; a change is allowed only when every
+ * such job already belongs to the explicitly requested route.
+ */
+export async function changeServiceChatRoute({
+  root,
+  route,
+  timeoutMs = START_TIMEOUT_MS,
+  listJobs = pendingQuestionResponseJobs,
+} = {}) {
+  const projectRoot = resolve(root);
+  const requestedRoute = configuredChatRoute(route);
+  if (typeof listJobs !== "function") {
+    throw new TypeError("listJobs must be a function");
+  }
+  const release = await acquireStartLock(projectRoot, Date.now() + timeoutMs);
+  let wasRunning = false;
+  let blockedJob = null;
+  let stopped = false;
+  let unchangedRoute = null;
+  let operationError = null;
+  try {
+    const currentRoute = await readChatRoute({ root: projectRoot });
+    if (sameConfiguredChatRoute(currentRoute, requestedRoute)) {
+      unchangedRoute = currentRoute;
+    } else {
+      const status = await serviceStatus({ root: projectRoot });
+      wasRunning = status.running || (status.verifiedStale && status.pidAlive);
+      if (status.running || status.state === "stale") {
+        const result = await stopService({ root: projectRoot });
+        stopped = result.stopped === true;
+      }
+
+      const activeJobs = await listJobs({ root: projectRoot });
+      blockedJob = incompatibleActiveJob(activeJobs, requestedRoute);
+      if (blockedJob === null) {
+        await setChatRoute({ root: projectRoot, route: requestedRoute });
+      }
+    }
+  } catch (error) {
+    operationError = error;
+  } finally {
+    await release();
+  }
+
+  if (unchangedRoute) {
+    return {
+      route: unchangedRoute,
+      changed: false,
+      serviceStopped: false,
+    };
+  }
+
+  let restarted = false;
+  if ((blockedJob || operationError) && wasRunning && stopped) {
+    restarted = (await startService({ root: projectRoot, timeoutMs })).running;
+  }
+  if (operationError) throw operationError;
+
+  if (blockedJob) {
+    throw activeRouteChangeError(blockedJob, { serviceRestarted: restarted });
+  }
+
+  return {
+    route: requestedRoute,
+    changed: true,
+    serviceStopped: stopped,
+  };
+}
+
 export async function stopService({ root, timeoutMs = STOP_TIMEOUT_MS } = {}) {
   const projectRoot = resolve(root);
   const paths = servicePaths(projectRoot);
   const status = await serviceStatus({ root: projectRoot });
   if (!status.running) {
     refuseUnverifiedLiveService(status);
+    refuseVerifiedServiceWithoutPid(status);
     const stopped = await stopVerifiedStaleService({ root: projectRoot, status, timeoutMs });
     await unlink(paths.runtime).catch((error) => {
       if (error?.code !== "ENOENT") throw error;
@@ -539,8 +853,8 @@ export async function stopService({ root, timeoutMs = STOP_TIMEOUT_MS } = {}) {
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const current = await serviceStatus({ root: projectRoot });
-    if (!current.running || current.instanceId !== status.instanceId) {
+    if (!processExists(status.pid)) {
+      const current = await serviceStatus({ root: projectRoot });
       await removeIfInstance(paths.runtime, status.instanceId);
       return {
         ...current,
@@ -555,7 +869,14 @@ export async function stopService({ root, timeoutMs = STOP_TIMEOUT_MS } = {}) {
   throw new Error("Attend's local service did not stop after SIGTERM; it was not force-killed.");
 }
 
-export async function runForegroundService({ root, assetsDir, instanceId }) {
+export async function runForegroundService({
+  root,
+  assetsDir,
+  instanceId,
+  runnerFactory = createDetachedAgentRunner,
+  localRunnerFactory = createLlamaCppModelRunner,
+  libraryFactory = createLibraryServer,
+} = {}) {
   const projectRoot = resolve(root);
   if (!INSTANCE_PATTERN.test(instanceId ?? "")) {
     throw new TypeError("internal service instance id is invalid");
@@ -571,24 +892,144 @@ export async function runForegroundService({ root, assetsDir, instanceId }) {
 
   let library;
   let questionWorker;
+  let modelRunner;
   try {
-    const runner = createCodexAgentRunner();
-    const agent = await probeAgentRunner(runner);
-    questionWorker = createQuestionWorker({
-      root: projectRoot,
-      runner,
-      capability: agent,
-    });
-    library = await createLibraryServer({
+    const configuredRoute = await readChatRoute({ root: projectRoot });
+    const serviceChat = serviceChatForRoute(configuredRoute);
+    let agent;
+    let runner;
+    if (configuredRoute.kind === "local") {
+      modelRunner = localRunnerFactory({ projectRoot });
+      agent = safeAgentCapability(await modelRunner.start());
+      if (!agent?.available || !agent.authenticated) {
+        throw new Error("Attend's private local model did not become ready");
+      }
+      runner = modelRunner;
+    } else if (configuredRoute.kind === "detached") {
+      runner = runnerFactory(configuredRoute.adapter, {
+        projectRoot,
+      });
+      agent = await probeAgentRunner(runner);
+    }
+    if (runner) {
+      questionWorker = createQuestionWorker({
+        root: projectRoot,
+        runner,
+        capability: agent,
+        route: configuredRoute,
+      });
+    }
+
+    const resolveProjectRoute = ({ sessionId, hostRoute }) => {
+      if (configuredRoute.kind === "detached" || configuredRoute.kind === "local") {
+        return configuredRoute;
+      }
+      if (!hostRoute) return null;
+      return resolveChatRoute({
+        root: projectRoot,
+        sessionId,
+        hostRoute,
+        requireHostRoute: true,
+      });
+    };
+    const projectChatCapability = async ({
+      sessionId,
+      hostRoute,
+      responseRoute,
+      responseQuestionId,
+    }) => {
+      let route;
+      if (responseRoute?.kind === "host") {
+        route = await resolveChatRoute({
+          root: projectRoot,
+          sessionId,
+          hostRoute: responseRoute,
+          requireHostRoute: true,
+        });
+      } else if (responseRoute?.kind === "detached" || responseRoute?.kind === "local") {
+        route = responseRoute;
+      } else {
+        route = await resolveProjectRoute({ sessionId, hostRoute });
+      }
+      const capability = await safeChatCapability({
+        root: projectRoot,
+        route,
+        questionId: responseQuestionId,
+      });
+      if (capability.kind === "local") {
+        const live = safeAgentCapability(await modelRunner.capability());
+        return {
+          defaultRoute: "local",
+          active: {
+            kind: "local",
+            model: LOCAL_MODEL.id,
+            label: "Private AI on this Mac",
+            available: live?.available === true,
+            disclosure: "Questions and selected evidence stay on this Mac.",
+          },
+        };
+      }
+      if (capability.kind === "host") {
+        const ownership = responseRoute?.kind === "host"
+          ? hostRoute && sameChatRoute(hostRoute, responseRoute)
+            ? "this-view"
+            : "another-host"
+          : route?.kind === "host"
+            ? "this-view"
+            : "unattached";
+        const label = ownership === "another-host"
+          ? "Another coding agent"
+          : ownership === "unattached"
+            ? "No coding agent attached"
+            : "Opening coding agent";
+        return {
+          defaultRoute: "host",
+          active: {
+            kind: "host",
+            label,
+            ownership,
+            listener: capability.listenerState === "delivered"
+              ? "delivered"
+              : capability.listenerPresent
+                ? "listening"
+                : "not-listening",
+            registered: capability.availability !== "unavailable",
+            disclosure: ownership === "another-host"
+              ? "This queued question remains bound to another coding agent."
+              : ownership === "unattached"
+                ? "Sidebar chat is unavailable from this unbound library link."
+                : "Selected evidence is returned to the coding agent that opened this view through that agent's configured route.",
+          },
+        };
+      }
+      const currentAdapter =
+        configuredRoute.kind === "detached" &&
+        configuredRoute.adapter === capability.adapter;
+      return {
+        defaultRoute: "detached",
+        active: {
+          kind: "detached",
+          adapter: capability.adapter,
+          label: capability.label,
+          available: currentAdapter && agent?.available === true,
+          authenticated: currentAdapter && agent?.authenticated === true,
+          disclosure: capability.disclosure,
+        },
+      };
+    };
+    library = await libraryFactory({
       root: projectRoot,
       assetsDir,
       host: config.host,
       port: config.preferredPort,
       token: config.token,
       instanceId,
-      enqueueQuestion: questionWorker.enqueueQuestion,
+      ...(questionWorker ? { enqueueQuestion: questionWorker.enqueueQuestion } : {}),
+      resolveQuestionRoute: resolveProjectRoute,
+      chatCapability: projectChatCapability,
+      serviceChat,
     });
-    await questionWorker.recover();
+    await questionWorker?.recover();
     await writeConfig(projectRoot, { ...config, preferredPort: library.port });
     await writeJsonAtomic(paths.runtime, {
       schemaVersion: SERVICE_SCHEMA_VERSION,
@@ -599,7 +1040,8 @@ export async function runForegroundService({ root, assetsDir, instanceId }) {
       host: config.host,
       port: library.port,
       url: library.libraryUrl,
-      agent,
+      chat: serviceChat,
+      ...(agent ? { agent } : {}),
       startedAt: new Date().toISOString(),
     }, { root: projectRoot });
     await writeJsonAtomic(paths.startup, {
@@ -611,6 +1053,7 @@ export async function runForegroundService({ root, assetsDir, instanceId }) {
     }, { root: projectRoot });
   } catch (error) {
     await questionWorker?.close().catch(() => {});
+    await modelRunner?.close().catch(() => {});
     await library?.close().catch(() => {});
     await removeIfInstance(paths.runtime, instanceId).catch(() => {});
     await writeJsonAtomic(paths.startup, {
@@ -628,7 +1071,8 @@ export async function runForegroundService({ root, assetsDir, instanceId }) {
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    questionWorker.close().catch(() => {});
+    questionWorker?.close().catch(() => {});
+    modelRunner?.close().catch(() => {});
     library.close().catch(() => {});
   };
   process.once("SIGINT", shutdown);
@@ -638,7 +1082,8 @@ export async function runForegroundService({ root, assetsDir, instanceId }) {
   } finally {
     process.off("SIGINT", shutdown);
     process.off("SIGTERM", shutdown);
-    await questionWorker.close().catch(() => {});
+    await questionWorker?.close().catch(() => {});
+    await modelRunner?.close().catch(() => {});
     await removeIfInstance(paths.runtime, instanceId).catch(() => {});
   }
 }

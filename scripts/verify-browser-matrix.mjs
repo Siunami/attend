@@ -17,6 +17,10 @@ import {
   catalogReceiptForMember,
   listCatalogFamilies,
 } from "../src/catalog/index.js";
+import {
+  registerHostAttachment,
+  resolveChatRoute,
+} from "../src/chat-route.js";
 import { requireMapFamily } from "../src/map-families/registry.js";
 import { compileMapWithEvidence } from "../src/pipeline/compile.js";
 import { createViewerServer } from "../src/server.js";
@@ -358,7 +362,11 @@ async function waitForLoad(client) {
 }
 
 function assertPageResources(recorder, viewerUrl) {
-  const documentResponse = recorder.responses.find((response) => response.type === "Document" && response.url === viewerUrl);
+  const documentUrl = new URL(viewerUrl);
+  documentUrl.hash = "";
+  const documentResponse = recorder.responses.find(
+    (response) => response.type === "Document" && response.url === documentUrl.href,
+  );
   if (!documentResponse || documentResponse.status !== 200) {
     throw new Error("The viewer document did not load with HTTP 200");
   }
@@ -368,10 +376,10 @@ function assertPageResources(recorder, viewerUrl) {
   }
   const loadedUrls = recorder.responses
     .filter((response) => response.status === 200)
-    .map((response) => response.url);
+    .map((response) => new URL(response.url).pathname);
   const missing = REQUIRED_RESOURCE_SUFFIXES.filter((suffix) => !loadedUrls.some((url) => url.endsWith(suffix)));
   if (missing.length) throw new Error(`Viewer resources did not load: ${missing.join(", ")}`);
-  if ([...recorder.requests.values()].some((url) => /\/api\/chat(?:\/|$)/u.test(url))) {
+  if ([...recorder.requests.values()].some((url) => /\/api\/chat(?:\/|$)/u.test(new URL(url).pathname))) {
     throw new Error("Browser verification must not call the chat worker");
   }
 }
@@ -633,7 +641,11 @@ async function compileFamilies(root) {
     for (const viewport of VIEWPORTS) {
       const sessionId = `browser_${family.id}_${viewport.id}`;
       await createSession({ root, id: sessionId, dataPackage });
-      sessions[viewport.id] = sessionId;
+      const attachment = await registerHostAttachment({ root, sessionId });
+      sessions[viewport.id] = {
+        id: sessionId,
+        route: attachment.route,
+      };
     }
     available.push({ family, member, dataPackage, sessions });
   }
@@ -676,8 +688,29 @@ async function main() {
       assetsDir: VIEWER_ASSETS,
       token: "browser-matrix-token-0123456789",
       instanceId: "browser-matrix-instance-0123456789",
+      chatCapability: async ({ sessionId, hostRoute }) => {
+        const route = await resolveChatRoute({
+          root: temporaryRoot,
+          sessionId,
+          hostRoute,
+          requireHostRoute: true,
+        });
+        return {
+          defaultRoute: "host",
+          active: {
+            kind: "host",
+            label: route ? "Browser matrix host" : "No coding agent attached",
+            ownership: route ? "this-view" : "unattached",
+            listener: "not-listening",
+            registered: Boolean(route),
+            disclosure: route
+              ? "Selected evidence is returned to this browser-matrix host attachment."
+              : "Sidebar chat is unavailable from this unbound library link.",
+          },
+        };
+      },
     });
-    const firstSession = available[0]?.sessions.desktop;
+    const firstSession = available[0]?.sessions.desktop?.id;
     if (!firstSession) throw new Error("The backend catalog has no executable families to verify");
     await waitForBrowserCatalog(new URL(`s/${firstSession}/`, viewer.libraryUrl));
 
@@ -687,11 +720,16 @@ async function main() {
     for (const entry of available) {
       const familyResult = { id: entry.family.id, member: entry.member.id };
       for (const viewport of VIEWPORTS) {
-        const viewerUrl = new URL(`s/${entry.sessions[viewport.id]}/`, viewer.libraryUrl).href;
+        const session = entry.sessions[viewport.id];
+        const viewerUrl = new URL(`s/${session.id}/`, viewer.libraryUrl);
+        viewerUrl.hash = new URLSearchParams({
+          "attend-host": session.route.attachmentId,
+          "attend-generation": String(session.route.generation),
+        });
         try {
           familyResult[viewport.id] = await verifyCase({
             chrome,
-            viewerUrl,
+            viewerUrl: viewerUrl.href,
             viewport,
             dataPackage: entry.dataPackage,
           });

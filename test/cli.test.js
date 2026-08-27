@@ -1,19 +1,27 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Writable } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
-import { run } from "../src/cli.js";
+import { openUrl, run } from "../src/cli.js";
+import {
+  beginHostListener,
+  endHostListener,
+  registerHostAttachment,
+  setChatRoute,
+} from "../src/chat-route.js";
 import { evidenceStorePath } from "../src/evidence.js";
-import { readJson } from "../src/project.js";
+import { projectPaths, readJson, writeJsonAtomic } from "../src/project.js";
 import { buildSelection } from "../src/selection.js";
-import { stopService } from "../src/service.js";
+import { serviceStatus, startService, stopService } from "../src/service.js";
 import {
   appendConversationTurn,
+  appendQueuedQuestion,
   createSession,
   loadSession,
   updateSession,
@@ -58,18 +66,24 @@ async function projectFixture(t) {
   return root;
 }
 
-async function runJson(root, args) {
+async function runJson(root, args, { viewDependencies, modelDependencies } = {}) {
   const stdout = capture();
   const stderr = capture();
-  await run(args, { cwd: root, stdout: stdout.stream, stderr: stderr.stream });
+  await run(args, {
+    cwd: root,
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    ...(viewDependencies ? { viewDependencies } : {}),
+    ...(modelDependencies ? { modelDependencies } : {}),
+  });
   assert.equal(stderr.text(), "");
   return stdout.json();
 }
 
-async function runBinJson(root, args, { timeoutMs = 10_000 } = {}) {
+async function runBinJson(root, args, { timeoutMs = 10_000, input } = {}) {
   const child = spawn(process.execPath, [BIN, ...args, "--json"], {
     cwd: PACKAGE_ROOT,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
   });
   let stdout = "";
   let stderr = "";
@@ -79,6 +93,7 @@ async function runBinJson(root, args, { timeoutMs = 10_000 } = {}) {
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
+  if (input !== undefined) child.stdin.end(input);
   const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
   const { code, signal } = await new Promise((resolveExit) => {
     child.once("close", (exitCode, exitSignal) => {
@@ -90,6 +105,69 @@ async function runBinJson(root, args, { timeoutMs = 10_000 } = {}) {
   assert.equal(code, 0, `CLI exited ${code}: ${stderr}`);
   assert.equal(stderr, "");
   return JSON.parse(stdout.trim());
+}
+
+function hostBoundApi(view, route, name) {
+  const url = new URL(`api/${name}`, view.viewerUrl);
+  url.searchParams.set("attend-host", route.attachmentId);
+  url.searchParams.set("attend-generation", String(route.generation));
+  return url;
+}
+
+async function installVerifiedLegacyService(t, root) {
+  await setChatRoute({ root, route: { kind: "host" } });
+  const current = await startService({ root, port: 0 });
+  await stopService({ root });
+  const paths = projectPaths(root);
+  const config = await readJson(join(paths.local, "service.json"));
+  const port = Number(new URL(current.url).port);
+  const instanceId = "legacy_cli_instance_0001";
+  const child = spawn(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    `
+      import { createServer } from "node:http";
+      const prefix = "/v/" + process.env.ATTEND_TEST_TOKEN + "/api/health";
+      const server = createServer((request, response) => {
+        if (request.url !== prefix) { response.statusCode = 404; response.end(); return; }
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({
+          ok: true,
+          service: "attend-library",
+          protocolVersion: 2,
+          packageVersion: "0.2.2",
+          instanceId: process.env.ATTEND_TEST_INSTANCE,
+          sessionCount: 0,
+        }));
+      });
+      server.listen(Number(process.env.ATTEND_TEST_PORT), "127.0.0.1", () => process.stdout.write("ready\\n"));
+      process.on("SIGTERM", () => server.close(() => process.exit(0)));
+    `,
+  ], {
+    env: {
+      ...process.env,
+      ATTEND_TEST_TOKEN: config.token,
+      ATTEND_TEST_INSTANCE: instanceId,
+      ATTEND_TEST_PORT: String(port),
+    },
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGTERM");
+  });
+  await once(child.stdout, "data");
+  await writeJsonAtomic(join(paths.local, "service-runtime.json"), {
+    schemaVersion: 1,
+    protocolVersion: 2,
+    packageVersion: "0.2.2",
+    pid: child.pid,
+    instanceId,
+    host: config.host,
+    port,
+    url: current.url,
+    startedAt: new Date().toISOString(),
+  }, { root });
+  return { child, current };
 }
 
 test("CLI setup → phrases → context → reply is a project-local round trip", async (t) => {
@@ -109,6 +187,11 @@ test("CLI setup → phrases → context → reply is a project-local round trip"
   );
   assert.ok(installedSkill.startsWith("---\n"));
   assert.match(installedSkill, /attend-managed/u);
+  assert.match(installedSkill, /## Run one silent opportunity checkpoint/u);
+  assert.match(installedSkill, /## Keep one experiment inbox/u);
+  assert.match(installedSkill, /## Ask before private enrichment/u);
+  assert.match(installedSkill, /## Present an Attend card/u);
+  assert.match(installedSkill, /\| Attend visualization \|/u);
 
   const repeatedSetup = await runJson(root, ["setup", "--json"]);
   assert.deepEqual(repeatedSetup.created, []);
@@ -188,9 +271,441 @@ test("CLI setup → phrases → context → reply is a project-local round trip"
   assert.deepEqual(after.conversation.turns[0].selection.selectedMarkIds, [localInstrument.id]);
 
   const doctor = await runJson(root, ["doctor", "--json"]);
+  assert.equal(doctor.ok, false);
+  assert.equal(doctor.readiness.core, true);
+  assert.deepEqual(doctor.readiness.localModel, {
+    model: "gpt-oss-20b",
+    ready: false,
+    required: true,
+  });
+  assert.equal(doctor.readiness.hostBridge, true);
+  assert.ok(doctor.checks.some(
+    (check) => check.id === "host-bridge" && check.status === "pass",
+  ));
+  assert.ok(doctor.checks.some(
+    (check) => check.id === "adapter:codex-cli" && check.status === "info",
+  ));
+});
+
+test("model install verifies gpt-oss-20b and makes local-first doctor ready", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  let closed = false;
+  const installed = await runJson(root, ["model", "install", "--timeout", "3", "--json"], {
+    modelDependencies: {
+      createRunner(options) {
+        assert.equal(options.allowDownload, true);
+        assert.equal(options.startupTimeoutMs, 180_000);
+        return {
+          async start() {
+            return {
+              adapter: "gpt-oss-20b",
+              available: true,
+              authenticated: true,
+              model: "gpt-oss-20b",
+              runtime: "llama.cpp",
+              privacy: "local-only",
+            };
+          },
+          async close() {
+            closed = true;
+          },
+        };
+      },
+    },
+  });
+  assert.equal(installed.ok, true);
+  assert.equal(installed.model.model, "gpt-oss-20b");
+  assert.equal(closed, true);
+
+  const doctor = await runJson(root, ["doctor", "--json"]);
   assert.equal(doctor.ok, true);
-  assert.ok(doctor.checks.every((check) => check.status !== "fail"));
-  assert.ok(doctor.checks.some((check) => check.id === "codex-chat"));
+  assert.deepEqual(doctor.readiness.localModel, {
+    model: "gpt-oss-20b",
+    ready: true,
+    required: true,
+  });
+});
+
+test("bootstrap requires explicit model-download authorization before changing the project", async (t) => {
+  const root = await projectFixture(t);
+
+  await assert.rejects(
+    runJson(root, ["bootstrap", "--json"]),
+    /bootstrap requires --yes/u,
+  );
+  await assert.rejects(readFile(join(root, ".attend", "project.json")), /ENOENT/u);
+});
+
+test("bootstrap configures Attend once and converges without reloading a ready model", async (t) => {
+  const root = await projectFixture(t);
+  let starts = 0;
+  let closes = 0;
+  const modelDependencies = {
+    createRunner(options) {
+      assert.equal(options.allowDownload, true);
+      assert.equal(options.startupTimeoutMs, 180_000);
+      return {
+        async start() {
+          starts += 1;
+          return {
+            adapter: "gpt-oss-20b",
+            available: true,
+            authenticated: true,
+            model: "gpt-oss-20b",
+            runtime: "llama.cpp",
+            privacy: "local-only",
+          };
+        },
+        async close() {
+          closes += 1;
+        },
+      };
+    },
+  };
+
+  const first = await runJson(
+    root,
+    ["bootstrap", "--yes", "--timeout", "3", "--json"],
+    { modelDependencies },
+  );
+  assert.equal(first.ok, true);
+  assert.equal(first.model.status, "installed");
+  assert.equal(first.doctor.ok, true);
+  assert.equal(first.doctor.readiness.core, true);
+  assert.equal(first.doctor.readiness.localModel.ready, true);
+  assert.deepEqual(first.catalog.counts, CATALOG_COUNTS);
+  assert.equal(starts, 1);
+  assert.equal(closes, 1);
+  const firstReceipt = await readFile(join(root, ".attend", "local", "model.json"), "utf8");
+
+  const second = await runJson(
+    root,
+    ["bootstrap", "--yes", "--timeout", "3", "--json"],
+    { modelDependencies },
+  );
+  assert.equal(second.ok, true);
+  assert.equal(second.model.status, "already-ready");
+  assert.deepEqual(second.setup.created, []);
+  assert.deepEqual(second.setup.updated, []);
+  assert.equal(starts, 1);
+  assert.equal(closes, 1);
+  assert.equal(
+    await readFile(join(root, ".attend", "local", "model.json"), "utf8"),
+    firstReceipt,
+  );
+});
+
+test("doctor never probes Codex or Claude executables from the analyzed project", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  await setChatRoute({ root, route: { kind: "host" } });
+  const localBin = join(root, "node_modules", ".bin");
+  await mkdir(localBin, { recursive: true });
+  const binaries = {
+    codex: join(localBin, "codex"),
+    claude: join(localBin, "claude"),
+  };
+  await Promise.all(Object.values(binaries).map((binary) =>
+    writeFile(binary, '#!/bin/sh\nprintf invoked > "$0.ran"\nexit 99\n', { mode: 0o755 })));
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = localBin;
+  try {
+    for (const adapter of ["codex", "claude"]) {
+      const doctor = await runJson(root, ["doctor", "--adapter", adapter, "--json"]);
+      assert.equal(doctor.ok, true);
+      assert.deepEqual(doctor.readiness.detachedProvider, {
+        adapter: `${adapter}-cli`,
+        ready: false,
+        optional: true,
+      });
+      assert.equal(
+        doctor.checks.find((check) => check.id === `adapter:${adapter}-cli`)?.status,
+        "warn",
+      );
+      await assert.rejects(readFile(`${binaries[adapter]}.ran`), /ENOENT/u);
+    }
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+  }
+});
+
+test("browser opening ignores project PATH launchers and fails cleanly without a system launcher", async (t) => {
+  const root = await projectFixture(t);
+  const localBin = join(root, "node_modules", ".bin");
+  const fakeOpen = join(localBin, "open");
+  await mkdir(localBin, { recursive: true });
+  await writeFile(fakeOpen, "#!/bin/sh\nexit 97\n", { mode: 0o755 });
+
+  const launches = [];
+  await openUrl("http://127.0.0.1:64157/v/token/", {
+    root,
+    platform: "darwin",
+    env: {
+      ...process.env,
+      PATH: `${localBin}:/usr/bin:/bin`,
+      BROWSER: fakeOpen,
+    },
+    async accessImpl(candidate) {
+      assert.equal(candidate, "/usr/bin/open");
+    },
+    spawnImpl(executable, args, options) {
+      launches.push({ executable, args, options });
+      const child = new EventEmitter();
+      child.kill = () => true;
+      queueMicrotask(() => child.emit("close", 0, null));
+      return child;
+    },
+  });
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].executable, "/usr/bin/open");
+  assert.deepEqual(launches[0].args, ["http://127.0.0.1:64157/v/token/"]);
+  assert.equal(launches[0].options.cwd, "/usr/bin");
+  assert.equal(launches[0].options.env.PATH.includes(localBin), false);
+  assert.equal(Object.hasOwn(launches[0].options.env, "BROWSER"), false);
+  assert.equal(launches[0].options.detached, false);
+
+  await assert.rejects(
+    openUrl("http://127.0.0.1:64157/v/token/", {
+      root,
+      platform: "darwin",
+      async accessImpl() {},
+      spawnImpl() {
+        const child = new EventEmitter();
+        child.kill = () => true;
+        queueMicrotask(() => child.emit("close", 3, null));
+        return child;
+      },
+    }),
+    (error) => error.code === "BROWSER_LAUNCH_FAILED" && /status 3/u.test(error.message),
+  );
+
+  await assert.rejects(
+    openUrl("http://127.0.0.1:64157/v/token/", {
+      root,
+      platform: "linux",
+      async accessImpl() {
+        const error = new Error("missing");
+        error.code = "ENOENT";
+        throw error;
+      },
+    }),
+    (error) => error.code === "BROWSER_LAUNCHER_UNAVAILABLE",
+  );
+});
+
+test("view returns its host ticket when automatic browser opening is unavailable", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  const analysis = await runJson(root, [
+    "phrases",
+    "notes",
+    "--question",
+    "What language recurs?",
+    "--json",
+  ]);
+  const service = {
+    running: true,
+    state: "running",
+    url: `http://127.0.0.1:43125/v/${"c".repeat(32)}/`,
+    instanceId: "instance_browser_unavailable",
+    pid: 41_233,
+    chat: { defaultRoute: "host", transport: "host-bridge" },
+    reused: false,
+  };
+  let launchAttempts = 0;
+
+  const view = await runJson(root, ["view", "--open", "--json"], {
+    viewDependencies: {
+      async startService() {
+        return service;
+      },
+      registerHostAttachment,
+      async serviceStatus() {
+        return service;
+      },
+      async openUrl() {
+        launchAttempts += 1;
+        const error = new Error("no fixed system browser launcher");
+        error.code = "BROWSER_LAUNCHER_UNAVAILABLE";
+        throw error;
+      },
+    },
+  });
+
+  assert.equal(launchAttempts, 1);
+  assert.equal(view.ok, true);
+  assert.equal(view.sessionId, analysis.sessionId);
+  assert.match(view.viewerUrl, /^http:\/\/127\.0\.0\.1:43125\/v\//u);
+  assert.equal(view.chat.route.kind, "host");
+  assert.match(view.chat.ticket, /^attend_host_v1\./u);
+  assert.match(view.chat.waitCommand, /attend chat wait --ticket attend_host_v1\./u);
+  assert.deepEqual(view.browser, {
+    requested: true,
+    opened: false,
+    errorCode: "BROWSER_LAUNCHER_UNAVAILABLE",
+    warning: "The browser did not open automatically. Open viewerUrl manually.",
+  });
+});
+
+test("doctor rejects a stale managed visualization skill", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  await writeFile(
+    join(root, ".agents", "skills", "attend-visualize", "SKILL.md"),
+    "---\nname: attend-visualize\ndescription: Old managed copy.\n---\n<!-- attend-managed: generated by Attend setup -->\n\n# Old workflow\n",
+  );
+
+  try {
+    const doctor = await runJson(root, ["doctor", "--json"]);
+    assert.equal(doctor.ok, false);
+    assert.equal(doctor.readiness.core, false);
+    assert.match(
+      doctor.checks.find((check) => check.id === "agent-skill-agents")?.detail ?? "",
+      /stale|differs/u,
+    );
+    assert.equal(
+      doctor.checks.find((check) => check.id === "agent-skill-agents")?.status,
+      "fail",
+    );
+  } finally {
+    process.exitCode = undefined;
+  }
+});
+
+test("doctor fails host readiness when local service metadata is unreadable", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  await runJson(root, [
+    "phrases",
+    "notes",
+    "--question",
+    "What language recurs?",
+    "--json",
+  ]);
+  await writeFile(join(projectPaths(root).local, "service.json"), "{invalid-json\n");
+
+  const doctor = await runJson(root, ["doctor", "--json"]);
+  assert.equal(doctor.ok, false);
+  assert.equal(doctor.readiness.core, false);
+  assert.equal(doctor.readiness.hostBridge, false);
+  assert.equal(
+    doctor.checks.find((check) => check.id === "service")?.status,
+    "fail",
+  );
+  assert.equal(
+    doctor.checks.find((check) => check.id === "host-bridge")?.status,
+    "fail",
+  );
+  await assert.rejects(
+    runJson(root, ["view", "--json"]),
+    /JSON|Unexpected token|property name/u,
+  );
+});
+
+test("doctor fails host readiness when the current analysis pointer is corrupt", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  await setChatRoute({ root, route: { kind: "host" } });
+  await writeFile(join(projectPaths(root).local, "current.json"), "{invalid-json\n");
+
+  const doctor = await runJson(root, ["doctor", "--json"]);
+  assert.equal(doctor.ok, false);
+  assert.equal(doctor.readiness.hostBridge, false);
+  assert.equal(
+    doctor.checks.find((check) => check.id === "host-bridge")?.status,
+    "fail",
+  );
+});
+
+test("doctor withholds host readiness until setup upgrades a verified 0.2 service", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  const legacy = await installVerifiedLegacyService(t, root);
+
+  const liveStatus = await runJson(root, ["status", "--json"]);
+  assert.equal(liveStatus.compatibility, "incompatible");
+  assert.equal(liveStatus.hostBridgeActive, false);
+  const statusOutput = capture();
+  await run(["status"], { cwd: root, stdout: statusOutput.stream });
+  assert.match(statusOutput.text(), /verified Attend 0\.2\.2 service is still running/u);
+  assert.doesNotMatch(statusOutput.text(), /no process was trusted/u);
+
+  try {
+    const before = await runJson(root, ["doctor", "--json"]);
+    assert.equal(before.ok, false);
+    assert.equal(before.readiness.core, true);
+    assert.equal(before.readiness.hostBridge, false);
+    assert.equal(
+      before.checks.find((check) => check.id === "host-bridge")?.status,
+      "fail",
+    );
+    assert.match(
+      before.checks.find((check) => check.id === "host-bridge")?.detail ?? "",
+      /protocol 2|0\.2\.2/u,
+    );
+  } finally {
+    process.exitCode = undefined;
+  }
+
+  const setup = await runJson(root, ["setup", "--json"]);
+  assert.equal(setup.ok, true);
+  assert.equal(setup.serviceMigration.status, "upgraded");
+  assert.equal(setup.serviceMigration.from.protocolVersion, 2);
+  assert.equal(setup.serviceMigration.from.packageVersion, "0.2.2");
+  const upgraded = await serviceStatus({ root });
+  assert.equal(upgraded.running, true);
+  assert.notEqual(upgraded.pid, legacy.child.pid);
+  assert.deepEqual(upgraded.chat, {
+    defaultRoute: "host",
+    transport: "host-bridge",
+  });
+  assert.equal(upgraded.compatibility, "current");
+  assert.equal(upgraded.hostBridgeActive, true);
+  const after = await runJson(root, ["doctor", "--json"]);
+  assert.equal(after.ok, true);
+  assert.equal(after.readiness.hostBridge, true);
+});
+
+test("setup leaves current and dead service states truthful", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  await setChatRoute({ root, route: { kind: "host" } });
+  const current = await startService({ root, port: 0 });
+  const repeated = await runJson(root, ["setup", "--json"]);
+  assert.equal(repeated.serviceMigration.status, "current");
+  const stillCurrent = await serviceStatus({ root });
+  assert.equal(stillCurrent.instanceId, current.instanceId);
+  assert.equal(stillCurrent.compatibility, "current");
+  assert.equal(stillCurrent.hostBridgeActive, true);
+
+  await stopService({ root });
+  const paths = projectPaths(root);
+  const config = await readJson(join(paths.local, "service.json"));
+  await writeJsonAtomic(join(paths.local, "service-runtime.json"), {
+    schemaVersion: 1,
+    protocolVersion: 2,
+    packageVersion: "0.2.2",
+    pid: 2_147_483_647,
+    instanceId: "legacy_dead_instance_0001",
+    host: config.host,
+    port: Number(new URL(current.url).port),
+    url: current.url,
+    startedAt: new Date().toISOString(),
+  }, { root });
+
+  const stopped = await runJson(root, ["setup", "--json"]);
+  assert.equal(stopped.serviceMigration.status, "stopped");
+  assert.equal(stopped.serviceMigration.staleRuntime, true);
+  const dead = await serviceStatus({ root });
+  assert.equal(dead.running, false);
+  assert.equal(dead.compatibility, "not-running");
+  assert.equal(dead.hostBridgeActive, false);
+  const doctor = await runJson(root, ["doctor", "--json"]);
+  assert.equal(doctor.ok, true);
+  assert.equal(doctor.readiness.hostBridge, true);
 });
 
 test("CLI families and map expose the strict atlas catalog and persist a compiled atlas package", async (t) => {
@@ -540,6 +1055,7 @@ test("CLI surfaces and answers a pending question in a non-current session", asy
 test("installed binary keeps one detached library URL across view, stop, and restart", async (t) => {
   const root = await projectFixture(t);
   await runJson(root, ["setup", "--json"]);
+  await setChatRoute({ root, route: { kind: "host" } });
   const analysis = await runJson(root, [
     "phrases",
     "notes",
@@ -559,10 +1075,12 @@ test("installed binary keeps one detached library URL across view, stop, and res
   assert.equal(started.reused, false);
   assert.match(started.url, /^http:\/\/127\.0\.0\.1:\d+\/v\/[A-Za-z0-9_-]{32}\/$/u);
   assert.equal(started.libraryUrl, started.url);
+  const startedViewer = new URL(started.viewerUrl);
   assert.equal(
-    started.viewerUrl,
+    `${startedViewer.origin}${startedViewer.pathname}`,
     `${started.url}s/${analysis.sessionId}/`,
   );
+  assert.match(startedViewer.hash, /^#attend-host=host_[a-f0-9]{16}&attend-generation=1$/u);
 
   const [library, health, viewer, state] = await Promise.all([
     fetch(started.url),
@@ -580,7 +1098,11 @@ test("installed binary keeps one detached library URL across view, stop, and res
   const reused = await runBinJson(root, ["view", "--root", root]);
   assert.equal(reused.reused, true);
   assert.equal(reused.url, started.url);
-  assert.equal(reused.viewerUrl, started.viewerUrl);
+  assert.equal(
+    new URL(reused.viewerUrl).pathname,
+    new URL(started.viewerUrl).pathname,
+  );
+  assert.notEqual(new URL(reused.viewerUrl).hash, startedViewer.hash);
   const running = await runBinJson(root, ["status", "--root", root]);
   assert.equal(running.running, true);
   assert.equal(running.url, started.url);
@@ -604,6 +1126,489 @@ test("installed binary keeps one detached library URL across view, stop, and res
   assert.equal(concurrent.filter((result) => result.reused === false).length, 1);
   assert.equal((await runBinJson(root, ["status", "--root", root])).running, true);
   assert.equal((await runBinJson(root, ["stop", "--root", root])).stopped, true);
+});
+
+test("view metadata is derived from the running service's explicit route", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  await runJson(root, [
+    "phrases",
+    "notes",
+    "--question",
+    "What language recurs?",
+    "--json",
+  ]);
+
+  const selected = await runBinJson(root, [
+    "chat",
+    "route",
+    "codex",
+    "--root",
+    root,
+  ]);
+  assert.deepEqual(selected.route, {
+    kind: "detached",
+    adapter: "codex-cli",
+  });
+  const detached = await runBinJson(root, ["view", "--root", root, "--port", "0"]);
+  assert.deepEqual(detached.chat.route, {
+    kind: "detached",
+    adapter: "codex-cli",
+  });
+  assert.equal(detached.chat.ticket, null);
+  assert.equal(new URL(detached.viewerUrl).hash, "");
+  assert.deepEqual(
+    (await runBinJson(root, ["status", "--root", root])).chat,
+    {
+      defaultRoute: "detached",
+      transport: "detached-adapter",
+      adapter: "codex-cli",
+    },
+  );
+
+  const returned = await runBinJson(root, [
+    "chat",
+    "route",
+    "host",
+    "--root",
+    root,
+  ]);
+  assert.deepEqual(returned.route, { kind: "host" });
+  assert.equal(returned.serviceStoppedForRouteChange, true);
+  const host = await runBinJson(root, ["view", "--root", root]);
+  assert.equal(host.chat.route.kind, "host");
+  assert.match(host.chat.ticket, /^attend_host_v1\./u);
+  assert.match(new URL(host.viewerUrl).hash, /attend-host=/u);
+});
+
+test("view reloads its exact session after service startup and host attachment", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  const analysis = await runJson(root, [
+    "phrases",
+    "notes",
+    "--question",
+    "What language recurs?",
+    "--json",
+  ]);
+  const original = await loadSession({ root, sessionId: analysis.sessionId });
+  const earlierHost = await registerHostAttachment({
+    root,
+    sessionId: original.id,
+  });
+  const service = {
+    running: true,
+    state: "running",
+    url: `http://127.0.0.1:43123/v/${"a".repeat(32)}/`,
+    instanceId: "instance_view_startup",
+    pid: 41_231,
+    chat: { defaultRoute: "host", transport: "host-bridge" },
+    reused: false,
+  };
+  let started = false;
+  let queued = false;
+
+  const view = await runJson(root, ["view", "--json"], {
+    viewDependencies: {
+      async startService() {
+        started = true;
+        return service;
+      },
+      async registerHostAttachment(options) {
+        assert.equal(started, true);
+        const attachment = await registerHostAttachment(options);
+        const latest = await loadSession({ root, sessionId: original.id });
+        await appendQueuedQuestion({
+          root,
+          sessionId: latest.id,
+          expectedRevision: latest.state.revision,
+          consumeSelectedIds: false,
+          route: earlierHost.route,
+          turn: {
+            id: "turn_queued_during_view_startup",
+            role: "user",
+            content: "What changed while the service started?",
+            selection: buildSelection(latest.dataPackage, latest.state),
+          },
+        });
+        queued = true;
+        return attachment;
+      },
+      async serviceStatus() {
+        assert.equal(queued, true);
+        return service;
+      },
+    },
+  });
+
+  assert.equal(queued, true);
+  assert.equal(view.sessionId, original.id);
+  assert.equal(view.stateRevision, 1);
+  assert.equal(view.chat.recovery.questionId, "turn_queued_during_view_startup");
+  assert.equal(view.chat.recovery.expectedRevision, 1);
+  assert.equal(view.chat.recovery.available, true);
+});
+
+test("view fails closed when its service instance or chat route changes during attachment", async (t) => {
+  for (const scenario of [
+    {
+      name: "stopped",
+      status(service) {
+        return { ...service, running: false, state: "stopped" };
+      },
+    },
+    {
+      name: "replaced",
+      status(service) {
+        return { ...service, instanceId: "instance_replacement" };
+      },
+    },
+    {
+      name: "chat route changed",
+      status(service) {
+        return {
+          ...service,
+          chat: {
+            defaultRoute: "detached",
+            transport: "detached-adapter",
+            adapter: "claude-cli",
+          },
+        };
+      },
+    },
+  ]) {
+    await t.test(scenario.name, async (t) => {
+      const root = await projectFixture(t);
+      await runJson(root, ["setup", "--json"]);
+      await runJson(root, [
+        "phrases",
+        "notes",
+        "--question",
+        "What language recurs?",
+        "--json",
+      ]);
+      const service = {
+        running: true,
+        state: "running",
+        url: `http://127.0.0.1:43124/v/${"b".repeat(32)}/`,
+        instanceId: "instance_original",
+        pid: 41_232,
+        chat: { defaultRoute: "host", transport: "host-bridge" },
+        reused: true,
+      };
+      let attached = false;
+
+      await assert.rejects(
+        runJson(root, ["view", "--json"], {
+          viewDependencies: {
+            async startService() {
+              return service;
+            },
+            async registerHostAttachment(options) {
+              const attachment = await registerHostAttachment(options);
+              attached = true;
+              return attachment;
+            },
+            async serviceStatus() {
+              assert.equal(attached, true, "view must recheck after attachment registration");
+              return scenario.status(service);
+            },
+          },
+        }),
+        (error) => {
+          assert.equal(error.code, "SERVICE_CHANGED_DURING_VIEW");
+          assert.match(error.message, /changed while the view was being attached/u);
+          return true;
+        },
+      );
+    });
+  }
+});
+
+test("explicit host sidebar chat returns to the opening CLI agent and commits through reply guards", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  await setChatRoute({ root, route: { kind: "host" } });
+  const analysis = await runJson(root, [
+    "phrases",
+    "notes",
+    "--question",
+    "What language recurs?",
+    "--json",
+  ]);
+  let session = await loadSession({ root, sessionId: analysis.sessionId });
+  const markId = session.dataPackage.rows[0].id;
+  session = await updateSession({
+    root,
+    sessionId: session.id,
+    expectedRevision: session.state.revision,
+    patch: { selectedIds: [markId] },
+  });
+  const selected = buildSelection(session.dataPackage, session.state);
+
+  const view = await runBinJson(root, ["view", "--root", root, "--port", "0"]);
+  assert.equal(view.chat.route.kind, "host");
+  assert.match(view.chat.ticket, /^attend_host_v1\.host_[a-f0-9]{16}\./u);
+  assert.equal(Object.hasOwn(view, "agent"), false);
+  const competingView = await runBinJson(root, ["view", "--root", root]);
+  assert.notEqual(competingView.chat.route.attachmentId, view.chat.route.attachmentId);
+
+  const listener = await beginHostListener({
+    root,
+    ticket: view.chat.ticket,
+    waitExpiresAt: new Date(Date.now() + 2_000),
+  });
+  const [firstProjection, competingProjection] = await Promise.all([
+    fetch(hostBoundApi(view, view.chat.route, "state")).then((response) => response.json()),
+    fetch(hostBoundApi(competingView, competingView.chat.route, "state"))
+      .then((response) => response.json()),
+  ]);
+  assert.equal(firstProjection.chat.active.listener, "listening");
+  assert.equal(firstProjection.chat.active.ownership, "this-view");
+  assert.equal(competingProjection.chat.active.listener, "not-listening");
+  assert.equal(competingProjection.chat.active.ownership, "this-view");
+  const unboundProjection = await fetch(
+    new URL("api/state", view.viewerUrl),
+  ).then((response) => response.json());
+  assert.equal(unboundProjection.chat.active.registered, false);
+  assert.equal(unboundProjection.chat.active.ownership, "unattached");
+  await endHostListener({ root, listener });
+
+  const origin = new URL(view.viewerUrl).origin;
+  const chatUrl = hostBoundApi(view, view.chat.route, "chat");
+  const queuedResponse = await fetch(chatUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Origin: origin,
+    },
+    body: JSON.stringify({
+      expectedRevision: session.state.revision,
+      selectionId: selected.id,
+      message: "What does the selected phrase show?",
+    }),
+  });
+  assert.equal(queuedResponse.status, 200);
+  const queued = await queuedResponse.json();
+  assert.deepEqual(queued.question.response.route, { kind: "host" });
+
+  const competingListener = await beginHostListener({
+    root,
+    ticket: competingView.chat.ticket,
+    waitExpiresAt: new Date(Date.now() + 2_000),
+  });
+  const activeOwnerProjection = await fetch(
+    hostBoundApi(competingView, competingView.chat.route, "state"),
+  ).then((response) => response.json());
+  assert.equal(
+    activeOwnerProjection.chat.active.listener,
+    "not-listening",
+    "a listener on another tab must not be attributed to the queued question",
+  );
+  await endHostListener({ root, listener: competingListener });
+
+  const owningListener = await beginHostListener({
+    root,
+    ticket: view.chat.ticket,
+    waitExpiresAt: new Date(Date.now() + 2_000),
+  });
+  const projectedThroughOtherTab = await fetch(
+    hostBoundApi(competingView, competingView.chat.route, "state"),
+  ).then((response) => response.json());
+  assert.equal(
+    projectedThroughOtherTab.chat.active.listener,
+    "listening",
+    "active status follows the persisted question owner, not the querying tab",
+  );
+  assert.equal(projectedThroughOtherTab.chat.active.ownership, "another-host");
+  assert.equal(projectedThroughOtherTab.chat.active.label, "Another coding agent");
+  const protectedView = await runBinJson(root, ["view", "--root", root]);
+  assert.deepEqual(protectedView.chat.recovery, {
+    available: false,
+    takeoverRequired: true,
+    questionId: queued.question.id,
+    expectedRevision: protectedView.stateRevision,
+    reason: "earlier-host-listening",
+    warning:
+      "The earlier coding agent is listening for this question. Do not take it over.",
+  });
+  await endHostListener({ root, listener: owningListener });
+
+  const packet = await runBinJson(root, [
+    "chat",
+    "wait",
+    "--root",
+    root,
+    "--ticket",
+    view.chat.ticket,
+    "--timeout",
+    "1",
+  ]);
+  assert.equal(packet.schema, "attend-host-question/1");
+  assert.equal(packet.replyGuard.questionId, queued.question.id);
+  assert.equal(packet.replyGuard.selectionId, selected.id);
+  assert.deepEqual(packet.selection.selectedMarkIds, [markId]);
+  assert.equal(packet.evidence.selectionId, selected.id);
+  const deliveredProjection = await fetch(
+    hostBoundApi(view, view.chat.route, "state"),
+  ).then((response) => response.json());
+  assert.equal(deliveredProjection.chat.active.listener, "delivered");
+  const competingWait = await runBinJson(root, [
+    "chat",
+    "wait",
+    "--root",
+    root,
+    "--ticket",
+    competingView.chat.ticket,
+    "--timeout",
+    "0",
+  ]);
+  assert.equal(competingWait.event, "timeout");
+
+  const recoveryView = await runBinJson(root, ["view", "--root", root]);
+  assert.notEqual(
+    recoveryView.chat.route.attachmentId,
+    view.chat.route.attachmentId,
+  );
+  assert.deepEqual(recoveryView.chat.recovery, {
+    available: true,
+    takeoverRequired: true,
+    questionId: queued.question.id,
+    expectedRevision: recoveryView.stateRevision,
+    warning:
+      "This question was delivered to the earlier coding agent. Takeover revokes its reply guard; run it only with the user's approval.",
+    command: `attend chat rebind --take-over --ticket ${recoveryView.chat.ticket} --question-id ${queued.question.id} --expected-revision ${recoveryView.stateRevision} --json`,
+  });
+  const rebindArgs = [
+    "chat",
+    "rebind",
+    "--take-over",
+    "--root",
+    root,
+    "--ticket",
+    recoveryView.chat.ticket,
+    "--question-id",
+    queued.question.id,
+    "--expected-revision",
+    String(recoveryView.chat.recovery.expectedRevision),
+  ];
+  const rebound = await runBinJson(root, rebindArgs);
+  assert.deepEqual(rebound, {
+    ok: true,
+    event: "rebound",
+    sessionId: analysis.sessionId,
+    questionId: queued.question.id,
+    stateRevision: recoveryView.stateRevision + 1,
+    route: { kind: "host" },
+    repeated: false,
+    waitCommand: `attend chat wait --ticket ${recoveryView.chat.ticket} --timeout 300 --json`,
+  });
+  const reboundAgain = await runBinJson(root, rebindArgs);
+  assert.equal(reboundAgain.repeated, true);
+  assert.equal(reboundAgain.stateRevision, rebound.stateRevision);
+
+  const recoveryListener = await beginHostListener({
+    root,
+    ticket: recoveryView.chat.ticket,
+    waitExpiresAt: new Date(Date.now() + 2_000),
+  });
+  const reboundProjection = await fetch(
+    hostBoundApi(view, view.chat.route, "state"),
+  ).then((response) => response.json());
+  assert.equal(
+    reboundProjection.chat.active.listener,
+    "listening",
+    "listener projection follows the rebound question owner",
+  );
+  await endHostListener({ root, listener: recoveryListener });
+
+  const recoveredPacket = await runBinJson(root, [
+    "chat",
+    "wait",
+    "--root",
+    root,
+    "--ticket",
+    recoveryView.chat.ticket,
+    "--timeout",
+    "0",
+  ]);
+  assert.equal(recoveredPacket.replyGuard.questionId, queued.question.id);
+  assert.equal(recoveredPacket.replyGuard.expectedRevision, rebound.stateRevision);
+  assert.equal(recoveredPacket.replyGuard.selectionId, packet.replyGuard.selectionId);
+  assert.deepEqual(recoveredPacket.evidence, packet.evidence);
+
+  const replyArgs = [
+    "reply",
+    "--root",
+    root,
+    "--ticket",
+    recoveryView.chat.ticket,
+    "--question-id",
+    recoveredPacket.replyGuard.questionId,
+    "--expected-revision",
+    String(recoveredPacket.replyGuard.expectedRevision),
+    "--selection-id",
+    recoveredPacket.replyGuard.selectionId,
+    "--message-stdin",
+  ];
+  const answerText = "The phrase recurs across the selected evidence.";
+  const reply = await runBinJson(root, replyArgs, { input: answerText });
+  assert.equal(reply.ok, true);
+  assert.equal(reply.route.kind, "host");
+  assert.equal(reply.repeated, false);
+  const repeated = await runBinJson(root, replyArgs, { input: answerText });
+  assert.equal(repeated.repeated, true);
+
+  const state = await fetch(new URL("api/state", view.viewerUrl)).then((response) => response.json());
+  const answer = state.conversation.turns.find(
+    (turn) => turn.replyToTurnId === recoveredPacket.replyGuard.questionId,
+  );
+  assert.equal(answer.content, "The phrase recurs across the selected evidence.");
+  await runBinJson(root, ["stop", "--root", root]);
+});
+
+test("CLI exposes the fixed-root host bridge over stdio MCP", async (t) => {
+  const root = await projectFixture(t);
+  await runJson(root, ["setup", "--json"]);
+  const stdin = new PassThrough();
+  const stdout = capture();
+  const stderr = capture();
+  stdin.write(`${JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "cli-test", version: "1.0.0" },
+    },
+  })}\n`);
+  stdin.write(`${JSON.stringify({
+    jsonrpc: "2.0",
+    method: "notifications/initialized",
+  })}\n`);
+  stdin.write(`${JSON.stringify({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/list",
+    params: {},
+  })}\n`);
+  stdin.end();
+
+  await run(["mcp", "--root", root], {
+    cwd: root,
+    stdin,
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+  });
+  assert.equal(stderr.text(), "");
+  const messages = stdout.text().trim().split("\n").map((line) => JSON.parse(line));
+  assert.deepEqual(messages.map((message) => message.id), [1, 2]);
+  assert.equal(messages[0].result.serverInfo.name, "attend-local");
+  assert.deepEqual(
+    messages[1].result.tools.map((tool) => tool.name),
+    ["attend_wait_for_question", "attend_rebind_question", "attend_reply"],
+  );
 });
 
 test("an installed nested project wins over an enclosing Git root", async (t) => {

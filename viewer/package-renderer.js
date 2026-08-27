@@ -25,6 +25,7 @@ export async function renderAtlasPackage({
   root,
   packageValue,
   selectedMarkIds = [],
+  selectedNodeId = null,
   onSelect,
 } = {}) {
   const model = atlasPackageToRenderModel(packageValue);
@@ -37,6 +38,7 @@ export async function renderAtlasPackage({
     dataset: model,
     selectedId: selected[0] ?? null,
     selectedIds: selected,
+    selectedNodeId,
     selectableMarkIds: model.selectableMarkIds,
     onSelect,
   });

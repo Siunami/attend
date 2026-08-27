@@ -1,19 +1,18 @@
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { evidencePacketForSelection } from "./evidence.js";
+import { buildQuestionContext, QUESTION_CONTEXT_LIMITS } from "./question-context.js";
 import {
   completeQuestionResponse,
   loadQuestionResponseContext,
   markQuestionResponseFailed,
   markQuestionResponseRunning,
   pendingQuestionResponseJobs,
+  retryQuestionResponse,
 } from "./session-store.js";
+import { LOCAL_MODEL } from "./local-model.js";
 
 const SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
-const MAX_HISTORY_TURNS = 12;
-const MAX_HISTORY_CONTENT_CHARS = 4_000;
-const MAX_HISTORY_BYTES = 48 * 1024;
 const MAX_ANSWER_BYTES = 64 * 1024;
 const MAX_CONCURRENT_RESPONSES = 2;
 const FAILURE_PERSIST_ATTEMPTS = 3;
@@ -47,69 +46,32 @@ function normalizeJob(workerRoot, job) {
   });
 }
 
-function truncateContent(content) {
-  if (typeof content !== "string") return "";
-  if (content.length <= MAX_HISTORY_CONTENT_CHARS) return content;
-  return `${content.slice(0, MAX_HISTORY_CONTENT_CHARS)}\n[Earlier message truncated by Attend]`;
-}
-
-function historyTurn(turn) {
-  if (!turn || typeof turn !== "object" || Array.isArray(turn)) return null;
-  if (turn.role !== "user" && turn.role !== "assistant") return null;
-  const value = {
-    role: turn.role,
-    content: truncateContent(turn.content),
-  };
-  for (const field of ["id", "createdAt", "replyToTurnId"]) {
-    if (typeof turn[field] === "string" && turn[field].length <= 512) {
-      value[field] = turn[field];
-    }
-  }
-  if (typeof turn.selection?.id === "string" && turn.selection.id.length <= 512) {
-    value.selection = { id: turn.selection.id };
+function normalizeWorkerRoute(route, adapter) {
+  const candidate = route ?? (
+    adapter === LOCAL_MODEL.id
+      ? { kind: "local", model: LOCAL_MODEL.id }
+      : { kind: "detached", adapter }
+  );
+  if (candidate?.kind === "local" && candidate.model === LOCAL_MODEL.id) {
+    return Object.freeze({ kind: "local", model: LOCAL_MODEL.id });
   }
   if (
-    typeof turn.context?.selectionTurnId === "string" &&
-    turn.context.selectionTurnId.length <= 512
+    candidate?.kind === "detached" &&
+    (candidate.adapter === "codex-cli" || candidate.adapter === "claude-cli")
   ) {
-    value.context = { selectionTurnId: turn.context.selectionTurnId };
+    return Object.freeze({ kind: "detached", adapter: candidate.adapter });
   }
-  return value;
+  throw new TypeError("A question worker requires a supported local or detached route");
 }
 
-/**
- * Keep only prior turns. The current question, resolved immutable visual
- * context, and verified evidence packet are supplied separately, so
- * duplicating their bodies in history would spend model context needlessly.
- */
-export function boundedConversation(conversation, questionId) {
-  if (!Array.isArray(conversation)) return [];
-  const questionIndex = conversation.findIndex((turn) => turn?.id === questionId);
-  const candidates = conversation.slice(0, questionIndex < 0 ? conversation.length : questionIndex);
-  const selected = [];
-  let bytes = 2;
-  for (
-    let index = candidates.length - 1;
-    index >= 0 && selected.length < MAX_HISTORY_TURNS;
-    index -= 1
-  ) {
-    const turn = historyTurn(candidates[index]);
-    if (!turn) continue;
-    const turnBytes = Buffer.byteLength(JSON.stringify(turn), "utf8") + 1;
-    if (bytes + turnBytes > MAX_HISTORY_BYTES) break;
-    selected.unshift(turn);
-    bytes += turnBytes;
-  }
-  return selected;
+function sameWorkerRoute(left, right) {
+  if (left?.kind !== right.kind) return false;
+  return right.kind === "local"
+    ? left.model === right.model
+    : left.adapter === right.adapter;
 }
 
-function dataPackagePath(root, session) {
-  const dataPackageId = validateIdentifier(
-    "dataPackageId",
-    session?.dataPackageId ?? session?.dataPackage?.id,
-  );
-  return join(root, ".attend", "local", "analyses", `${dataPackageId}.json`);
-}
+export { boundedConversation } from "./question-context.js";
 
 function validatedAnswer(result) {
   const answer = result?.answer;
@@ -167,15 +129,18 @@ export function createQuestionWorker({
   root,
   runner,
   capability,
-  evidenceForSelection = evidencePacketForSelection,
+  route,
+  evidenceForSelection,
 } = {}) {
   const workerRoot = resolve(root);
   if (!runner || typeof runner.respond !== "function") {
     throw new TypeError("runner must provide respond(request)");
   }
-  if (typeof evidenceForSelection !== "function") {
+  if (evidenceForSelection !== undefined && typeof evidenceForSelection !== "function") {
     throw new TypeError("evidenceForSelection must be a function");
   }
+  const adapter = capability?.adapter ?? runner.adapter ?? "codex-cli";
+  const workerRoute = normalizeWorkerRoute(route, adapter);
 
   const queue = [];
   const known = new Set();
@@ -240,37 +205,43 @@ export function createQuestionWorker({
 
   const runJob = async (job, controller) => {
     try {
-      await markQuestionResponseRunning({
+      let context = await loadQuestionResponseContext({
         root: workerRoot,
         sessionId: job.sessionId,
         questionId: job.questionId,
       });
-      if (closing) return;
-
-      const context = await loadQuestionResponseContext({
+      if (
+        !sameWorkerRoute(context.question.response?.route, workerRoute)
+      ) {
+        return;
+      }
+      await markQuestionResponseRunning({
         root: workerRoot,
         sessionId: job.sessionId,
         questionId: job.questionId,
+        route: workerRoute,
+        adapter,
+      });
+      if (closing) return;
+
+      context = await buildQuestionContext({
+        root: workerRoot,
+        sessionId: job.sessionId,
+        questionId: job.questionId,
+        ...(evidenceForSelection === undefined ? {} : { evidenceForSelection }),
       });
       if (closing) return;
       await ensureAvailable(controller.signal);
       if (closing) return;
 
-      const evidence = await evidenceForSelection({
-        root: workerRoot,
-        dataPackage: context.session.dataPackage,
-        selection: context.visualContext,
-      });
-      if (closing) return;
-
       const result = await runner.respond({
         root: workerRoot,
         question: context.question,
-        selection: context.visualContext,
-        contextBinding: context.visualContextBinding,
-        evidence,
-        conversation: boundedConversation(context.conversation, job.questionId),
-        dataPackagePath: dataPackagePath(workerRoot, context.session),
+        selection: context.selection,
+        contextBinding: context.contextBinding,
+        evidence: context.evidence,
+        conversation: context.conversation,
+        dataPackagePath: context.dataPackagePath,
         signal: controller.signal,
       });
       if (closing) return;
@@ -280,6 +251,8 @@ export function createQuestionWorker({
         sessionId: job.sessionId,
         questionId: job.questionId,
         content: validatedAnswer(result),
+        route: workerRoute,
+        adapter,
       });
     } catch (error) {
       if (!isShutdownCancellation(error, closing) && !closing) {
@@ -327,11 +300,21 @@ export function createQuestionWorker({
     let recovered = 0;
     let interrupted = 0;
     for (const job of await pendingQuestionResponseJobs({ root: workerRoot })) {
-      if (job.status === "running") {
-        // The previous process may have received an answer that it never
-        // committed. Do not silently spend another provider call; expose Retry.
-        if (await persistFailure(job, "interrupted")) interrupted += 1;
+      if (!sameWorkerRoute(job.route, workerRoute)) {
         continue;
+      }
+      if (job.status === "running") {
+        const persisted = await persistFailure(job, "interrupted");
+        if (persisted) interrupted += 1;
+        if (workerRoute.kind === "detached" || !persisted) continue;
+        // Local inference has no provider charge or external side effect. A
+        // service restart may safely replay the exact frozen question packet.
+        await retryQuestionResponse({
+          root: workerRoot,
+          sessionId: job.sessionId,
+          questionId: job.questionId,
+          expectedRoute: workerRoute,
+        });
       }
       const result = await enqueueQuestion(job);
       if (result.accepted) recovered += 1;
@@ -382,7 +365,7 @@ export function createQuestionWorker({
 
 export const QUESTION_WORKER_LIMITS = Object.freeze({
   concurrency: MAX_CONCURRENT_RESPONSES,
-  historyTurns: MAX_HISTORY_TURNS,
-  historyBytes: MAX_HISTORY_BYTES,
+  historyTurns: QUESTION_CONTEXT_LIMITS.historyTurns,
+  historyBytes: QUESTION_CONTEXT_LIMITS.historyBytes,
   answerBytes: MAX_ANSWER_BYTES,
 });

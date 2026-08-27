@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Attend exploration</title>
+    <link rel="stylesheet" href="./workspace.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="identity">
+          <span class="wordmark">Attend</span>
+          <span class="local-badge">Exploration workspace</span>
+        </div>
+        <a id="inbox-link" class="inbox-link" href="../../">Experiment inbox</a>
+      </div>
+    </header>
+
+    <main class="workspace-shell">
+      <section class="exploration-header" aria-labelledby="exploration-goal">
+        <div class="exploration-copy">
+          <p class="eyebrow">Exploration</p>
+          <h1 id="exploration-goal">Loading exploration…</h1>
+          <p id="analytic-intent" class="analytic-intent"></p>
+        </div>
+        <div class="exploration-meta">
+          <p id="exploration-created" class="created"></p>
+          <div id="exploration-counts" class="counts" aria-label="Exploration counts"></div>
+        </div>
+      </section>
+
+      <section class="controls" aria-labelledby="controls-heading">
+        <h2 id="controls-heading" class="sr-only">Experiment controls</h2>
+        <fieldset class="filter-group">
+          <legend>Show</legend>
+          <label>
+            <input type="radio" name="experiment-filter" value="all" checked>
+            <span>All</span>
+          </label>
+          <label>
+            <input type="radio" name="experiment-filter" value="promoted">
+            <span>Agent promoted</span>
+          </label>
+          <label>
+            <input type="radio" name="experiment-filter" value="starred">
+            <span>My stars</span>
+          </label>
+        </fieldset>
+
+        <label class="chronology-control" for="strict-chronology">
+          <input id="strict-chronology" type="checkbox">
+          <span>Strict chronology</span>
+        </label>
+
+        <button id="refresh" class="refresh" type="button">Refresh</button>
+      </section>
+
+      <section class="experiment-section" aria-labelledby="experiments-heading">
+        <div class="section-heading">
+          <h2 id="experiments-heading">Experiments</h2>
+          <p id="status" class="status" role="status" aria-live="polite">Loading experiments…</p>
+        </div>
+
+        <div id="empty-state" class="empty-state" hidden>
+          <h3>No experiments match this view</h3>
+          <p>Change the filter to see the rest of this exploration.</p>
+        </div>
+
+        <ol id="experiment-list" class="experiment-list" aria-label="Exploration experiments"></ol>
+      </section>
+    </main>
+
+    <script type="module" src="./workspace.js"></script>
+  </body>
+</html>
