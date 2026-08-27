@@ -17,6 +17,10 @@ test("the public package and coding-agent prompt use npm as the only install ori
     registry: "https://registry.npmjs.org/",
   });
   assert.equal(manifest.homepage, "https://www.npmjs.com/package/attend-local");
+  assert.deepEqual(manifest.repository, {
+    type: "git",
+    url: "git+https://github.com/Siunami/attend-local.git",
+  });
   assert.match(readme, /npm install --global attend-local@0\.5\.0/u);
   assert.match(readme, /attend bootstrap --yes --json/u);
   assert.match(readme, /roughly 12 GB/u);
