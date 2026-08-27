@@ -1,6 +1,6 @@
 window.ATTEND_SYSTEM = {
   meta: {
-    version: "0.5.4",
+    version: "0.5.5",
     inspectedAt: "2026-08-27",
     sourceModules: 32,
     conceptualComponents: 21,

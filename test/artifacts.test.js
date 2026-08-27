@@ -14,6 +14,7 @@ import {
   viewDescriptorForArtifact,
 } from "../src/artifacts/index.js";
 import { catalogReceiptForMember } from "../src/catalog/index.js";
+import { canonicalJson, sha256Hex } from "../src/pipeline/data-package.js";
 import { compileMap } from "../src/pipeline/compile.js";
 
 function phrasePackage() {
@@ -71,6 +72,23 @@ async function atlasPackage() {
       ],
     },
   });
+}
+
+async function withCatalogVersion(dataPackage, version) {
+  const { id: _id, hashes: existingHashes, ...base } = structuredClone(dataPackage);
+  base.catalog.version = version;
+  const hashes = {
+    algorithm: existingHashes.algorithm,
+    corpus: existingHashes.corpus,
+    config: existingHashes.config,
+    data: existingHashes.data,
+  };
+  hashes.package = await sha256Hex(canonicalJson({ ...base, hashes }));
+  return {
+    ...base,
+    id: `data_${hashes.package.slice(0, 16)}`,
+    hashes,
+  };
 }
 
 test("phrase-v1 remains an adapter with its persisted phrase state and evidence semantics", async () => {
@@ -141,6 +159,9 @@ test("atlas-v2 validates hashes and derives mark selection and evidence solely f
   const tampered = structuredClone(dataPackage);
   tampered.question.text = "A changed question with stale hashes";
   await assert.rejects(verifyArtifactPackage(tampered), { code: "HASH_MISMATCH" });
+
+  const previousCatalog = await withCatalogVersion(dataPackage, "3bcb588eaf291763");
+  assert.equal(await verifyArtifactPackage(previousCatalog), previousCatalog);
 
   const inventedCatalog = structuredClone(dataPackage);
   inventedCatalog.catalog.version = "not-the-bundled-catalog";

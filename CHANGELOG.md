@@ -2,6 +2,11 @@
 
 This file records user-visible changes to Attend.
 
+## [0.5.5] - 2026-08-27
+
+- Preserve verified Attend 0.5.3 Atlas sessions when upgrading across the 0.5.4 catalog metadata change.
+- Continue rejecting unknown catalog receipts or any package whose family, member, renderer, variant, or hashes no longer match.
+
 ## [0.5.4] - 2026-08-27
 
 - Add a complete Family Atlas browser and visualization inspector for exploring every governed family and executable member.
