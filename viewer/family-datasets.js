@@ -114,7 +114,7 @@ export const SAMPLE_SOURCES = Object.freeze({
     records: [
       { id: "rank-mapping-cli", project: "Mapping CLI", attentionScore: 92, domain: "Product", nextMove: "Lock the first family contracts", evidenceRefs: ["rank-e1"] },
       { id: "rank-field-synthesis", project: "Field-study synthesis", attentionScore: 84, domain: "Research", nextMove: "Cluster the remaining interviews", evidenceRefs: ["rank-e2"] },
-      { id: "rank-meeting-lab", project: "Meeting Lab reliability", attentionScore: 77, domain: "Infrastructure", nextMove: "Close the recovery-path gaps", evidenceRefs: ["rank-e3"] },
+      { id: "rank-service-pilot", project: "Service pilot reliability", attentionScore: 77, domain: "Infrastructure", nextMove: "Close the recovery-path gaps", evidenceRefs: ["rank-e3"] },
       { id: "rank-notes-migration", project: "Notes migration", attentionScore: 63, domain: "Operations", nextMove: "Resolve duplicate attachments", evidenceRefs: ["rank-e4"] },
       { id: "rank-portfolio", project: "Portfolio refresh", attentionScore: 48, domain: "Communication", nextMove: "Choose three representative projects", evidenceRefs: ["rank-e5"] },
       { id: "rank-expenses", project: "Expense cleanup", attentionScore: 31, domain: "Admin", nextMove: "Reconcile July receipts", evidenceRefs: ["rank-e6"] },
@@ -122,7 +122,7 @@ export const SAMPLE_SOURCES = Object.freeze({
     evidence: [
       textEvidence("rank-e1", "weekly-review", "notes/weekly/2026-08-17.md", 12, 14, "Mapping CLI — 92. Important and newly tractable. Next: lock the first family contracts."),
       textEvidence("rank-e2", "weekly-review", "notes/weekly/2026-08-17.md", 16, 18, "Field-study synthesis — 84. The interviews are complete; the remaining leverage is synthesis."),
-      textEvidence("rank-e3", "weekly-review", "notes/weekly/2026-08-17.md", 20, 22, "Meeting Lab reliability — 77. Recovery paths still need focused attention."),
+      textEvidence("rank-e3", "weekly-review", "notes/weekly/2026-08-17.md", 20, 22, "Service pilot reliability — 77. Recovery paths still need focused attention."),
       textEvidence("rank-e4", "weekly-review", "notes/weekly/2026-08-17.md", 24, 26, "Notes migration — 63. Mostly mechanical, except duplicate attachments."),
       textEvidence("rank-e5", "weekly-review", "notes/weekly/2026-08-17.md", 28, 30, "Portfolio refresh — 48. Select three projects before designing pages."),
       textEvidence("rank-e6", "weekly-review", "notes/weekly/2026-08-17.md", 32, 33, "Expense cleanup — 31. Reconcile the July receipts; no deeper work required."),
@@ -235,7 +235,7 @@ export const SAMPLE_SOURCES = Object.freeze({
     },
     records: [
       { id: "profile-map-cli", experiment: "Mapping CLI", stage: "Prototype", clarity: 9, evidence: 6, momentum: 9, reach: 8, effort: 7, evidenceRefs: ["profile-e1"] },
-      { id: "profile-meeting-lab", experiment: "Meeting Lab", stage: "Pilot", clarity: 8, evidence: 8, momentum: 6, reach: 7, effort: 8, evidenceRefs: ["profile-e2"] },
+      { id: "profile-service-pilot", experiment: "Service pilot", stage: "Pilot", clarity: 8, evidence: 8, momentum: 6, reach: 7, effort: 8, evidenceRefs: ["profile-e2"] },
       { id: "profile-atlas", experiment: "Collection Atlas", stage: "Prototype", clarity: 6, evidence: 5, momentum: 8, reach: 9, effort: 8, evidenceRefs: ["profile-e3"] },
       { id: "profile-marginalia", experiment: "Marginalia", stage: "Exploration", clarity: 7, evidence: 4, momentum: 5, reach: 6, effort: 4, evidenceRefs: ["profile-e4"] },
       { id: "profile-notes", experiment: "Notes pipeline", stage: "Operational", clarity: 9, evidence: 9, momentum: 7, reach: 5, effort: 3, evidenceRefs: ["profile-e5"] },
@@ -243,7 +243,7 @@ export const SAMPLE_SOURCES = Object.freeze({
     ],
     evidence: [
       textEvidence("profile-e1", "experiment-review", "notes/reviews/experiments-2026-08.md", 14, 17, "Mapping CLI — clarity 9, evidence 6, momentum 9, reach 8, effort 7."),
-      textEvidence("profile-e2", "experiment-review", "notes/reviews/experiments-2026-08.md", 20, 23, "Meeting Lab — clarity 8, evidence 8, momentum 6, reach 7, effort 8."),
+      textEvidence("profile-e2", "experiment-review", "notes/reviews/experiments-2026-08.md", 20, 23, "Service pilot — clarity 8, evidence 8, momentum 6, reach 7, effort 8."),
       textEvidence("profile-e3", "experiment-review", "notes/reviews/experiments-2026-08.md", 26, 29, "Collection Atlas — clarity 6, evidence 5, momentum 8, reach 9, effort 8."),
       textEvidence("profile-e4", "experiment-review", "notes/reviews/experiments-2026-08.md", 32, 35, "Marginalia — clarity 7, evidence 4, momentum 5, reach 6, effort 4."),
       textEvidence("profile-e5", "experiment-review", "notes/reviews/experiments-2026-08.md", 38, 41, "Notes pipeline — clarity 9, evidence 9, momentum 7, reach 5, effort 3."),
@@ -408,7 +408,7 @@ export const SAMPLE_SOURCES = Object.freeze({
     records: [
       ...[
         ["Mapping CLI", [5, 4, 4, 3, 4], "Strong contract; integration still forming"],
-        ["Meeting Lab", [4, 5, 3, 4, 3], "Proven in use; slower interaction"],
+        ["Service Pilot", [4, 5, 3, 4, 3], "Proven in use; slower interaction"],
         ["Collection Atlas", [4, 3, 5, 3, 2], "Compelling overview; evidence link is early"],
         ["Marginalia", [3, 3, 4, 4, 4], "Lightweight and flexible"],
         ["Notes Pipeline", [5, 5, 2, 5, 4], "Reliable foundation; modest visual novelty"],
@@ -426,7 +426,7 @@ export const SAMPLE_SOURCES = Object.freeze({
     ],
     evidence: [
       textEvidence("matrix-e1", "prototype-scorecard", "notes/reviews/prototype-scorecard.md", 11, 13, "Mapping CLI | Question fit 5 | Evidence 4 | Overview 4 | Interaction 3 | Reliability 4"),
-      textEvidence("matrix-e2", "prototype-scorecard", "notes/reviews/prototype-scorecard.md", 15, 17, "Meeting Lab | Question fit 4 | Evidence 5 | Overview 3 | Interaction 4 | Reliability 3"),
+      textEvidence("matrix-e2", "prototype-scorecard", "notes/reviews/prototype-scorecard.md", 15, 17, "Service Pilot | Question fit 4 | Evidence 5 | Overview 3 | Interaction 4 | Reliability 3"),
       textEvidence("matrix-e3", "prototype-scorecard", "notes/reviews/prototype-scorecard.md", 19, 21, "Collection Atlas | Question fit 4 | Evidence 3 | Overview 5 | Interaction 3 | Reliability 2"),
       textEvidence("matrix-e4", "prototype-scorecard", "notes/reviews/prototype-scorecard.md", 23, 25, "Marginalia | Question fit 3 | Evidence 3 | Overview 4 | Interaction 4 | Reliability 4"),
       textEvidence("matrix-e5", "prototype-scorecard", "notes/reviews/prototype-scorecard.md", 27, 29, "Notes Pipeline | Question fit 5 | Evidence 5 | Overview 2 | Interaction 5 | Reliability 4"),
@@ -438,7 +438,7 @@ export const SAMPLE_SOURCES = Object.freeze({
     familyId: "hierarchy",
     mediaType: "structured",
     title: "The shape of the working archive",
-    question: "Where is the personal archive concentrated, and which branches are becoming unwieldy?",
+    question: "Where is the shared research archive concentrated, and which branches are becoming unwieldy?",
     sources: [
       source("archive-manifest", "Archive manifest", "structured", "json", "indexes/archive-manifest.json", {
         date: "2026-08-20",
@@ -460,7 +460,7 @@ export const SAMPLE_SOURCES = Object.freeze({
       { id: "journal", parentId: "archive", label: "Journal", itemCount: 112, recentShare: 0.12, evidenceRefs: ["hier-e4"] },
       { id: "reference", parentId: "archive", label: "Reference", itemCount: 58, recentShare: 0.05, evidenceRefs: ["hier-e5"] },
       { id: "mapping", parentId: "projects", label: "Mapping CLI", itemCount: 94, recentShare: 0.61, evidenceRefs: ["hier-e6"] },
-      { id: "meeting", parentId: "projects", label: "Meeting Lab", itemCount: 78, recentShare: 0.29, evidenceRefs: ["hier-e7"] },
+      { id: "service", parentId: "projects", label: "Service Pilot", itemCount: 78, recentShare: 0.29, evidenceRefs: ["hier-e7"] },
       { id: "atlas", parentId: "projects", label: "Collection Atlas", itemCount: 67, recentShare: 0.42, evidenceRefs: ["hier-e8"] },
       { id: "other-projects", parentId: "projects", label: "Other experiments", itemCount: 47, recentShare: 0.11, evidenceRefs: ["hier-e9"] },
       { id: "interviews", parentId: "research", label: "Interviews", itemCount: 73, recentShare: 0.26, evidenceRefs: ["hier-e10"] },
@@ -471,7 +471,7 @@ export const SAMPLE_SOURCES = Object.freeze({
     ],
     evidence: [
       ["archive", 624], ["projects", 286], ["research", 168], ["journal", 112], ["reference", 58],
-      ["mapping", 94], ["meeting", 78], ["atlas", 67], ["other-projects", 47], ["interviews", 73],
+      ["mapping", 94], ["service", 78], ["atlas", 67], ["other-projects", 47], ["interviews", 73],
       ["visual-history", 55], ["papers", 40], ["daily", 86], ["weekly", 26],
     ].map(([folder, count], index) =>
       rowEvidence(`hier-e${index + 1}`, "archive-manifest", "indexes/archive-manifest.json", index + 1, `${folder}: ${count} indexed items.`),
@@ -636,9 +636,9 @@ export const SAMPLE_SOURCES = Object.freeze({
     familyId: "point-map",
     mediaType: "geography",
     title: "Places where ideas moved",
-    question: "Where around the Bay Area did consequential work sessions happen?",
+    question: "Where across a coastal metro area did consequential project sessions happen?",
     sources: [
-      source("place-log", "Geocoded work-place log", "geography", "geojson", "indexes/bay-area-work-places.geojson", {
+      source("place-log", "Geocoded project-session log", "geography", "geojson", "indexes/metro-project-places.geojson", {
         dateRange: { start: "2026-05-01", end: "2026-08-20" },
         recordUnit: "place",
       }),
@@ -654,24 +654,24 @@ export const SAMPLE_SOURCES = Object.freeze({
       evidence: "evidenceRefs",
     },
     records: [
-      { id: "point-mission", place: "Mission studio", latitude: 37.7599, longitude: -122.4148, sessionCount: 18, setting: "Studio", breakthrough: "Map–chat coupling", evidenceRefs: ["point-e1"] },
-      { id: "point-berkeley", place: "Berkeley library", latitude: 37.8715, longitude: -122.273, sessionCount: 11, setting: "Library", breakthrough: "Historical family taxonomy", evidenceRefs: ["point-e2"] },
-      { id: "point-oakland", place: "Oakland workshop", latitude: 37.8044, longitude: -122.2711, sessionCount: 9, setting: "Workshop", breakthrough: "Evidence-first interaction", evidenceRefs: ["point-e3"] },
-      { id: "point-palo-alto", place: "Palo Alto café", latitude: 37.4419, longitude: -122.143, sessionCount: 6, setting: "Café", breakthrough: "Template contracts", evidenceRefs: ["point-e4"] },
-      { id: "point-sausalito", place: "Sausalito waterfront", latitude: 37.8591, longitude: -122.4853, sessionCount: 4, setting: "Outdoors", breakthrough: "Collection atlas sketch", evidenceRefs: ["point-e5"] },
-      { id: "point-richmond", place: "Richmond field visit", latitude: 37.9358, longitude: -122.3477, sessionCount: 5, setting: "Field", breakthrough: "Spatial evidence notes", evidenceRefs: ["point-e6"] },
-      { id: "point-alameda", place: "Alameda kitchen table", latitude: 37.7652, longitude: -122.2416, sessionCount: 7, setting: "Home", breakthrough: "Family viewer naming", evidenceRefs: ["point-e7"] },
-      { id: "point-san-mateo", place: "San Mateo meeting room", latitude: 37.563, longitude: -122.3255, sessionCount: 8, setting: "Office", breakthrough: "Pipeline validation rules", evidenceRefs: ["point-e8"] },
-      { id: "point-headlands", place: "Marin Headlands overlook", latitude: 37.8324, longitude: -122.4994, sessionCount: 3, setting: "Outdoors", breakthrough: "Overview-to-detail metaphor", evidenceRefs: ["point-e9"] },
-      { id: "point-half-moon", place: "Half Moon Bay retreat", latitude: 37.4636, longitude: -122.4286, sessionCount: 5, setting: "Retreat", breakthrough: "Opinionated templates memo", evidenceRefs: ["point-e10"] },
+      { id: "point-central", place: "Central studio", latitude: 37.7599, longitude: -122.4148, sessionCount: 18, setting: "Studio", breakthrough: "Map–chat coupling", evidenceRefs: ["point-e1"] },
+      { id: "point-northside", place: "Northside library", latitude: 37.8715, longitude: -122.273, sessionCount: 11, setting: "Library", breakthrough: "Historical family taxonomy", evidenceRefs: ["point-e2"] },
+      { id: "point-downtown", place: "Downtown workshop", latitude: 37.8044, longitude: -122.2711, sessionCount: 9, setting: "Workshop", breakthrough: "Evidence-first interaction", evidenceRefs: ["point-e3"] },
+      { id: "point-peninsula", place: "Peninsula café", latitude: 37.4419, longitude: -122.143, sessionCount: 6, setting: "Café", breakthrough: "Template contracts", evidenceRefs: ["point-e4"] },
+      { id: "point-waterfront", place: "Waterfront promenade", latitude: 37.8591, longitude: -122.4853, sessionCount: 4, setting: "Outdoors", breakthrough: "Collection atlas sketch", evidenceRefs: ["point-e5"] },
+      { id: "point-harbor", place: "Harbor field visit", latitude: 37.9358, longitude: -122.3477, sessionCount: 5, setting: "Field", breakthrough: "Spatial evidence notes", evidenceRefs: ["point-e6"] },
+      { id: "point-island", place: "Island coworking room", latitude: 37.7652, longitude: -122.2416, sessionCount: 7, setting: "Coworking", breakthrough: "Family viewer naming", evidenceRefs: ["point-e7"] },
+      { id: "point-southside", place: "Southside meeting room", latitude: 37.563, longitude: -122.3255, sessionCount: 8, setting: "Office", breakthrough: "Pipeline validation rules", evidenceRefs: ["point-e8"] },
+      { id: "point-coastal", place: "Coastal overlook", latitude: 37.8324, longitude: -122.4994, sessionCount: 3, setting: "Outdoors", breakthrough: "Overview-to-detail metaphor", evidenceRefs: ["point-e9"] },
+      { id: "point-retreat", place: "Regional retreat center", latitude: 37.4636, longitude: -122.4286, sessionCount: 5, setting: "Retreat", breakthrough: "Opinionated templates memo", evidenceRefs: ["point-e10"] },
     ],
     evidence: [
-      ["mission", 37.7599, -122.4148], ["berkeley", 37.8715, -122.273], ["oakland", 37.8044, -122.2711],
-      ["palo-alto", 37.4419, -122.143], ["sausalito", 37.8591, -122.4853], ["richmond", 37.9358, -122.3477],
-      ["alameda", 37.7652, -122.2416], ["san-mateo", 37.563, -122.3255], ["headlands", 37.8324, -122.4994],
-      ["half-moon", 37.4636, -122.4286],
+      ["central", 37.7599, -122.4148], ["northside", 37.8715, -122.273], ["downtown", 37.8044, -122.2711],
+      ["peninsula", 37.4419, -122.143], ["waterfront", 37.8591, -122.4853], ["harbor", 37.9358, -122.3477],
+      ["island", 37.7652, -122.2416], ["southside", 37.563, -122.3255], ["coastal", 37.8324, -122.4994],
+      ["retreat", 37.4636, -122.4286],
     ].map(([featureId, latitude, longitude], index) =>
-      geoEvidence(`point-e${index + 1}`, "place-log", "indexes/bay-area-work-places.geojson", featureId, `Recorded work place at ${latitude}, ${longitude}.`, [longitude, latitude]),
+      geoEvidence(`point-e${index + 1}`, "place-log", "indexes/metro-project-places.geojson", featureId, `Recorded project session at ${latitude}, ${longitude}.`, [longitude, latitude]),
     ),
   },
 

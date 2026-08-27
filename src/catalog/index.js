@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { MAP_FAMILIES, requireMapFamily } from "../map-families/registry.js";
 import { US_STATES_GEOGRAPHY } from "../geography.js";
+import { representationCapabilitiesFor } from "../representation-intent.js";
 import { AUTHORED_FAMILY_ATLAS_CONTENT } from "./snapshot.js";
 
 const EXECUTABLE_SPECS = Object.freeze({
@@ -339,6 +340,13 @@ function buildMember(family, manifest, executable, member) {
     roleSchema: roleSchemaFor(family.id, manifest),
     recordSchema: recordSchemaFor(family.id, manifest),
     requirements,
+    representationCapabilities: representationCapabilitiesFor({
+      family: manifest,
+      member: {
+        id: member.id,
+        rendererVariantId: executable.rendererVariantId,
+      },
+    }),
     mediaPolicy: executable.mediaPolicy,
     ...(capabilityBlocker ? {
       unavailableReason: capabilityBlocker.reason,

@@ -5,9 +5,20 @@ description: Create and operate evidence-backed visual answers with Attend. Use 
 
 # Attend Visualize
 
-Use Attend as the visualization system. Do not improvise chart code, HTML, SVG, Canvas, D3, Vega, Plotly, or a one-off renderer. Choose a designed Family Atlas member, transform authorized evidence into its declared data roles, and let Attend compile and render the fixed artifact.
+When the routing policy below admits an Attend visualization, use Attend as the visualization system. In that lane, do not improvise chart code, HTML, SVG, Canvas, D3, Vega, Plotly, or a one-off renderer. Choose a designed Family Atlas member, transform authorized evidence into its declared data roles, and let Attend compile and render the fixed artifact.
+
+## Choose the lane before any side effects
+
+Attend has two lanes:
+
+1. The primary lane is proactive exploratory data analysis. The user did not ask for a visualization, but bounded evidence at a natural task boundary may contain useful structure. Use an open representation intent, and follow the silent opportunity-checkpoint policy.
+2. The requested lane begins when the user explicitly names a visualization, form, or interaction. Treat every named property as exact. Use Attend only if one executable Family Atlas member is an exact, natural match for all of them.
+
+Make this routing decision before setup, source inspection, exploration, compilation, opening a page, or installing a model. For the requested lane, `attend families --json` is the only preliminary Attend command permitted because it is read-only. If `attend` is unavailable or no executable member is an exact, natural match, return control to the host agent's ordinary just-in-time visualization workflow. Search the repository for an existing example, template, or prior implementation when that would help. Do not let this skill prohibit the host's normal visualization tools after Attend defers.
 
 ## Verify the installation
+
+Continue here only after the request has been admitted to an Attend lane.
 
 Use `attend` when it is on `PATH`. If it is not, but `$HOME/.local/bin/attend` exists, use that exact executable for every `attend` command below.
 
@@ -21,6 +32,26 @@ attend doctor --json
 If Attend is not configured in this project, run `attend setup --json` and repeat the doctor check. Setup is idempotent. A fresh setup copies this canonical packaged policy into both `.agents/skills/` and `.claude/skills/`, writes project configuration, and creates gitignored local state. Run setup again after upgrading Attend to refresh both managed copies. Do not edit either installed copy. Setup does not start a background process.
 
 Require `doctor.ok: true`, `readiness.core: true`, and `readiness.localModel.ready: true`. If the model is not ready, run `attend model install`; this downloads roughly 12 GB and may take a while, so report that fact before starting it. The default chat route is the private local `gpt-oss-20b` runtime. Treat host routing, `adapter:codex-cli`, and `adapter:claude-cli` as optional compatibility modes. Probe an adapter only when the user explicitly selects that fallback.
+
+## Preserve requested representation intent
+
+Treat every named visual form or property as a hard constraint. This includes a chart or diagram name, dimensionality such as 2D or 3D, projection, static or animated motion, and interactions such as selection, pan and zoom, or orbit controls. Do not translate a hard constraint into a nearby Family Atlas member merely because that member answers a similar analytic question.
+
+Run `attend families --json` and compare every hard constraint with the selected executable member's `representationCapabilities`. Use an exact representation intent only when one executable member supports every named property. Use an open representation intent only when the user named no visual properties or explicitly said the form is flexible.
+
+An unsupported proactive opportunity stays silent: record an abstaining checkpoint at the eligible boundary and create no exploration, experiment, artifact, or user-facing Attend message. For an explicit unsupported request, defer visibly from Attend and resume the host agent's ordinary just-in-time visualization workflow. Create no Attend artifact, and do not run `attend setup`, `attend doctor`, `attend inspect`, `attend explore`, `attend map`, `attend view`, or `attend workspace`. Never present a nearby Attend member as though it fulfilled the request. Mention Attend's limitation only when that context helps the user understand the result; the host may still produce the exact requested visualization by its ordinary workflow.
+
+Every managed map request is version 2 and includes this versioned object:
+
+```json
+"representationIntent": {
+  "version": 1,
+  "mode": "open",
+  "constraints": []
+}
+```
+
+For `exact`, include one constraint for each named property. Allowed constraint kinds are `form`, `dimensionality`, `interaction`, `motion`, and `projection`; use only the finite values advertised by `representationCapabilities`. Copy the same object into the experiment's `representation.representationIntent` before a staged execution. The CLI rejects a version-2 map that omits the object, an exact intent the selected member cannot satisfy, or a staged request whose intent differs from its admitted experiment.
 
 ## Run one silent opportunity checkpoint
 
@@ -52,7 +83,7 @@ Write a strict, content-free version-1 request such as:
   },
   "host": {
     "kind": "codex",
-    "skillVersion": "attend-visualize/0.5.3"
+    "skillVersion": "attend-visualize/0.5.4"
   },
   "taskShape": {
     "action": "review",
@@ -97,7 +128,7 @@ attend feedback <experiment-id> --kind <reason> [--note <text>] --json
 attend workspace [exploration-id] --open --json
 ```
 
-Use `attend inspect` with a version-1 request containing `goal` and `sources: [{"path": "..."}]`. It returns deterministic source-shape counts and hashes without returning source text. Use its `inspectionHash` in a new version-1 `attend explore` request with `goal`, `analyticIntent`, `sourceScope`, and a non-empty `experiments` array. Include `checkpointId` for a proactive exploration; a user-invoked exploration may omit it. Each experiment requires `key`, `hypothesis`, `whyUseful`, `representation: {family, member}`, `sourceScope`, `baseline: {name, description}`, `comparisonCount`, `origin` (`agent` or `user`), `analysisMode` (`exploratory` or `confirmatory`), and `timing` (`pre-result` or `post-hoc`). Use `parentKey` to branch from an earlier experiment in the same request. To add a later branch, supply `explorationId` instead of redefining the exploration and use `parentExperimentId`.
+Use `attend inspect` with a version-1 request containing `goal` and `sources: [{"path": "..."}]`. It returns deterministic source-shape counts and hashes without returning source text. Use its `inspectionHash` in a new version-1 `attend explore` request with `goal`, `analyticIntent`, `sourceScope`, and a non-empty `experiments` array. Include `checkpointId` for a proactive exploration; a user-invoked exploration may omit it. Each experiment requires `key`, `hypothesis`, `whyUseful`, `representation: {family, member, representationIntent}`, `sourceScope`, `baseline: {name, description}`, `comparisonCount`, `origin` (`agent` or `user`), `analysisMode` (`exploratory` or `confirmatory`), and `timing` (`pre-result` or `post-hoc`). Use `parentKey` to branch from an earlier experiment in the same request. To add a later branch, supply `explorationId` instead of redefining the exploration and use `parentExperimentId`.
 
 For every experiment returned by `attend explore`, create an evidence-complete map request whose family, member, and source scope match the recorded plan, then run the staged map command with that exact experiment ID. A failed compile is retained automatically. For a completed attempt, write an assessment JSON object with `outcome`, `summary`, `rationale`, `evidenceStrength`, the full interestingness vector, and arrays for `transformations`, `omissions`, and `limitations`. The interestingness vector has eight scores from 0 through 1: `taskRelevance`, `evidenceSufficiency`, `surprise`, `novelty`, `actionability`, `representationalDiversity`, `uncertainty`, and `interruptionCost`.
 
@@ -138,10 +169,15 @@ Permission is scoped to the source, purpose, and task the user approved. Ask aga
 
    ```json
    {
-     "version": 1,
-     "question": "How do results differ by region?",
-     "family": "rank",
-     "member": "bar-list",
+    "version": 2,
+    "question": "How do results differ by region?",
+    "family": "rank",
+    "member": "bar-list",
+    "representationIntent": {
+      "version": 1,
+      "mode": "open",
+      "constraints": []
+    },
      "sources": [
        { "path": "notes/results.md", "textProjection": "utf8" }
      ],
@@ -192,7 +228,7 @@ Permission is scoped to the source, purpose, and task the user approved. Ask aga
    }
    ```
 
-   Copy the user's question into `question` without replacing it with the title or your analytic-job restatement. Use the role names and scalar types returned by `attend families --json`. Every required field in every record needs an exact source quote. Add `occurrence` when the same quote appears more than once. Enter a value only when the cited quote states it or a transparent deterministic normalization preserves it. Do not turn a qualitative impression into a number, infer causality, fabricate graph endpoints, invent geographic coordinates, or claim semantic similarity without recorded model provenance. If the evidence cannot meet the member contract, choose another executable family or abstain.
+   Copy the user's question into `question` without replacing it with the title or your analytic-job restatement. Use the role names and scalar types returned by `attend families --json`. Every required field in every record needs an exact source quote. Add `occurrence` when the same quote appears more than once. Enter a value only when the cited quote states it or a transparent deterministic normalization preserves it. Do not turn a qualitative impression into a number, infer causality, fabricate graph endpoints, invent geographic coordinates, or claim semantic similarity without recorded model provenance. If the evidence cannot meet the member contract, choose another executable family only for an open intent. For an exact intent, defer because another representation would violate the request.
 
    `key` is a structural record identifier, not a visible data role, so it does not need its own evidence claim. Every required role returned by the catalog does.
 

@@ -8,7 +8,12 @@ import {
   projectPaths,
   readJson,
 } from "./project.js";
+import { getCatalogMember } from "./catalog/index.js";
 import { loadOpportunityCheck } from "./opportunity-store.js";
+import {
+  assertRepresentationIntentSupported,
+  normalizeRepresentationIntent,
+} from "./representation-intent.js";
 import { loadSession } from "./session-store.js";
 
 export const EXPLORATION_SCHEMA_VERSION = 1;
@@ -236,13 +241,31 @@ function explorationPlanFields(value) {
 
 function normalizeRepresentation(value, path) {
   object(value, path);
-  rejectUnknown(value, new Set(["family", "member"]), path);
+  rejectUnknown(value, new Set(["family", "member", "representationIntent"]), path);
   const representation = {
     family: string(value.family, `${path}.family`, 128),
     member: string(value.member, `${path}.member`, 128),
+    representationIntent: normalizeRepresentationIntent(value.representationIntent, {
+      path: `${path}.representationIntent`,
+    }),
   };
   if (!SAFE_MEMBER_ID.test(representation.family) || !SAFE_MEMBER_ID.test(representation.member)) {
     fail("INVALID_EXPLORATION_RECORD", "family and member must use catalog identifiers", path);
+  }
+  if (representation.representationIntent.mode === "exact") {
+    const catalogMember = getCatalogMember(representation.family, representation.member);
+    if (catalogMember?.status !== "executable") {
+      fail(
+        "UNSUPPORTED_REQUESTED_REPRESENTATION",
+        `${representation.family}/${representation.member} is not executable in this release`,
+        `${path}.member`,
+      );
+    }
+    assertRepresentationIntentSupported(representation.representationIntent, {
+      family: representation.family,
+      member: catalogMember,
+      path: `${path}.representationIntent`,
+    });
   }
   return representation;
 }

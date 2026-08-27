@@ -6,6 +6,7 @@ import {
   beginHostListener,
   endHostAnswerLease,
   endHostListener,
+  hostAttachmentCoversSession,
   hostListenerStatus,
   refreshHostListener,
   safeChatCapability,
@@ -68,7 +69,7 @@ function matchingHostJob(job, attachment, route) {
   return Boolean(
     job &&
     job.status === "queued" &&
-    job.sessionId === attachment.sessionId &&
+    hostAttachmentCoversSession(attachment, job.sessionId) &&
     sameChatRoute(job.route, route),
   );
 }
@@ -194,7 +195,10 @@ export async function waitForHostQuestion({
             ticket,
             expectedRoute: packet.route,
           });
-          if (packet.replyGuard?.sessionId !== verified.attachment.sessionId) {
+          if (!hostAttachmentCoversSession(
+            verified.attachment,
+            packet.replyGuard?.sessionId,
+          )) {
             const error = new Error(
               "The host question packet does not belong to this attachment session",
             );
@@ -206,6 +210,7 @@ export async function waitForHostQuestion({
             root: boundary,
             ticket,
             listener,
+            sessionId: job.sessionId,
             questionId: job.questionId,
             ...(answerLeaseTtlMs === undefined ? {} : { ttlMs: answerLeaseTtlMs }),
           });
@@ -269,7 +274,7 @@ export async function completeHostQuestion(options = {}) {
   const fields = completionFields(options);
   const verified = await verifyHostTicket({ root: boundary, ticket });
   const sessionId = fields.sessionId ?? verified.attachment.sessionId;
-  if (sessionId !== verified.attachment.sessionId) {
+  if (!hostAttachmentCoversSession(verified.attachment, sessionId)) {
     const error = new Error("The host ticket does not own this visualization session");
     error.code = "HOST_ATTACHMENT_MISMATCH";
     throw error;

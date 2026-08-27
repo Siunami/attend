@@ -2,6 +2,13 @@
 
 This file records user-visible changes to Attend.
 
+## [0.5.4] - 2026-08-27
+
+- Add a complete Family Atlas browser and visualization inspector for exploring every governed family and executable member.
+- Preserve explicit representation intent and reject visual forms, interactions, projections, motion, or dimensionality that the selected member cannot support exactly.
+- Add durable project chat threads that retain their visual context while moving between saved visualization pages.
+- Add a self-auditing system atlas for Attend's runtime, storage, routing, and evidence boundaries.
+
 ## [0.5.3] - 2026-08-27
 
 - Make mechanism diagrams readable with dense or cyclic relationship data.

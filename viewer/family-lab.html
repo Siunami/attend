@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
-    <title>Attend map-family lab</title>
+    <title>Attend visualization family browser</title>
     <link rel="stylesheet" href="./family-lab.css">
   </head>
   <body>
@@ -12,10 +12,11 @@
       <header class="lab-header">
         <div class="identity">
           <a class="wordmark" href="../">Attend</a>
-          <span class="local-badge">Map-family lab</span>
+          <span class="local-badge">Family browser</span>
         </div>
-        <nav class="mode-switcher" aria-label="Lab view">
-          <button class="mode-button is-active" type="button" data-mode="gallery" aria-pressed="true">Gallery</button>
+        <nav class="mode-switcher" aria-label="Family browser view">
+          <button class="mode-button is-active" type="button" data-mode="browse" aria-pressed="true">Browse</button>
+          <button class="mode-button" type="button" data-mode="gallery" aria-pressed="false">Gallery</button>
           <button class="mode-button" type="button" data-mode="pipeline" aria-pressed="false">Pipeline</button>
           <button class="mode-button" type="button" data-mode="media" aria-pressed="false">Media policy</button>
         </nav>
@@ -32,12 +33,16 @@
         </aside>
 
         <main class="lab-main">
-          <section id="gallery-view" class="lab-view">
+          <section id="browse-view" class="lab-view">
+            <div id="family-browser"></div>
+          </section>
+
+          <section id="gallery-view" class="lab-view" hidden>
             <header class="family-heading">
               <p id="family-kicker" class="kicker"></p>
               <div class="family-title-row">
                 <div>
-                  <h1 id="family-title"></h1>
+                  <h1 id="family-title" tabindex="-1"></h1>
                   <p id="family-question" class="family-question"></p>
                 </div>
                 <span id="family-status" class="status-badge"></span>
@@ -51,9 +56,9 @@
             </section>
 
             <div class="inspection-row">
-              <label for="mark-select">Inspect a mark</label>
+              <label for="mark-select">Inspect a target</label>
               <select id="mark-select"></select>
-              <p id="selection-summary" class="selection-summary" role="status">Choose a mark to inspect its evidence.</p>
+              <p id="selection-summary" class="selection-summary" role="status">Choose a visual target to inspect its context.</p>
             </div>
 
             <details class="contract-details">

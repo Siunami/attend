@@ -61,11 +61,14 @@ const FAMILY_HTTP_ASSETS = Object.freeze([
   ["index.html", "text/html; charset=utf-8"],
   ["family-lab.js", "text/javascript; charset=utf-8"],
   ["family-lab.css", "text/css; charset=utf-8"],
+  ["family-browser.js", "text/javascript; charset=utf-8"],
+  ["family-catalog.js", "text/javascript; charset=utf-8"],
   ["family-datasets.js", "text/javascript; charset=utf-8"],
   ["family-compiler-adapter.js", "text/javascript; charset=utf-8"],
   ["package-model.js", "text/javascript; charset=utf-8"],
   ["package-renderer.js", "text/javascript; charset=utf-8"],
   ["family-renderers.js", "text/javascript; charset=utf-8"],
+  ["visualization-inspector.js", "text/javascript; charset=utf-8"],
   ["core/map-families/registry.js", "text/javascript; charset=utf-8"],
   ["core/map-families/index.js", "text/javascript; charset=utf-8"],
   ["core/geography.js", "text/javascript; charset=utf-8"],
@@ -220,6 +223,38 @@ test("pipeline mode calls the canonical compiler and does not invent a second pa
   assert.match(app, /await compileMap\(request\)/u);
   assert.doesNotMatch(app, /attend-map-data-package/u);
   assert.doesNotMatch(html, /renderer[^.]*receives the same versioned package/iu);
+});
+
+test("the family lab opens as a governed repertoire browser without replacing its runtime tools", async () => {
+  const [app, html, styles] = await Promise.all([
+    readFile(`${VIEWER_ROOT}/family-lab.js`, "utf8"),
+    readFile(`${VIEWER_ROOT}/family-lab.html`, "utf8"),
+    readFile(`${VIEWER_ROOT}/family-lab.css`, "utf8"),
+  ]);
+
+  assert.match(app, /import \{ mountFamilyBrowser \} from "\.\/family-browser\.js"/u);
+  assert.match(app, /mountFamilyBrowser\(/u);
+  assert.match(app, /elements\.title\.focus\(\)/u);
+  assert.match(html, /id="family-browser"/u);
+  assert.match(html, /id="family-title" tabindex="-1"/u);
+  assert.match(html, /data-mode="browse"/u);
+  assert.match(html, /data-mode="gallery"/u);
+  assert.match(html, /data-mode="pipeline"/u);
+  assert.match(html, /data-mode="media"/u);
+  assert.match(styles, /\.family-browser__ledger\s*\{/u);
+  assert.match(styles, /\.family-browser__body\s*\{/u);
+  assert.match(styles, /\.family-browser__dossier\s*\{/u);
+});
+
+test("the one-column family browser moves populated details before results and hides empty details", async () => {
+  const [browser, styles] = await Promise.all([
+    readFile(`${VIEWER_ROOT}/family-browser.js`, "utf8"),
+    readFile(`${VIEWER_ROOT}/family-lab.css`, "utf8"),
+  ]);
+
+  assert.match(browser, /dossier\.dataset\.dossierState\s*=\s*family\s*\?\s*"populated"\s*:\s*"empty"/u);
+  assert.match(styles, /@media\s*\(max-width:\s*1120px\)[\s\S]*?\.family-browser__dossier\[data-dossier-state="populated"\]\s*\{[^}]*order:\s*-1/su);
+  assert.match(styles, /@media\s*\(max-width:\s*1120px\)[\s\S]*?\.family-browser__dossier\[data-dossier-state="empty"\]\s*\{[^}]*display:\s*none/su);
 });
 
 test("every sample mark and relationship closes over exact source evidence", () => {
@@ -479,6 +514,9 @@ test("the family lab browser module graph resolves every published static import
   }
   assert.ok(visited.has("package-model.js"), "module graph must include browser package-model authority");
   assert.ok(visited.has("package-renderer.js"), "module graph must include package renderer");
+  assert.ok(visited.has("family-browser.js"), "module graph must include the repertoire browser");
+  assert.ok(visited.has("family-catalog.js"), "module graph must include the governed browser catalog");
+  assert.ok(visited.has("visualization-inspector.js"), "module graph must include the shared context ledger");
   assert.ok(visited.has("core/pipeline/compile.js"), "module graph must include canonical compiler");
 });
 

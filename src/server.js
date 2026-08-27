@@ -13,6 +13,18 @@ import {
   validateArtifactPackage,
 } from "./artifacts/index.js";
 import {
+  listProjectChatThreads,
+  projectChatThread,
+} from "./chat-thread-projection.js";
+import {
+  appendThreadQuestion,
+  retryThreadQuestion,
+} from "./chat-thread-service.js";
+import {
+  createChatThread,
+  validateChatThreadId,
+} from "./chat-thread-store.js";
+import {
   appendQueuedQuestion,
   loadSession as loadStoredSession,
   markQuestionResponseFailed,
@@ -47,6 +59,7 @@ const VIEWER_STATIC_ASSETS = new Map([
   ["package-model.js", { file: "package-model.js", type: "text/javascript; charset=utf-8" }],
   ["package-renderer.js", { file: "package-renderer.js", type: "text/javascript; charset=utf-8" }],
   ["family-renderers.js", { file: "family-renderers.js", type: "text/javascript; charset=utf-8" }],
+  ["visualization-inspector.js", { file: "visualization-inspector.js", type: "text/javascript; charset=utf-8" }],
   ["vendor/d3.min.js", { file: "vendor/d3.min.js", type: "text/javascript; charset=utf-8" }],
   ["vendor/topojson-client.min.js", { file: "vendor/topojson-client.min.js", type: "text/javascript; charset=utf-8" }],
   ["vendor/us-states.json", { file: "vendor/us-states.json", type: "application/json; charset=utf-8" }],
@@ -73,11 +86,14 @@ const FAMILY_LAB_STATIC_ASSETS = new Map([
   ["index.html", { file: "family-lab.html", type: "text/html; charset=utf-8" }],
   ["family-lab.js", { file: "family-lab.js", type: "text/javascript; charset=utf-8" }],
   ["family-lab.css", { file: "family-lab.css", type: "text/css; charset=utf-8" }],
+  ["family-browser.js", { file: "family-browser.js", type: "text/javascript; charset=utf-8" }],
+  ["family-catalog.js", { file: "family-catalog.js", type: "text/javascript; charset=utf-8" }],
   ["family-datasets.js", { file: "family-datasets.js", type: "text/javascript; charset=utf-8" }],
   ["family-compiler-adapter.js", { file: "family-compiler-adapter.js", type: "text/javascript; charset=utf-8" }],
   ["package-model.js", { file: "package-model.js", type: "text/javascript; charset=utf-8" }],
   ["package-renderer.js", { file: "package-renderer.js", type: "text/javascript; charset=utf-8" }],
   ["family-renderers.js", { file: "family-renderers.js", type: "text/javascript; charset=utf-8" }],
+  ["visualization-inspector.js", { file: "visualization-inspector.js", type: "text/javascript; charset=utf-8" }],
   ["core/map-families/registry.js", { file: "../src/map-families/registry.js", type: "text/javascript; charset=utf-8" }],
   ["core/map-families/index.js", { file: "../src/map-families/index.js", type: "text/javascript; charset=utf-8" }],
   ["core/geography.js", { file: "../src/geography.js", type: "text/javascript; charset=utf-8" }],
@@ -329,7 +345,17 @@ function selectionFor(session) {
   return buildArtifactSelection(dataPackageFor(session), session.state ?? {});
 }
 
-function publicSession(session, chat = null) {
+function publicSession(session, chat = null, thread = null) {
+  const conversation = thread === null
+    ? {
+        turns: conversationTurns(session).map(publicConversationTurn),
+      }
+    : {
+        threadId: thread.id,
+        revision: thread.revision,
+        turns: thread.turns.map(publicConversationTurn),
+        events: clonePublicThreadEvents(thread.events),
+      };
   return {
     schemaVersion: session.schemaVersion,
     id: session.id,
@@ -340,11 +366,29 @@ function publicSession(session, chat = null) {
     view: session.view,
     state: session.state,
     selection: selectionFor(session),
-    conversation: {
-      turns: conversationTurns(session).map(publicConversationTurn),
-    },
+    conversation,
     ...(chat === null ? {} : { chat }),
   };
+}
+
+function clonePublicThreadEvents(events) {
+  return events.map((event) => event.type === "page-context"
+    ? {
+        type: "page-context",
+        id: event.id,
+        page: {
+          sessionId: event.page.sessionId,
+          label: event.page.label,
+          href: `../../s/${encodeURIComponent(event.page.sessionId)}/`,
+        },
+        createdAt: event.createdAt,
+      }
+    : {
+        type: "message",
+        id: event.id,
+        turnId: event.turnId,
+        createdAt: event.createdAt,
+      });
 }
 
 function conversationTurns(session) {
@@ -561,6 +605,7 @@ function enqueueCommittedQuestion(enqueueQuestion, job) {
 
 function isConflict(error) {
   return error?.code === "CONFLICT"
+    || error?.code === "CHAT_THREAD_BUSY"
     || error?.code === "revision_conflict"
     || error?.code === "EXPERIMENT_REVISION_CONFLICT"
     || error?.code === "EXPERIMENT_EVENT_BUSY"
@@ -573,6 +618,7 @@ function isMissing(error) {
     || error?.code === "SESSION_NOT_FOUND"
     || error?.code === "EXPLORATION_NOT_FOUND"
     || error?.code === "EXPERIMENT_NOT_FOUND"
+    || error?.code === "CHAT_THREAD_NOT_FOUND"
     || error?.status === 404;
 }
 
@@ -601,7 +647,7 @@ async function conflictResponse(
 }
 
 function validateChat(body) {
-  assertOnlyKeys(body, new Set(["expectedRevision", "selectionId", "message"]));
+  assertOnlyKeys(body, new Set(["expectedRevision", "selectionId", "threadId", "message"]));
   const revision = expectedRevision(body.expectedRevision);
   if (typeof body.selectionId !== "string" || !body.selectionId.trim() || body.selectionId.length > 128) {
     throw new HttpError(400, "invalid_selection_id", "selectionId must be a non-empty selection id");
@@ -609,7 +655,31 @@ function validateChat(body) {
   if (typeof body.message !== "string" || !body.message.trim() || body.message.length > MAX_CHAT_CHARS) {
     throw new HttpError(400, "invalid_chat", `message must contain 1-${MAX_CHAT_CHARS} characters`);
   }
-  return { revision, selectionId: body.selectionId.trim(), message: body.message.trim() };
+  return {
+    revision,
+    selectionId: body.selectionId.trim(),
+    threadId: body.threadId === undefined ? undefined : chatThreadId(body.threadId),
+    message: body.message.trim(),
+  };
+}
+
+function chatThreadId(value) {
+  try {
+    return validateChatThreadId(value);
+  } catch {
+    throw new HttpError(400, "invalid_chat_thread_id", "threadId must be a valid chat thread id");
+  }
+}
+
+function chatThreadIdFromRequestTarget(target) {
+  const queryIndex = String(target ?? "").indexOf("?");
+  if (queryIndex < 0) return undefined;
+  const values = new URLSearchParams(String(target).slice(queryIndex + 1)).getAll("threadId");
+  if (values.length === 0) return undefined;
+  if (values.length !== 1) {
+    throw new HttpError(400, "invalid_chat_thread_id", "state accepts one threadId");
+  }
+  return chatThreadId(values[0]);
 }
 
 function hostRouteFromRequestTarget(target) {
@@ -637,7 +707,7 @@ function hostRouteFromRequestTarget(target) {
 }
 
 function validateChatRetry(body) {
-  assertOnlyKeys(body, new Set(["questionId"]));
+  assertOnlyKeys(body, new Set(["threadId", "questionId"]));
   if (
     typeof body.questionId !== "string" ||
     !body.questionId.trim() ||
@@ -649,7 +719,10 @@ function validateChatRetry(body) {
       "questionId must be a non-empty question id",
     );
   }
-  return body.questionId.trim();
+  return {
+    questionId: body.questionId.trim(),
+    threadId: body.threadId === undefined ? undefined : chatThreadId(body.threadId),
+  };
 }
 
 function responseLifecycleHttpError(error) {
@@ -899,7 +972,7 @@ export async function createViewerServer({
     }
     return route;
   };
-  const projectChat = async (session, hostRoute) => {
+  const projectChatCapability = async (session, hostRoute) => {
     if (!chatCapability) return null;
     const activeResponse = activeQuestionResponse(session);
     return chatCapability({
@@ -910,10 +983,16 @@ export async function createViewerServer({
       responseQuestionId: activeResponse?.questionId ?? null,
     });
   };
-  const publicProjectSession = async (session, hostRoute) => publicSession(
-    session,
-    await projectChat(session, hostRoute),
-  );
+  const publicProjectSession = async (session, hostRoute, threadId) => {
+    const thread = threadId === undefined
+      ? null
+      : await projectChatThread({ root, threadId });
+    return publicSession(
+      session,
+      await projectChatCapability(session, hostRoute),
+      thread,
+    );
+  };
 
   // Fail before opening a socket if a backwards-compatible default session was
   // requested but does not satisfy the minimal viewer contract.
@@ -1000,7 +1079,7 @@ export async function createViewerServer({
           return;
         }
         if (sessionRoute.route === "api/health") {
-          const projectedChat = await projectChat(session, requestHostRoute);
+          const projectedChat = await projectChatCapability(session, requestHostRoute);
           sendJson(response, 200, {
             ok: true,
             analysisId: session.analysisId ?? dataPackageFor(session).id,
@@ -1019,8 +1098,20 @@ export async function createViewerServer({
           sendJson(response, 200, renderModelForArtifact(dataPackageFor(session)));
           return;
         }
+        if (sessionRoute.route === "api/chat/threads") {
+          sendJson(response, 200, {
+            schemaVersion: 1,
+            threads: await listProjectChatThreads({ root }),
+          });
+          return;
+        }
         if (sessionRoute.route === "api/state") {
-          sendJson(response, 200, await publicProjectSession(session, requestHostRoute));
+          const threadId = chatThreadIdFromRequestTarget(rawTarget);
+          sendJson(
+            response,
+            200,
+            await publicProjectSession(session, requestHostRoute, threadId),
+          );
           return;
         }
         throw new HttpError(404, "not_found", "not found");
@@ -1121,6 +1212,15 @@ export async function createViewerServer({
         const session = await loadSession(root, routedSessionId);
         const dataPackage = dataPackageFor(session);
 
+        if (sessionRoute.route === "api/chat/threads") {
+          assertOnlyKeys(body, new Set());
+          const record = await createChatThread({ root, session });
+          sendJson(response, 201, {
+            ok: true,
+            thread: await projectChatThread({ root, threadId: record.id }),
+          });
+          return;
+        }
         if (sessionRoute.route === "api/selection") {
           const { revision, patch } = validateSelection(body, dataPackage, routedSessionId);
           try {
@@ -1132,7 +1232,7 @@ export async function createViewerServer({
                 response,
                 root,
                 routedSessionId,
-                projectChat,
+                projectChatCapability,
                 requestHostRoute,
               );
             }
@@ -1151,7 +1251,7 @@ export async function createViewerServer({
                 response,
                 root,
                 routedSessionId,
-                projectChat,
+                projectChatCapability,
                 requestHostRoute,
               );
             }
@@ -1160,59 +1260,85 @@ export async function createViewerServer({
           return;
         }
         if (sessionRoute.route === "api/chat/retry") {
-          const questionId = validateChatRetry(body);
+          const { questionId, threadId } = validateChatRetry(body);
           let retried;
           try {
-            const retryRoute = await questionRouteFor(
-              routedSessionId,
-              requestHostRoute,
-            );
-            if (!retryRoute) {
+            if (threadId === undefined) {
+              const retryRoute = await questionRouteFor(
+                routedSessionId,
+                requestHostRoute,
+              );
+              if (!retryRoute) {
+                throw new HttpError(
+                  409,
+                  "chat_route_unavailable",
+                  "No coding agent is attached to this visualization. Open it again from Attend before retrying.",
+                );
+              }
+              retried = {
+                ...await retryQuestionResponse({
+                  root,
+                  sessionId: routedSessionId,
+                  questionId,
+                  expectedRoute: retryRoute,
+                }),
+                ownerSessionId: routedSessionId,
+              };
+            } else {
+              retried = await retryThreadQuestion({
+                root,
+                threadId,
+                questionId,
+                routeForSession: (ownerSessionId) => questionRouteFor(
+                  ownerSessionId,
+                  requestHostRoute,
+                ),
+              });
+            }
+          } catch (error) {
+            if (error?.code === "CHAT_ROUTE_UNAVAILABLE") {
               throw new HttpError(
                 409,
                 "chat_route_unavailable",
                 "No coding agent is attached to this visualization. Open it again from Attend before retrying.",
               );
             }
-            retried = await retryQuestionResponse({
-              root,
-              sessionId: routedSessionId,
-              questionId,
-              expectedRoute: retryRoute,
-            });
-          } catch (error) {
             const httpError = responseLifecycleHttpError(error);
             if (httpError) throw httpError;
             throw error;
           }
+          const currentSession = retried.ownerSessionId === routedSessionId
+            ? retried.session
+            : await loadSession(root, routedSessionId);
           const publicUpdated = await publicProjectSession(
-            retried.session,
+            currentSession,
             requestHostRoute,
+            threadId,
           );
           sendJson(response, 200, {
             ok: true,
             status: "queued",
             questionId,
-            revision: retried.session.state.revision,
+            revision: currentSession.state.revision,
             session: publicUpdated,
           });
           enqueueCommittedQuestion(enqueueQuestion, {
             root,
-            sessionId: routedSessionId,
+            sessionId: retried.ownerSessionId,
             questionId,
             route: retried.question.response?.route,
           });
           return;
         }
         if (sessionRoute.route === "api/chat") {
-          const { revision, selectionId, message } = validateChat(body);
+          const { revision, selectionId, threadId, message } = validateChat(body);
           const selection = selectionFor(session);
           if (session.state?.revision !== revision || selection.id !== selectionId) {
             return conflictResponse(
               response,
               root,
               routedSessionId,
-              projectChat,
+              projectChatCapability,
               requestHostRoute,
             );
           }
@@ -1228,31 +1354,45 @@ export async function createViewerServer({
                 "No coding agent is attached to this visualization. Open it again from Attend before asking.",
               );
             }
-            const appended = await appendQuestion(
-              root,
-              routedSessionId,
-              revision,
-              message,
-              selection,
-              questionRoute,
-            );
+            const appended = threadId === undefined
+              ? await appendQuestion(
+                  root,
+                  routedSessionId,
+                  revision,
+                  message,
+                  selection,
+                  questionRoute,
+                )
+              : await appendThreadQuestion({
+                  root,
+                  threadId,
+                  sessionId: routedSessionId,
+                  expectedRevision: revision,
+                  selection,
+                  message,
+                  route: questionRoute,
+                });
             const updated = appended.session;
             const publicQuestion = publicConversationTurn(
               appended.persistedQuestion,
             );
+            enqueueCommittedQuestion(enqueueQuestion, {
+              root,
+              sessionId: routedSessionId,
+              questionId: appended.persistedQuestion.id,
+              route: questionRoute,
+            });
             sendJson(response, 200, {
               ok: true,
               status: "queued",
               revision: updated.state?.revision ?? revision + 1,
               selectionId,
               question: publicQuestion,
-              session: await publicProjectSession(updated, requestHostRoute),
-            });
-            enqueueCommittedQuestion(enqueueQuestion, {
-              root,
-              sessionId: routedSessionId,
-              questionId: appended.persistedQuestion.id,
-              route: questionRoute,
+              session: await publicProjectSession(
+                updated,
+                requestHostRoute,
+                threadId,
+              ),
             });
           } catch (error) {
             if (isConflict(error)) {
@@ -1260,7 +1400,7 @@ export async function createViewerServer({
                 response,
                 root,
                 routedSessionId,
-                projectChat,
+                projectChatCapability,
                 requestHostRoute,
               );
             }
@@ -1295,7 +1435,7 @@ export async function createViewerServer({
             response,
             root,
             routedSessionId,
-            projectChat,
+            projectChatCapability,
             requestHostRoute,
           );
           return;

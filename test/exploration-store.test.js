@@ -238,6 +238,41 @@ test("plans stay immutable while all outcomes and signals append to one experime
   );
 });
 
+test("experiment representations retain a versioned exact intent", async (t) => {
+  const root = await fixture(t);
+  await createExploration({
+    root,
+    id: explorationId,
+    plan: { goal: "Keep the requested form", analyticIntent: "Test one exact form.", sourceScope },
+  });
+  await createExperiment({
+    root,
+    explorationId,
+    id: firstId,
+    plan: plan("exact-form", {
+      representation: {
+        family: "rank",
+        member: "bar-list",
+        representationIntent: {
+          version: 1,
+          mode: "exact",
+          constraints: [{ kind: "form", value: "bar-list" }],
+        },
+      },
+    }),
+  });
+
+  assert.deepEqual((await loadExperiment({ root, experimentId: firstId })).representation, {
+    family: "rank",
+    member: "bar-list",
+    representationIntent: {
+      version: 1,
+      mode: "exact",
+      constraints: [{ kind: "form", value: "bar-list" }],
+    },
+  });
+});
+
 test("an experiment cannot branch across exploration boundaries", async (t) => {
   const root = await fixture(t);
   for (const [id, suffix] of [

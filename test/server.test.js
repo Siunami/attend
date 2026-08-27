@@ -11,9 +11,11 @@ import {
   VIEWER_JSON_LIMIT,
 } from "../src/server.js";
 import {
+  completeQuestionResponse,
   createSession,
   loadSession,
   markQuestionResponseFailed,
+  markQuestionResponseRunning,
 } from "../src/session-store.js";
 
 const TEST_TOKEN = "viewer-test-token-0123456789";
@@ -251,7 +253,7 @@ test("serves only the tokenized viewer and explicit read endpoints", async (t) =
     ok: true,
     service: "attend-library",
     protocolVersion: 4,
-    packageVersion: "0.5.3",
+    packageVersion: "0.5.4",
     instanceId: TEST_INSTANCE_ID,
     sessionCount: 1,
   });
@@ -588,6 +590,98 @@ test("chat queues only the user question against the exact selected state", asyn
   assert.equal(turnsFrom(afterStale).length, 1);
   assert.deepEqual(afterStale.state.selectedIds, []);
   assert.equal(afterStale.state.revision, 2);
+});
+
+test("one chat follows saved-view pages and logs only pages that send messages", async (t) => {
+  const viewer = await fixture(t, { enqueueQuestion() {} });
+  const secondSessionId = "session_thread_second";
+  await createSession({
+    root: viewer.root,
+    id: secondSessionId,
+    dataPackage: secondDataPackage(),
+  });
+  const secondUrl = new URL(`s/${secondSessionId}/`, viewer.libraryUrl);
+
+  const createdResponse = await post(viewer.url, "chat/threads", {});
+  assert.equal(createdResponse.status, 201);
+  const created = await responseJson(createdResponse);
+  const threadId = created.thread.id;
+  assert.deepEqual(
+    created.thread.events.map((event) => [event.type, event.page?.sessionId]),
+    [["page-context", viewer.analysisId]],
+  );
+
+  const firstState = await responseJson(await fetch(api(viewer.url, `state?threadId=${threadId}`)));
+  assert.equal(firstState.conversation.threadId, threadId);
+  assert.equal(firstState.conversation.events.length, 1);
+
+  const firstChat = await responseJson(await post(viewer.url, "chat", {
+    expectedRevision: firstState.state.revision,
+    selectionId: firstState.selection.id,
+    threadId,
+    message: "Start on the first page",
+  }));
+  await markQuestionResponseRunning({
+    root: viewer.root,
+    sessionId: viewer.analysisId,
+    questionId: firstChat.question.id,
+  });
+  await completeQuestionResponse({
+    root: viewer.root,
+    sessionId: viewer.analysisId,
+    questionId: firstChat.question.id,
+    content: "First-page answer",
+  });
+
+  const merelyNavigated = await responseJson(
+    await fetch(api(secondUrl, `state?threadId=${threadId}`)),
+  );
+  assert.deepEqual(
+    merelyNavigated.conversation.events.filter((event) => event.type === "page-context")
+      .map((event) => event.page.sessionId),
+    [viewer.analysisId],
+    "opening the second page must not write or derive a second marker",
+  );
+
+  const secondChat = await responseJson(await post(secondUrl, "chat", {
+    expectedRevision: merelyNavigated.state.revision,
+    selectionId: merelyNavigated.selection.id,
+    threadId,
+    message: "Now ask from the second page",
+  }));
+  assert.deepEqual(
+    secondChat.session.conversation.events.filter((event) => event.type === "page-context")
+      .map((event) => event.page.sessionId),
+    [viewer.analysisId, secondSessionId],
+  );
+
+  const beforeRemoteAnswer = await responseJson(
+    await fetch(api(viewer.url, `state?threadId=${threadId}`)),
+  );
+  await markQuestionResponseRunning({
+    root: viewer.root,
+    sessionId: secondSessionId,
+    questionId: secondChat.question.id,
+  });
+  await completeQuestionResponse({
+    root: viewer.root,
+    sessionId: secondSessionId,
+    questionId: secondChat.question.id,
+    content: "Second-page answer",
+  });
+  const afterRemoteAnswer = await responseJson(
+    await fetch(api(viewer.url, `state?threadId=${threadId}`)),
+  );
+  assert.notEqual(
+    afterRemoteAnswer.conversation.revision,
+    beforeRemoteAnswer.conversation.revision,
+    "a remote-session answer must change the independently polled conversation revision",
+  );
+  assert.equal(afterRemoteAnswer.conversation.turns.at(-1).content, "Second-page answer");
+
+  const history = await responseJson(await fetch(api(viewer.url, "chat/threads")));
+  assert.equal(history.threads[0].id, threadId);
+  assert.equal(history.threads[0].title, "Start on the first page");
 });
 
 test("chat returns immediately, then enqueues the exact committed question once", async (t) => {

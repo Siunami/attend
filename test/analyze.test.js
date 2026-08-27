@@ -15,7 +15,7 @@ const options = {
   root: FIXTURES,
   inputPaths: ["corpus"],
   question: "Which phrases recur across these notes?",
-  target: "Apple notes",
+  target: "Imported notes",
   minWords: 2,
   maxWords: 4,
   minCount: 2,
@@ -35,7 +35,7 @@ test("analyzePhrases emits a deterministic, inspectable phrase-list package", as
   assert.match(data.id, /^data_[a-f0-9]{16}$/);
   assert.deepEqual(data.question, {
     text: "Which phrases recur across these notes?",
-    target: "Apple notes",
+    target: "Imported notes",
     analysis: "phrase-recurrence",
   });
   assert.deepEqual(data.map, {

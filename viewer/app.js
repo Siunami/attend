@@ -2,6 +2,8 @@ import { atlasPackageToRenderModel, isAtlasPackage } from "./package-model.js";
 import { atlasSelectionSummary, renderAtlasPackage } from "./package-renderer.js";
 
 const basePath = `${window.location.pathname.replace(/[^/]*$/, "").replace(/\/+$/, "")}/`;
+const libraryBasePath = basePath.replace(/s\/[^/]+\/$/u, "");
+const chatStorageKey = `attend:active-chat-thread:${libraryBasePath}`;
 const hostAttachmentRoute = (() => {
   const params = new URLSearchParams(window.location.hash.slice(1));
   const attachmentId = params.get("attend-host");
@@ -35,12 +37,12 @@ const elements = {
   map: document.getElementById("map-pane"),
   chat: document.getElementById("chat-pane"),
   chatToggle: document.getElementById("chat-toggle"),
+  chatHistory: document.getElementById("chat-history"),
+  chatNew: document.getElementById("chat-new"),
   chatClose: document.getElementById("chat-close"),
   chatScroll: document.getElementById("chat-scroll"),
-  chatRoute: document.getElementById("chat-route"),
-  chatRouteLabel: document.getElementById("chat-route-label"),
-  chatRouteState: document.getElementById("chat-route-state"),
-  chatRouteDisclosure: document.getElementById("chat-route-disclosure"),
+  chatHistoryPanel: document.getElementById("chat-history-panel"),
+  chatThreadList: document.getElementById("chat-thread-list"),
   corpusMeta: document.getElementById("corpus-meta"),
   question: document.getElementById("question-heading"),
   target: document.getElementById("question-target"),
@@ -50,7 +52,6 @@ const elements = {
   atlasView: document.getElementById("atlas-view"),
   atlasVisual: document.getElementById("atlas-visual"),
   atlasAbstention: document.getElementById("atlas-abstention"),
-  revision: document.getElementById("state-revision"),
   selection: document.getElementById("selection-panel"),
   conversation: document.getElementById("conversation"),
   form: document.getElementById("chat-form"),
@@ -64,8 +65,11 @@ const elements = {
 let dataPackage;
 let session;
 let chat;
+let activeThread;
+let chatThreads = [];
 let pending = false;
 let chatOpen = false;
+let viewingHistory = false;
 let chatPinned = true;
 let draftSelectionKey = null;
 let atlasRenderRevision = 0;
@@ -119,6 +123,46 @@ function acceptChatProjection(payload) {
   return changed;
 }
 
+function threadProjection(payload) {
+  const source = payload?.thread ?? payload?.session?.conversation ?? payload?.conversation;
+  if (
+    !source ||
+    (typeof source.id !== "string" && typeof source.threadId !== "string") ||
+    !Array.isArray(source.turns) ||
+    !Array.isArray(source.events)
+  ) {
+    return null;
+  }
+  return {
+    ...source,
+    id: source.id ?? source.threadId,
+  };
+}
+
+function acceptThreadProjection(payload) {
+  const next = threadProjection(payload);
+  if (!next) return false;
+  const changed = next.revision !== activeThread?.revision;
+  activeThread = next;
+  try {
+    localStorage.setItem(chatStorageKey, activeThread.id);
+  } catch {
+    // Private browsing or a full quota must not make local chat unusable.
+  }
+  return changed;
+}
+
+function storedThreadId() {
+  try {
+    const threadId = localStorage.getItem(chatStorageKey);
+    return /^(?:thread|legacy)_[a-f0-9]{24}$/u.test(threadId ?? "")
+      ? threadId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function activeChatRoute() {
   const active = chat?.active;
   if (active?.kind === "local" && active.model === "gpt-oss-20b") {
@@ -142,54 +186,6 @@ function activeChatRoute() {
 
 function detachedProviderLabel(adapter) {
   return adapter === "claude-cli" ? "Claude CLI" : "Codex CLI";
-}
-
-function renderChatRoute() {
-  const route = activeChatRoute();
-  elements.chatRoute.dataset.routeKind = route.kind;
-  if (route.kind === "local") {
-    elements.chatRoute.dataset.capability = route.available === false ? "restarting" : "ready";
-    elements.chatRouteLabel.textContent = "Private AI · gpt-oss-20b";
-    elements.chatRouteState.textContent = route.available === false ? "Restarting" : "On this Mac";
-    elements.chatRouteDisclosure.textContent = route.disclosure
-      || "Questions and selected evidence stay on this Mac.";
-    return;
-  }
-  if (route.kind === "detached") {
-    const provider = detachedProviderLabel(route.adapter);
-    elements.chatRouteLabel.textContent = `Detached fallback: ${provider}`;
-    if (route.available === false) {
-      elements.chatRoute.dataset.capability = "unavailable";
-      elements.chatRouteState.textContent = "Unavailable";
-    } else if (route.authenticated === false) {
-      elements.chatRoute.dataset.capability = "sign-in-required";
-      elements.chatRouteState.textContent = "Sign-in required";
-    } else {
-      elements.chatRoute.dataset.capability = "ready";
-      elements.chatRouteState.textContent = "Ready";
-    }
-    elements.chatRouteDisclosure.textContent = route.disclosure
-      || `Selected evidence is sent to the explicitly selected ${provider} fallback.`;
-    return;
-  }
-
-  if (route.ownership === "unattached" || route.registered === false) {
-    elements.chatRoute.dataset.capability = "unattached";
-    elements.chatRouteLabel.textContent = "Host not attached";
-    elements.chatRouteState.textContent = "Open from Attend";
-    elements.chatRouteDisclosure.textContent = route.disclosure
-      || "Sidebar chat is unavailable from this unbound library link.";
-    return;
-  }
-  elements.chatRoute.dataset.capability = route.listener || "not-listening";
-  elements.chatRouteLabel.textContent = `Host attached · ${route.label || "Opening coding agent"}`;
-  elements.chatRouteState.textContent = route.listener === "delivered"
-    ? "Delivered"
-    : route.listener === "listening"
-      ? "Listening"
-      : "No active listener";
-  elements.chatRouteDisclosure.textContent = route.disclosure
-    || "Questions and selected evidence return to the coding agent that opened this view through that agent's configured provider route.";
 }
 
 function countLabel(count) {
@@ -245,10 +241,6 @@ function atlasSelectedFocus(value = session) {
   return { kind: "node", id: focus.id, label: focus.label ?? focus.id };
 }
 
-function markContextSummary(mark) {
-  return `${mark.occurrenceCount} ${countLabel(mark.occurrenceCount)} across ${mark.distinctSourceCount} ${sourceLabel(mark.distinctSourceCount)}`;
-}
-
 function currentMark() {
   return session?.selection?.marks?.length === 1 ? session.selection.marks[0] : null;
 }
@@ -297,8 +289,8 @@ function draftNeedsReview() {
   return draftSelectionKey !== null && draftSelectionKey !== semanticAttachmentKey();
 }
 
-function hasActiveResponse(value = session) {
-  const turns = value?.conversation?.turns || value?.turns || [];
+function hasActiveResponse(value = activeThread) {
+  const turns = value?.turns || value?.conversation?.turns || [];
   const answeredQuestionIds = new Set(
     turns
       .filter((turn) => turn.role === "assistant" && turn.replyToTurnId)
@@ -333,8 +325,103 @@ function openChat() {
 }
 
 function closeChat({ restoreFocus = true } = {}) {
+  setHistoryOpen(false);
   setChatOpen(false);
   if (restoreFocus) elements.chatToggle.focus();
+}
+
+function setHistoryOpen(open) {
+  viewingHistory = open;
+  elements.chatHistoryPanel.hidden = !open;
+  elements.conversation.hidden = open;
+  elements.form.hidden = open;
+  elements.chatHistory.setAttribute("aria-expanded", String(open));
+}
+
+function threadStatePath(threadId) {
+  return `state?threadId=${encodeURIComponent(threadId)}`;
+}
+
+function renderChatHistory() {
+  const visible = chatThreads.filter(
+    (thread) => thread.messageCount > 0 || thread.id === activeThread?.id,
+  );
+  const rows = visible.map((thread) => {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chat-thread-button";
+    button.textContent = thread.title || thread.initialPage?.label || "New chat";
+    if (thread.id === activeThread?.id) button.setAttribute("aria-current", "true");
+    button.addEventListener("click", () => activateChatThread(thread.id));
+    item.append(button);
+    return item;
+  });
+  elements.chatThreadList.replaceChildren(...rows);
+}
+
+async function refreshChatHistory() {
+  const payload = await request("chat/threads");
+  chatThreads = Array.isArray(payload.threads) ? payload.threads : [];
+  renderChatHistory();
+  return chatThreads;
+}
+
+function clearChatDraft() {
+  elements.input.value = "";
+  draftSelectionKey = null;
+}
+
+async function activateChatThread(threadId, { follow = true } = {}) {
+  if (pending || (threadId === activeThread?.id && !viewingHistory)) return;
+  pending = true;
+  syncComposer();
+  try {
+    const payload = await request(threadStatePath(threadId));
+    acceptChatProjection(payload);
+    acceptThreadProjection(payload);
+    session = unwrapSession(payload);
+    clearChatDraft();
+    setHistoryOpen(false);
+    chatPinned = true;
+    renderState({ followConversation: follow });
+    setStatus("");
+    elements.input.focus();
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    pending = false;
+    syncComposer();
+  }
+}
+
+async function createNewChat() {
+  if (pending) return;
+  pending = true;
+  syncComposer();
+  try {
+    const created = await request("chat/threads", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    acceptThreadProjection(created);
+    const payload = await request(threadStatePath(activeThread.id));
+    acceptChatProjection(payload);
+    acceptThreadProjection(payload);
+    session = unwrapSession(payload);
+    clearChatDraft();
+    setHistoryOpen(false);
+    chatPinned = true;
+    await refreshChatHistory();
+    renderState({ followConversation: true });
+    setStatus("");
+    elements.input.focus();
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    pending = false;
+    syncComposer();
+  }
 }
 
 function syncComposer() {
@@ -477,17 +564,27 @@ async function renderAtlasVisualization() {
   }
 }
 
-async function copyAtlasSelection(marks, focus = null) {
-  const lines = marks.map((mark) => `${mark.id}: ${mark.label}`);
-  if (focus) lines.unshift(`component: ${focus.label}`);
-  const text = lines.join("\n");
-  try {
-    if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable");
-    await navigator.clipboard.writeText(text);
-    setStatus("Selection copied.");
-  } catch {
-    setStatus("The selection could not be copied.", true);
-  }
+function createReplyArrow() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("reply-arrow");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "17");
+  svg.setAttribute("height", "17");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M9 7 4 12l5 5M4 12h8a6 6 0 0 1 6 6");
+  svg.append(path);
+  return svg;
+}
+
+function appendReplyAttachment(container, label) {
+  const copy = document.createElement("div");
+  copy.className = "attachment-copy";
+  const phrase = document.createElement("strong");
+  phrase.className = "attachment-phrase";
+  phrase.textContent = `“${label}”`;
+  copy.append(createReplyArrow(), phrase);
+  container.append(copy);
 }
 
 function renderSelection() {
@@ -502,38 +599,16 @@ function renderSelection() {
     }
     const attachment = document.createElement("div");
     attachment.className = "selection-attachment atlas-selection-attachment";
-    const copy = document.createElement("div");
-    copy.className = "attachment-copy";
-    const label = document.createElement("span");
-    label.className = "attachment-label";
-    label.textContent = focus
-      ? "Attach selected component to next message"
-      : "Attach selected marks to next message";
-    const names = document.createElement("strong");
-    names.className = "attachment-phrase";
-    names.textContent = focus?.label ?? marks.map((mark) => mark.label).join(" · ");
-    const meta = document.createElement("span");
-    meta.className = "attachment-meta";
-    meta.textContent = focus
-      ? `${marks.length} connected relationship${marks.length === 1 ? "" : "s"} · ${marks.reduce((count, mark) => count + mark.evidenceRefs.length, 0)} evidence references`
-      : `${marks.length} selected mark${marks.length === 1 ? "" : "s"} · ${marks.reduce((count, mark) => count + mark.evidenceRefs.length, 0)} evidence references`;
-    copy.append(label, names, meta);
+    const name = focus?.label ?? marks.map((mark) => mark.label).join(" · ");
+    appendReplyAttachment(attachment, name);
 
-    const actions = document.createElement("div");
-    actions.className = "selection-actions";
-    const copyButton = document.createElement("button");
-    copyButton.type = "button";
-    copyButton.className = "selection-copy";
-    copyButton.textContent = "Copy selection";
-    copyButton.addEventListener("click", () => copyAtlasSelection(marks, focus));
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "selection-remove attachment-remove";
     remove.setAttribute("aria-label", focus ? `Remove attached component ${focus.label}` : "Remove selected marks");
     remove.textContent = "×";
     remove.addEventListener("click", clearSelection);
-    actions.append(copyButton, remove);
-    attachment.append(copy, actions);
+    attachment.append(remove);
     elements.selection.append(attachment);
     syncComposer();
     return;
@@ -547,18 +622,7 @@ function renderSelection() {
 
   const attachment = document.createElement("div");
   attachment.className = "selection-attachment";
-  const copy = document.createElement("div");
-  copy.className = "attachment-copy";
-  const label = document.createElement("span");
-  label.className = "attachment-label";
-  label.textContent = "Attach to next message";
-  const phrase = document.createElement("strong");
-  phrase.className = "attachment-phrase";
-  phrase.textContent = `“${mark.phrase}”`;
-  const meta = document.createElement("span");
-  meta.className = "attachment-meta";
-  meta.textContent = markContextSummary(mark);
-  copy.append(label, phrase, meta);
+  appendReplyAttachment(attachment, mark.phrase);
 
   const remove = document.createElement("button");
   remove.type = "button";
@@ -567,7 +631,7 @@ function renderSelection() {
   remove.textContent = "×";
   remove.addEventListener("click", clearSelection);
 
-  attachment.append(copy, remove);
+  attachment.append(remove);
   elements.selection.append(attachment);
   syncComposer();
 }
@@ -578,82 +642,23 @@ function isLegacyContextReceipt(turn) {
 }
 
 function historicalAttachment(turn) {
-  if (atlasMode()) {
-    const turnMarks = Array.isArray(turn.selection?.marks) ? turn.selection.marks : [];
-    const focus = turn.selection?.focus?.kind === "node" ? turn.selection.focus : null;
-    const labels = turnMarks.map((mark) => mark.label ?? mark.id ?? mark.markId).filter(Boolean);
-    const selectedIds = turn.selection?.selectedMarkIds ?? turn.selection?.markIds ?? [];
-    const names = focus
-      ? [focus.label ?? focus.id]
-      : labels.length ? labels : (Array.isArray(selectedIds) ? selectedIds : []);
-    if (!names.length) return null;
-    const attachment = document.createElement("div");
-    attachment.className = "turn-attachment";
-    attachment.setAttribute("aria-label", focus
-      ? `Attached visual context for component ${names[0]}`
-      : "Attached visual context for selected marks");
-    const label = document.createElement("span");
-    label.className = "turn-attachment-label";
-    label.textContent = "From visualization";
-    const selected = document.createElement("strong");
-    selected.className = "turn-attachment-phrase";
-    selected.textContent = names.join(" · ");
-    const meta = document.createElement("span");
-    meta.className = "turn-attachment-meta";
-    meta.textContent = focus
-      ? `${turnMarks.length} connected relationship${turnMarks.length === 1 ? "" : "s"}`
-      : `${names.length} selected mark${names.length === 1 ? "" : "s"}`;
-    attachment.append(label, selected, meta);
-    return attachment;
-  }
-  const mark = turn.selection?.marks?.[0];
-  if (!mark) return null;
+  const marks = Array.isArray(turn.selection?.marks) ? turn.selection.marks : [];
+  const focus = turn.selection?.focus?.kind === "node" ? turn.selection.focus : null;
+  const names = focus
+    ? [focus.label ?? focus.id]
+    : marks
+        .map((mark) => mark.label ?? mark.phrase ?? mark.id ?? mark.markId)
+        .filter(Boolean);
+  if (!names.length) return null;
   const attachment = document.createElement("div");
   attachment.className = "turn-attachment";
-  attachment.setAttribute(
-    "aria-label",
-    `Attached visual context for phrase “${mark.phrase}”`,
-  );
-  const label = document.createElement("span");
-  label.className = "turn-attachment-label";
-  label.textContent = "From visualization";
+  attachment.setAttribute("aria-label", `Attached visual context: ${names.join(", ")}`);
+  attachment.append(createReplyArrow());
   const phrase = document.createElement("strong");
   phrase.className = "turn-attachment-phrase";
-  phrase.textContent = `“${mark.phrase}”`;
-  const meta = document.createElement("span");
-  meta.className = "turn-attachment-meta";
-  meta.textContent = markContextSummary(mark);
-  attachment.append(label, phrase, meta);
+  phrase.textContent = `“${names.join(" · ")}”`;
+  attachment.append(phrase);
   return attachment;
-}
-
-function linkedQuestionReference(turn) {
-  if (atlasMode()) {
-    const marks = Array.isArray(turn.selection?.marks) ? turn.selection.marks : [];
-    const focus = turn.selection?.focus?.kind === "node" ? turn.selection.focus : null;
-    const ids = turn.selection?.selectedMarkIds ?? turn.selection?.markIds ?? [];
-    const names = marks.map((mark) => mark.label ?? mark.id ?? mark.markId).filter(Boolean);
-    const selected = focus
-      ? [focus.label ?? focus.id]
-      : names.length ? names : (Array.isArray(ids) ? ids : []);
-    if (!selected.length) return null;
-    const reference = document.createElement("div");
-    reference.className = "turn-reply-reference";
-    const text = document.createElement("span");
-    text.textContent = focus
-      ? `Using the ${selected[0]} component and ${marks.length} connected relationship${marks.length === 1 ? "" : "s"} as context`
-      : `Using ${selected.length} selected mark${selected.length === 1 ? "" : "s"} as context · ${selected.join(" · ")}`;
-    reference.append(text);
-    return reference;
-  }
-  const mark = turn.selection?.marks?.[0];
-  if (!mark) return null;
-  const reference = document.createElement("div");
-  reference.className = "turn-reply-reference";
-  const phrase = document.createElement("span");
-  phrase.textContent = `Using “${mark.phrase}” context · ${mark.distinctSourceCount} ${sourceLabel(mark.distinctSourceCount)}`;
-  reference.append(phrase);
-  return reference;
 }
 
 function safeExternalHref(value) {
@@ -906,53 +911,62 @@ function responseState(turn, answeredQuestionIds) {
   return wrap;
 }
 
+function pageContextEvent(event) {
+  const row = document.createElement("div");
+  row.className = "page-context-event";
+  const link = document.createElement("a");
+  link.href = hostBoundHref(event.page.href);
+  link.textContent = event.page.label;
+  link.setAttribute("aria-label", `Open page: ${event.page.label}`);
+  row.append(link);
+  return row;
+}
+
 function renderConversation({ follow = false, focusTurnId = null } = {}) {
   const previousTop = elements.chatScroll.scrollTop;
   const shouldFollow = follow || chatPinned;
   let focusedTurn = null;
   elements.conversation.replaceChildren();
-  const rawTurns = session.conversation?.turns || session.turns || [];
+  const rawTurns = activeThread?.turns || session?.conversation?.turns || session?.turns || [];
   const answeredQuestionIds = new Set(
     rawTurns
       .filter((turn) => turn.role === "assistant" && turn.replyToTurnId)
       .map((turn) => turn.replyToTurnId),
   );
-  const turns = rawTurns.filter(
-    (turn) => !isLegacyContextReceipt(turn),
-  );
+  const turns = rawTurns.filter((turn) => !isLegacyContextReceipt(turn));
+  const turnsById = new Map(turns.map((turn) => [turn.id, turn]));
+  const events = activeThread?.events ?? turns.map((turn) => ({
+    type: "message",
+    id: `message:${turn.id}`,
+    turnId: turn.id,
+  }));
 
-  if (turns.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "conversation-empty";
-    empty.textContent = atlasMode()
-      ? "Select a mark, then ask about it. Your question will keep the exact visual state attached."
-      : "Select a phrase, then ask about it. Your question will keep the exact visual state attached.";
-    elements.conversation.append(empty);
-  } else {
-    for (const turn of turns) {
-      const wrap = document.createElement("article");
-      wrap.className = `turn-wrap turn-wrap-${turn.role}`;
-      if (turn.id === focusTurnId) focusedTurn = wrap;
-      if (turn.role === "user") {
-        const attachment = historicalAttachment(turn);
-        if (attachment) wrap.append(attachment);
-      } else if (turn.replyToTurnId) {
-        const reference = linkedQuestionReference(turn);
-        if (reference) wrap.append(reference);
-      }
-      const content = turn.message || turn.content || "";
-      const message = turn.role === "assistant"
-        ? renderAssistantMessage(content)
-        : document.createElement("p");
-      if (turn.role !== "assistant") {
-        message.className = `turn turn-${turn.role}`;
-        message.textContent = content;
-      }
-      wrap.append(message);
-      elements.conversation.append(wrap);
-      const response = responseState(turn, answeredQuestionIds);
-      if (response) elements.conversation.append(response);
+  for (const event of events) {
+    if (event.type === "page-context") {
+      elements.conversation.append(pageContextEvent(event));
+      continue;
     }
+    const turn = turnsById.get(event.turnId);
+    if (!turn) continue;
+    const wrap = document.createElement("article");
+    wrap.className = `turn-wrap turn-wrap-${turn.role}`;
+    if (turn.id === focusTurnId) focusedTurn = wrap;
+    if (turn.role === "user") {
+      const attachment = historicalAttachment(turn);
+      if (attachment) wrap.append(attachment);
+    }
+    const content = turn.message || turn.content || "";
+    const message = turn.role === "assistant"
+      ? renderAssistantMessage(content)
+      : document.createElement("p");
+    if (turn.role !== "assistant") {
+      message.className = `turn turn-${turn.role}`;
+      message.textContent = content;
+    }
+    wrap.append(message);
+    elements.conversation.append(wrap);
+    const response = responseState(turn, answeredQuestionIds);
+    if (response) elements.conversation.append(response);
   }
 
   window.requestAnimationFrame(() => {
@@ -973,8 +987,6 @@ function renderConversation({ follow = false, focusTurnId = null } = {}) {
 }
 
 function renderState({ followConversation = false, focusConversationTurnId = null } = {}) {
-  elements.revision.textContent = `v${sessionRevision()}`;
-  renderChatRoute();
   renderPhrases();
   renderSelection();
   renderConversation({
@@ -1117,10 +1129,12 @@ async function sendMessage(message) {
       body: JSON.stringify({
         expectedRevision: session.state.revision,
         selectionId: session.selection.id,
+        threadId: activeThread.id,
         message,
       }),
     });
     acceptChatProjection(payload);
+    acceptThreadProjection(payload);
     session = unwrapSession(payload);
     elements.input.value = "";
     draftSelectionKey = null;
@@ -1150,9 +1164,10 @@ async function retryQuestion(questionId) {
   try {
     const payload = await request("chat/retry", {
       method: "POST",
-      body: JSON.stringify({ questionId }),
+      body: JSON.stringify({ threadId: activeThread.id, questionId }),
     });
     acceptChatProjection(payload);
+    acceptThreadProjection(payload);
     session = unwrapSession(payload);
     chatPinned = true;
     renderState({ followConversation: true });
@@ -1167,18 +1182,24 @@ async function retryQuestion(questionId) {
 }
 
 async function refreshState() {
-  const payload = await request("state");
+  const payload = await request(threadStatePath(activeThread.id));
   const chatChanged = acceptChatProjection(payload);
   const next = unwrapSession(payload);
+  const conversationChanged = next.conversation?.revision !== activeThread?.revision;
   const explicitStateRevisionIsNewer = Boolean(
     next?.state?.revision !== undefined
       && session?.state?.revision !== undefined
       && next.state.revision > session.state.revision,
   );
   const normalizedRevisionIsNewer = sessionRevision(next) > sessionRevision();
-  if (!session || explicitStateRevisionIsNewer || normalizedRevisionIsNewer) {
+  if (
+    !session ||
+    explicitStateRevisionIsNewer ||
+    normalizedRevisionIsNewer ||
+    conversationChanged
+  ) {
     const priorAssistantIds = new Set(
-      (session?.conversation?.turns || session?.turns || [])
+      (activeThread?.turns || [])
         .filter((turn) => turn.role === "assistant")
         .map((turn) => turn.id),
     );
@@ -1186,6 +1207,7 @@ async function refreshState() {
       .findLast((turn) => turn.role === "assistant" && !priorAssistantIds.has(turn.id));
     const focusConversationTurnId = chatPinned ? newAssistant?.id ?? null : null;
     session = next;
+    acceptThreadProjection(payload);
     renderState({ focusConversationTurnId });
     if (draftNeedsReview()) {
       setStatus(atlasMode()
@@ -1193,7 +1215,6 @@ async function refreshState() {
         : "The attached phrase changed while you were writing. Select a phrase again before asking.", true);
     }
   } else if (chatChanged) {
-    renderChatRoute();
     renderConversation();
   }
 }
@@ -1208,6 +1229,22 @@ elements.chatToggle.addEventListener("click", () => {
 });
 
 elements.chatClose.addEventListener("click", () => closeChat());
+
+elements.chatHistory.addEventListener("click", async () => {
+  if (viewingHistory) {
+    setHistoryOpen(false);
+    elements.input.focus();
+    return;
+  }
+  try {
+    await refreshChatHistory();
+    setHistoryOpen(true);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
+elements.chatNew.addEventListener("click", () => createNewChat());
 
 elements.form.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1269,19 +1306,38 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.key === "Escape" && chatOpen) {
     event.preventDefault();
-    closeChat();
+    if (viewingHistory) {
+      setHistoryOpen(false);
+      elements.input.focus();
+    } else {
+      closeChat();
+    }
   }
 });
 
 async function boot() {
   setChatOpen(false);
   try {
-    const [dataPayload, statePayload] = await Promise.all([
+    const [dataPayload, historyPayload] = await Promise.all([
       request("data"),
-      request("state"),
+      request("chat/threads"),
     ]);
     dataPackage = unwrapArtifact(dataPayload);
+    chatThreads = Array.isArray(historyPayload.threads) ? historyPayload.threads : [];
+    const savedThreadId = storedThreadId();
+    let threadId = chatThreads.some((thread) => thread.id === savedThreadId)
+      ? savedThreadId
+      : chatThreads[0]?.id;
+    if (!threadId) {
+      const created = await request("chat/threads", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      threadId = created.thread.id;
+    }
+    const statePayload = await request(threadStatePath(threadId));
     acceptChatProjection(statePayload);
+    acceptThreadProjection(statePayload);
     session = unwrapSession(statePayload);
     renderHeader();
     renderState({ followConversation: true });

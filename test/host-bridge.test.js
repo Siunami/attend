@@ -734,6 +734,79 @@ test("host packet and guarded completion form an idempotent end-to-end bridge", 
   );
 });
 
+test("one host attachment delivers and completes a question from another page", async (t) => {
+  const root = await fixture(t);
+  const packageValue = dataPackage();
+  const openedPage = await createSession({
+    root,
+    id: "session_bridge_page_a",
+    dataPackage: packageValue,
+  });
+  const currentPage = await createSession({
+    root,
+    id: "session_bridge_page_b",
+    dataPackage: packageValue,
+  });
+  const selectedCurrentPage = await updateSession({
+    root,
+    sessionId: currentPage.id,
+    expectedRevision: currentPage.state.revision,
+    patch: { selectedIds: ["phrase_bug_book"] },
+  });
+  const owner = await registerHostAttachment({
+    root,
+    sessionId: openedPage.id,
+  });
+  const selection = buildSelection(packageValue, selectedCurrentPage.state);
+  await appendQueuedQuestion({
+    root,
+    sessionId: currentPage.id,
+    expectedRevision: selectedCurrentPage.state.revision,
+    route: owner.route,
+    turn: {
+      id: "turn_bridge_page_b",
+      role: "user",
+      content: "What changed on this page?",
+      selection,
+    },
+  });
+
+  const packet = await waitForHostQuestion({
+    root,
+    ticket: owner.ticket,
+    timeoutMs: 0,
+    async evidenceForSelection({ selection: exactSelection }) {
+      return {
+        kind: "attend-evidence-packet",
+        selectionId: exactSelection.id,
+        coverage: { complete: true },
+        sources: [{
+          id: "source_alpha",
+          content: "Bug book begins with observations.",
+        }],
+      };
+    },
+  });
+  assert.equal(packet.replyGuard.sessionId, currentPage.id);
+  assert.equal(packet.replyGuard.questionId, "turn_bridge_page_b");
+
+  const completed = await completeHostQuestion({
+    root,
+    ticket: owner.ticket,
+    replyGuard: packet.replyGuard,
+    message: "The current page has its own exact reply guard.",
+  });
+  assert.equal(completed.answer.replyToTurnId, "turn_bridge_page_b");
+  assert.equal(
+    (await loadSession({ root, sessionId: openedPage.id })).conversation.turns.length,
+    0,
+  );
+  assert.equal(
+    (await loadSession({ root, sessionId: currentPage.id })).conversation.turns.at(-1).content,
+    "The current page has its own exact reply guard.",
+  );
+});
+
 test("a new same-session ticket explicitly rebinds a stranded queued question", async (t) => {
   const root = await fixture(t);
   const packageValue = dataPackage();

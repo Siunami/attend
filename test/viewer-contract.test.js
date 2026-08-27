@@ -55,10 +55,8 @@ test("viewer assets match the strict self-only CSP and accessible control contra
   assert.match(html, /<a class="library-return" href="\.\.\/\.\.\/">All views<\/a>/u);
   assert.match(html, /<textarea\b[^>]*\bid="chat-input"/u);
   assert.match(html, /<button\b[^>]*\btype="submit"[^>]*>\s*Ask\s*<\/button>/u);
-  assert.match(html, /id="chat-route"[^>]*aria-live="polite"/u);
-  assert.match(html, /id="chat-route-label"/u);
-  assert.match(html, /id="chat-route-state"/u);
-  assert.match(html, /id="chat-route-disclosure"/u);
+  assert.match(html, /id="chat-pane"[^>]*aria-label="Chat"/u);
+  assert.match(html, /id="chat-close"[^>]*aria-label="Close chat"[^>]*>×<\/button>/u);
   assert.doesNotMatch(html, /OpenAI|Codex runner|existing Codex sign-in/u);
   assert.doesNotMatch(app, /Answered deterministically/u);
   assert.match(
@@ -81,10 +79,94 @@ test("Atlas component clicks attach node focus and keep one vertical scroll owne
   assert.match(app, /target\.kind === "node"/u);
   assert.match(app, /nodeId:\s*target\.nodeId/u);
   assert.match(app, /selectedNodeId:\s*atlasSelectedFocus\(\)\?\.id/u);
-  assert.match(app, /label\.textContent = focus[\s\S]*"Attach selected component to next message"/u);
+  assert.doesNotMatch(app, /Replying to/u);
   assert.match(declarationsFor(css, ".atlas-visual"), /overflow:\s*clip/u);
   assert.match(css, /\.atlas-visual \.mechanism-node:hover \.mechanism-node-card/u);
   assert.match(css, /\.atlas-visual \[data-node-id\]:focus-visible/u);
+});
+
+test("selected context copies the minimal OpenAI reply strip inside the composer", async () => {
+  const { html, app, css } = await readViewerAssets();
+
+  const fieldStart = html.indexOf('class="composer-field"');
+  const selectionStart = html.indexOf('id="selection-panel"');
+  const inputStart = html.indexOf('class="composer-input"');
+  assert.ok(
+    fieldStart >= 0 && selectionStart > fieldStart && inputStart > selectionStart,
+    "the reply context must share the input container",
+  );
+
+  const renderStart = app.indexOf("function renderSelection");
+  const renderEnd = app.indexOf("function isLegacyContextReceipt", renderStart);
+  const renderSource = app.slice(renderStart, renderEnd);
+  assert.match(renderSource, /appendReplyAttachment\(attachment,/u);
+  assert.match(app, /function createReplyArrow\(\)/u);
+  assert.match(app, /phrase\.textContent = `“\$\{label\}”`/u);
+  assert.doesNotMatch(renderSource, /Replying to/u);
+  assert.doesNotMatch(renderSource, /Copy selection|Attach [^"\n]*next message/u);
+  assert.doesNotMatch(renderSource, /attachment-meta/u);
+
+  assert.match(declarationsFor(css, ".selection-panel"), /grid-column:\s*1\s*\/\s*-1/u);
+  const attachment = declarationsFor(css, ".selection-attachment");
+  assert.match(attachment, /display:\s*flex/u);
+  assert.doesNotMatch(attachment, /\bborder\s*:/u);
+  assert.match(declarationsFor(css, ".attachment-copy"), /flex:\s*1\s+1\s+auto/u);
+  assert.match(declarationsFor(css, ".reply-arrow"), /stroke:\s*currentColor/u);
+});
+
+test("chat chrome is only history, new chat, and a small close control", async () => {
+  const { html, app, css } = await readViewerAssets();
+
+  assert.match(html, /<aside[^>]*id="chat-pane"[^>]*aria-label="Chat"/u);
+  assert.match(
+    html,
+    /<header class="chat-header">[\s\S]*id="chat-history"[\s\S]*aria-label="Chat history"[\s\S]*id="chat-new"[\s\S]*aria-label="New chat"[\s\S]*id="chat-close"[^>]*aria-label="Close chat"[^>]*>×<\/button>[\s\S]*<\/header>/u,
+  );
+  assert.doesNotMatch(html, /chat-heading|chat-route|state-revision/u);
+  assert.doesNotMatch(app, /renderChatRoute|chatRouteDisclosure|elements\.revision/u);
+
+  const header = declarationsFor(css, ".chat-header");
+  assert.match(header, /justify-content:\s*space-between/u);
+  assert.doesNotMatch(header, /border-bottom/u);
+  const headerHeight = Number(header.match(/min-height:\s*([\d.]+)px/u)?.[1]);
+  assert.ok(headerHeight > 0 && headerHeight <= 44, "the close row must stay compact");
+
+  const close = declarationsFor(css, ".chat-close");
+  assert.match(close, /width:\s*32px/u);
+  assert.match(close, /height:\s*32px/u);
+  assert.match(close, /border:\s*0/u);
+  assert.match(close, /background:\s*transparent/u);
+});
+
+test("new chat and history keep one active project thread across page navigation", async () => {
+  const { html, app } = await readViewerAssets();
+
+  assert.match(html, /id="chat-history-panel"[^>]*hidden/u);
+  assert.match(html, /id="chat-thread-list"[^>]*aria-label="Chat history"/u);
+  assert.match(app, /const chatStorageKey = `attend:active-chat-thread:\$\{libraryBasePath\}`/u);
+  assert.match(app, /localStorage\.getItem\(chatStorageKey\)/u);
+  assert.match(app, /localStorage\.setItem\(chatStorageKey, activeThread\.id\)/u);
+  assert.match(app, /await request\("chat\/threads"/u);
+  assert.match(app, /method:\s*"POST"[\s\S]*body:\s*JSON\.stringify\(\{\}\)/u);
+  assert.match(app, /state\?threadId=\$\{encodeURIComponent\(threadId\)\}/u);
+  assert.match(app, /function renderChatHistory/u);
+  assert.match(app, /elements\.chatHistory\.addEventListener/u);
+  assert.match(app, /elements\.chatNew\.addEventListener/u);
+});
+
+test("chat has no explanatory empty state and the composer uses one quiet focus treatment", async () => {
+  const { app, css } = await readViewerAssets();
+
+  const conversationStart = app.indexOf("function renderConversation");
+  const conversationEnd = app.indexOf("function renderState", conversationStart);
+  const conversationSource = app.slice(conversationStart, conversationEnd);
+  assert.doesNotMatch(conversationSource, /conversation-empty|Select a (?:mark|phrase), then ask/u);
+  assert.match(conversationSource, /event\.type === "page-context"/u);
+
+  assert.match(declarationsFor(css, ".composer textarea"), /outline:\s*none/u);
+  const focusedComposer = declarationsFor(css, ".composer-field:focus-within");
+  assert.match(focusedComposer, /border-color:\s*var\(--accent\)/u);
+  assert.doesNotMatch(focusedComposer, /\boutline\s*:/u);
 });
 
 test("library assets render only API metadata with safe accessible links", async () => {
@@ -334,16 +416,14 @@ test("drawer, attachment, and suggested-question interactions preserve exact cha
 
   assert.match(app, /selection-remove/u);
   assert.match(app, /Remove attached phrase/u);
-  assert.match(app, /Attach to next message/u);
-  assert.match(app, /From visualization/u);
-  assert.match(app, /markContextSummary\(mark\)/u);
-  assert.match(app, /\$\{mark\.occurrenceCount\}[^`]*across \$\{mark\.distinctSourceCount\}/u);
+  assert.doesNotMatch(app, /Replying to|From visualization/u);
+  assert.doesNotMatch(app, /markContextSummary\(mark\)/u);
   assert.match(app, /turn\.role === "user"[\s\S]*historicalAttachment\(turn\)/u);
   assert.doesNotMatch(app, /evidence-list/u);
   assert.doesNotMatch(app, /row\.occurrences\.slice/u);
   assert.doesNotMatch(html, /id="thread-context"|Conversation context/u);
   assert.doesNotMatch(app, /threadContext|Conversation context ·/u);
-  assert.match(app, /Using “\$\{mark\.phrase\}” context · \$\{mark\.distinctSourceCount\}/u);
+  assert.doesNotMatch(app, /Using [^\n]* context/u);
   assert.match(app, /What themes and changes emerge across/u);
 
   const fieldStart = html.indexOf('class="composer-field"');
@@ -407,6 +487,7 @@ test("drawer, attachment, and suggested-question interactions preserve exact cha
   assert.ok(sendStart >= 0 && sendEnd > sendStart, "sendMessage must remain inspectable");
   assert.match(sendSource, /expectedRevision:\s*session\.state\.revision/u);
   assert.match(sendSource, /selectionId:\s*session\.selection\.id/u);
+  assert.match(sendSource, /threadId:\s*activeThread\.id/u);
   assert.doesNotMatch(sendSource, /hostNotification|notification|wake|host chat/iu);
   const requestStart = sendSource.indexOf('await request("chat"');
   const clearDraft = sendSource.indexOf('elements.input.value = ""');
@@ -432,11 +513,7 @@ test("drawer, attachment, and suggested-question interactions preserve exact cha
     "the viewer must render the authoritative post-send session, including its cleared live selection",
   );
 
-  assert.match(
-    declarationsFor(css, ".turn-attachment"),
-    /border-inline-start:\s*3px solid var\(--accent\)/u,
-    "historical context should read as a structured attachment rather than an ambiguous caption",
-  );
+  assert.doesNotMatch(declarationsFor(css, ".turn-attachment"), /turn-attachment-meta/u);
 
   const refreshStart = app.indexOf("async function refreshState");
   const refreshEnd = app.indexOf('elements.chatToggle.addEventListener', refreshStart);
@@ -446,6 +523,7 @@ test("drawer, attachment, and suggested-question interactions preserve exact cha
     /next\.state\.revision\s*>\s*session\.state\.revision/u,
     "an older polling response must never replace newer client state",
   );
+  assert.match(refreshSource, /next\.conversation\?\.revision\s*!==\s*activeThread\?\.revision/u);
   assert.match(app, /function draftNeedsReview\(\)/u);
   assert.match(sendSource, /if \(draftNeedsReview\(\)\)/u);
   assert.match(app, /draftSelectionKey\s*!==\s*semanticAttachmentKey\(\)/u);
@@ -489,8 +567,8 @@ test("drawer, attachment, and suggested-question interactions preserve exact cha
   assert.match(app, /retry\.textContent = "Retry"/u);
   assert.match(app, /retry\.addEventListener\("click", \(\) => retryQuestion\(turn\.id\)\)/u);
   assert.match(app, /await request\("chat\/retry"/u);
-  assert.match(app, /body: JSON\.stringify\(\{ questionId \}\)/u);
-  assert.match(app, /function hasActiveResponse\(value = session\)/u);
+  assert.match(app, /body: JSON\.stringify\(\{ threadId:\s*activeThread\.id, questionId \}\)/u);
+  assert.match(app, /function hasActiveResponse\(value = activeThread\)/u);
   assert.match(app, /turn\.response\?\.status === "queued" \|\| turn\.response\?\.status === "running"/u);
   assert.match(app, /!answeredQuestionIds\.has\(turn\.id\)/u);
   assert.match(app, /const hostUnattached =\s*route\.kind === "host" && route\.registered === false/u);
@@ -532,33 +610,23 @@ test("drawer, attachment, and suggested-question interactions preserve exact cha
   assert.doesNotMatch((await readLibraryAssets()).html, /coding agent|configured provider route|open host chat|wake agent/iu);
 });
 
-test("chat route copy distinguishes private local chat from explicit fallbacks", async () => {
-  const { html, app, css } = await readViewerAssets();
+test("chat behavior distinguishes private local chat from explicit fallbacks", async () => {
+  const { app } = await readViewerAssets();
 
-  assert.match(html, /Private AI · gpt-oss-20b/u);
-  assert.match(html, /Questions and selected evidence stay on this Mac\./u);
   assert.match(app, /payload\?\.chat \?\? payload\?\.session\?\.chat/u);
   assert.match(app, /turn\.response\?\.route/u);
   assert.match(app, /route\.kind === "local"/u);
   assert.match(app, /Waiting for the private local model\./u);
-  assert.match(app, /Host attached · \$\{route\.label/u);
   assert.match(app, /Detached fallback: \$\{provider\}/u);
-  assert.match(app, /elements\.chatRouteState\.textContent = "Unavailable"/u);
-  assert.match(app, /elements\.chatRouteState\.textContent = "Sign-in required"/u);
-  assert.match(app, /elements\.chatRouteState\.textContent = "Ready"/u);
   assert.match(app, /Waiting for the coding agent that opened this view\./u);
   assert.match(app, /Another coding agent owns this queued question\./u);
-  assert.match(app, /Host not attached/u);
-  assert.match(app, /Sidebar chat is unavailable from this unbound library link\./u);
+  assert.match(app, /Sidebar chat is unavailable from this library link\./u);
   assert.match(app, /Saved locally\. Attend cannot wake an inactive agent\./u);
   assert.match(app, /Question delivered to the coding agent that opened this view; waiting for its guarded reply\./u);
   assert.match(app, /Detached fallback: \$\{provider\} is answering\./u);
   assert.match(app, /Detached fallback: \$\{provider\}\. Waiting for the provider\./u);
   assert.doesNotMatch(app, /Thinking/u);
-  assert.match(app, /else if \(chatChanged\) \{\s*renderChatRoute\(\);\s*renderConversation\(\);/u);
-  assert.match(app, /elements\.chatRouteDisclosure\.textContent =/u);
-  assert.match(declarationsFor(css, ".chat-route"), /display:\s*grid/u);
-  assert.match(declarationsFor(css, ".chat-route-disclosure"), /color:\s*var\(--muted\)/u);
+  assert.match(app, /else if \(chatChanged\) \{\s*renderConversation\(\);/u);
 
   const composerStart = app.indexOf("function syncComposer");
   const composerEnd = app.indexOf("function renderHeader", composerStart);

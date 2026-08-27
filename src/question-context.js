@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 
 import { sameChatRoute, normalizeBoundChatRoute } from "./chat-route.js";
+import { projectChatThread } from "./chat-thread-projection.js";
 import { evidencePacketForSelection } from "./evidence.js";
 import { loadQuestionResponseContext } from "./session-store.js";
 
@@ -111,6 +112,7 @@ export async function buildQuestionContext({
   questionId,
   signal,
   loadContext = loadQuestionResponseContext,
+  loadThreadConversation,
   evidenceForSelection = evidencePacketForSelection,
 } = {}) {
   if (typeof root !== "string" || root.length === 0) {
@@ -123,6 +125,9 @@ export async function buildQuestionContext({
   }
   if (typeof evidenceForSelection !== "function") {
     throw new TypeError("evidenceForSelection must be a function");
+  }
+  if (loadThreadConversation !== undefined && typeof loadThreadConversation !== "function") {
+    throw new TypeError("loadThreadConversation must be a function when supplied");
   }
   if (signal !== undefined && !(signal instanceof AbortSignal)) {
     throw new TypeError("signal must be an AbortSignal");
@@ -165,6 +170,22 @@ export async function buildQuestionContext({
   });
   signal?.throwIfAborted();
 
+  let conversation = context.conversation;
+  if (typeof context.question.threadId === "string") {
+    conversation = loadThreadConversation
+      ? await loadThreadConversation({
+          root: resolve(root),
+          threadId: context.question.threadId,
+          questionId: safeQuestionId,
+          signal,
+        })
+      : (await projectChatThread({
+          root: resolve(root),
+          threadId: context.question.threadId,
+        })).turns;
+    signal?.throwIfAborted();
+  }
+
   return {
     sessionId: safeSessionId,
     sessionRevision: context.session.state.revision,
@@ -175,7 +196,7 @@ export async function buildQuestionContext({
       "visual context binding",
     ),
     evidence: cloneJson(evidence, "evidence packet"),
-    conversation: boundedConversation(context.conversation, safeQuestionId),
+    conversation: boundedConversation(conversation, safeQuestionId),
     dataPackagePath: dataPackagePath(root, context.session),
   };
 }
@@ -188,6 +209,7 @@ export async function buildHostQuestionPacket({
   route,
   signal,
   loadContext,
+  loadThreadConversation,
   evidenceForSelection,
 } = {}) {
   const normalizedRoute = normalizeBoundChatRoute(route);
@@ -200,6 +222,7 @@ export async function buildHostQuestionPacket({
     questionId,
     signal,
     ...(loadContext === undefined ? {} : { loadContext }),
+    ...(loadThreadConversation === undefined ? {} : { loadThreadConversation }),
     ...(evidenceForSelection === undefined ? {} : { evidenceForSelection }),
   });
   if (!sameChatRoute(context.question.response?.route, normalizedRoute)) {

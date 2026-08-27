@@ -39,7 +39,7 @@ async function seedRetainedRelease(root, version = "0.1.0") {
   const filename = `attend-local-${version}.tgz`;
   const archive = Buffer.from("previous immutable Attend release\n", "utf8");
   const archiveDigest = createHash("sha256").update(archive).digest("hex");
-  const baseUrl = "https://attend-cli.matthewwilsonsiu.workers.dev";
+  const baseUrl = "https://downloads.attend.example";
   const prompt = `Install Attend Local ${version} from its immutable release.\n`;
   const manifest = {
     schemaVersion: 1,
@@ -164,11 +164,11 @@ test("release staging produces a reproducible, private-data-free package and pin
   assert.deepEqual(first.retainedVersions, []);
   assert.equal(
     first.manifest.installPromptUrl,
-    `https://attend-cli.matthewwilsonsiu.workers.dev/releases/${version}/install-prompt.txt`,
+    `https://downloads.attend.example/releases/${version}/install-prompt.txt`,
   );
   assert.equal(
     first.manifest.installScriptUrl,
-    `https://attend-cli.matthewwilsonsiu.workers.dev/releases/${version}/install.sh`,
+    `https://downloads.attend.example/releases/${version}/install.sh`,
   );
   assert.deepEqual(first.manifest.catalog.counts, {
     families: 19,
@@ -180,7 +180,7 @@ test("release staging produces a reproducible, private-data-free package and pin
   });
   assert.deepEqual(first.manifest.components.experimentInbox, { schemaVersion: 1 });
   assert.deepEqual(first.manifest.components.opportunityCheck, { schemaVersion: 1 });
-  assert.equal(first.manifest.components.managedSkill.behaviorSchemaVersion, 2);
+  assert.equal(first.manifest.components.managedSkill.behaviorSchemaVersion, 3);
   assert.match(first.manifest.components.managedSkill.sha256, /^[a-f0-9]{64}$/u);
   assert.match(first.manifest.components.managedSkill.metadataSha256, /^[a-f0-9]{64}$/u);
 
@@ -555,7 +555,7 @@ switch (process.argv[2]) {
   await writeFile(checkpointRequest, JSON.stringify({
     version: 1,
     boundary: { kind: "before-final-answer", id: "packed-release-turn" },
-    host: { kind: "codex", skillVersion: "attend-visualize/0.5.3" },
+    host: { kind: "codex", skillVersion: "attend-visualize/0.5.4" },
     taskShape: {
       action: "review",
       evidenceState: "derived-records",
@@ -599,7 +599,7 @@ switch (process.argv[2]) {
   assert.equal(doctor.status, 0, doctor.stderr || doctor.stdout);
   const doctorResult = JSON.parse(doctor.stdout);
   assert.deepEqual(doctorResult.components.opportunityCheck, { schemaVersion: 1 });
-  assert.equal(doctorResult.components.managedSkill.behaviorSchemaVersion, 2);
+  assert.equal(doctorResult.components.managedSkill.behaviorSchemaVersion, 3);
   const viewerChecks = doctorResult.checks.filter((check) => check.id.startsWith("viewer-"));
   assert.ok(viewerChecks.length >= 20, "doctor must inspect every Atlas module and vendor asset");
   assert.ok(viewerChecks.every((check) => check.status === "pass"));

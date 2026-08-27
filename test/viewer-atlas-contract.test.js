@@ -948,7 +948,8 @@ test("required-only canonical packages render all eighteen executable families w
       assert.deepEqual([...new Set(renderedIds)], [packageValue.marks[0].id], `${familyId} must render its exact package mark id`);
       assert.doesNotMatch(String(root), /\b(?:undefined|NaN|Infinity)\b/u, `${familyId} must not render undefined or non-finite semantics`);
       if (familyId === "point-map") {
-        const svg = root.children.find((child) => child.tagName === "svg");
+        const scrollRegion = root.querySelectorAll("[data-visualization-scroll-region]")[0];
+        const svg = scrollRegion?.children.find((child) => child.tagName === "svg");
         assert.equal(svg?.getAttribute("data-projection"), "natural-earth-1-world");
         const point = root.querySelectorAll("[data-mark-id]")[0];
         assert.ok(Number.isFinite(Number(point?.getAttribute("cx"))) && Number.isFinite(Number(point?.getAttribute("cy"))), "singleton point must remain usable on the fixed world projection");

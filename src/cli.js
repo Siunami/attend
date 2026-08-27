@@ -79,6 +79,10 @@ import {
   OPPORTUNITY_SCHEMA_VERSION,
   createOpportunityCheck,
 } from "./opportunity-store.js";
+import {
+  normalizeRepresentationIntent,
+  representationIntentsEqual,
+} from "./representation-intent.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SKILL_SOURCE = fileURLToPath(
@@ -191,7 +195,7 @@ A new version-1 request has goal, analyticIntent, sourceScope, optional
 inspectionHash, checkpointId, and limits, plus experiments. A checkpointId
 marks a proactive exploration and must name an immutable proceed receipt.
 Each experiment has key,
-hypothesis, whyUseful, representation {family, member}, sourceScope, baseline
+hypothesis, whyUseful, representation {family, member, representationIntent}, sourceScope, baseline
 {name, description}, comparisonCount, origin, analysisMode, and timing. Use
 parentKey for an earlier experiment in the request. To extend an exploration,
 send explorationId and experiments without redefining its other fields.
@@ -204,6 +208,8 @@ persist its public package and private evidence, create or reuse a session, and
 update current.json last. With --stage, bind the attempt to its pre-result
 experiment record and leave current.json unchanged. If --experiment is omitted,
 the request must match exactly one queued experiment in the exploration.
+Version-2 requests must include representationIntent. Exact intents fail closed
+unless the selected executable member advertises every requested capability.
 `,
   assess: `Usage: attend assess <experiment-id> <assessment.json> [--root <path>] [--json]
 
@@ -1078,10 +1084,29 @@ function sourceScopeSignature(sources) {
     .join("\u0001");
 }
 
-function experimentMatchesMapRequest(experiment, request) {
+function mapRequestRepresentationIntent(request) {
+  return normalizeRepresentationIntent(request.representationIntent, {
+    path: "request.representationIntent",
+    required: request.version === 2,
+  });
+}
+
+function experimentMatchesMapScope(experiment, request) {
   return experiment.representation.family === request.family
     && experiment.representation.member === request.member
     && sourceScopeSignature(experiment.sourceScope) === sourceScopeSignature(request.sources);
+}
+
+function experimentMatchesMapRepresentationIntent(experiment, request) {
+  return representationIntentsEqual(
+    experiment.representation.representationIntent,
+    mapRequestRepresentationIntent(request),
+  );
+}
+
+function experimentMatchesMapRequest(experiment, request) {
+  return experimentMatchesMapScope(experiment, request)
+    && experimentMatchesMapRepresentationIntent(experiment, request);
 }
 
 async function stagedExperimentFor({ root, explorationId, experimentId, request }) {
@@ -1091,8 +1116,15 @@ async function stagedExperimentFor({ root, explorationId, experimentId, request 
     if (experiment.explorationId !== explorationId) {
       throw new Error(`experiment ${experimentId} does not belong to ${explorationId}`);
     }
-    if (!experimentMatchesMapRequest(experiment, request)) {
+    if (!experimentMatchesMapScope(experiment, request)) {
       throw new Error("staged map family, member, and source scope must match the pre-result experiment plan");
+    }
+    if (!experimentMatchesMapRepresentationIntent(experiment, request)) {
+      const error = new Error(
+        "staged map representation intent must match the pre-result experiment plan",
+      );
+      error.code = "STAGED_REPRESENTATION_INTENT_MISMATCH";
+      throw error;
     }
     const state = await publicExperiment({ root, experimentId });
     if (state.execution === "completed") {
@@ -1189,7 +1221,7 @@ async function mapCommand(args, context) {
       }
       throw error;
     }
-    const { dataPackage, family, member } = compiled;
+    const { dataPackage, family, member, representationIntent } = compiled;
     const paths = analysisPaths(root, dataPackage.id);
 
     let session;
@@ -1269,6 +1301,7 @@ async function mapCommand(args, context) {
       catalogVersion: dataPackage.catalog.version,
       family: family.id,
       member: member.id,
+      representationIntent,
       dataHash: dataPackage.hashes.data,
       corpusHash: dataPackage.hashes.corpus,
       markCount: dataPackage.marks.length,
