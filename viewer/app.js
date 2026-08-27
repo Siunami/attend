@@ -239,6 +239,12 @@ function atlasSelectedMarks(value = session) {
   }
 }
 
+function atlasSelectedFocus(value = session) {
+  const focus = value?.selection?.focus ?? value?.state?.focus ?? null;
+  if (focus?.kind !== "node" || typeof focus.id !== "string" || !focus.id) return null;
+  return { kind: "node", id: focus.id, label: focus.label ?? focus.id };
+}
+
 function markContextSummary(mark) {
   return `${mark.occurrenceCount} ${countLabel(mark.occurrenceCount)} across ${mark.distinctSourceCount} ${sourceLabel(mark.distinctSourceCount)}`;
 }
@@ -251,6 +257,8 @@ function currentSuggestedQuestion() {
   if (atlasMode()) {
     const marks = atlasSelectedMarks();
     if (!marks.length) return "";
+    const focus = atlasSelectedFocus();
+    if (focus) return `What role does the selected “${focus.label}” component play in this view?`;
     if (marks.length === 1) return `What does the selected “${marks[0].label}” reveal about this view?`;
     return `What patterns connect these ${marks.length} selected marks?`;
   }
@@ -273,6 +281,7 @@ function semanticAttachmentKey(value = session) {
     dataHash: selection.dataHash,
     map: selection.map,
     selectedMarkIds: selection.selectedMarkIds,
+    focus: selection.focus,
     predicate: selection.predicate,
     filters: selection.filters,
     aggregation: selection.aggregation,
@@ -452,7 +461,8 @@ async function renderAtlasVisualization() {
       root: elements.atlasVisual,
       packageValue: dataPackage,
       selectedMarkIds,
-      onSelect: (markId) => selectAtlasMark(markId),
+      selectedNodeId: atlasSelectedFocus()?.id,
+      onSelect: (target) => selectAtlasTarget(target),
     });
     if (revision !== atlasRenderRevision) return;
   } catch (error) {
@@ -467,8 +477,10 @@ async function renderAtlasVisualization() {
   }
 }
 
-async function copyAtlasSelection(marks) {
-  const text = marks.map((mark) => `${mark.id}: ${mark.label}`).join("\n");
+async function copyAtlasSelection(marks, focus = null) {
+  const lines = marks.map((mark) => `${mark.id}: ${mark.label}`);
+  if (focus) lines.unshift(`component: ${focus.label}`);
+  const text = lines.join("\n");
   try {
     if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable");
     await navigator.clipboard.writeText(text);
@@ -482,6 +494,7 @@ function renderSelection() {
   elements.selection.replaceChildren();
   if (atlasMode()) {
     const marks = atlasSelectedMarks();
+    const focus = atlasSelectedFocus();
     elements.selection.hidden = marks.length === 0;
     if (!marks.length) {
       syncComposer();
@@ -493,13 +506,17 @@ function renderSelection() {
     copy.className = "attachment-copy";
     const label = document.createElement("span");
     label.className = "attachment-label";
-    label.textContent = "Attach selected marks to next message";
+    label.textContent = focus
+      ? "Attach selected component to next message"
+      : "Attach selected marks to next message";
     const names = document.createElement("strong");
     names.className = "attachment-phrase";
-    names.textContent = marks.map((mark) => mark.label).join(" · ");
+    names.textContent = focus?.label ?? marks.map((mark) => mark.label).join(" · ");
     const meta = document.createElement("span");
     meta.className = "attachment-meta";
-    meta.textContent = `${marks.length} selected mark${marks.length === 1 ? "" : "s"} · ${marks.reduce((count, mark) => count + mark.evidenceRefs.length, 0)} evidence references`;
+    meta.textContent = focus
+      ? `${marks.length} connected relationship${marks.length === 1 ? "" : "s"} · ${marks.reduce((count, mark) => count + mark.evidenceRefs.length, 0)} evidence references`
+      : `${marks.length} selected mark${marks.length === 1 ? "" : "s"} · ${marks.reduce((count, mark) => count + mark.evidenceRefs.length, 0)} evidence references`;
     copy.append(label, names, meta);
 
     const actions = document.createElement("div");
@@ -508,11 +525,11 @@ function renderSelection() {
     copyButton.type = "button";
     copyButton.className = "selection-copy";
     copyButton.textContent = "Copy selection";
-    copyButton.addEventListener("click", () => copyAtlasSelection(marks));
+    copyButton.addEventListener("click", () => copyAtlasSelection(marks, focus));
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "selection-remove attachment-remove";
-    remove.setAttribute("aria-label", "Remove selected marks");
+    remove.setAttribute("aria-label", focus ? `Remove attached component ${focus.label}` : "Remove selected marks");
     remove.textContent = "×";
     remove.addEventListener("click", clearSelection);
     actions.append(copyButton, remove);
@@ -563,13 +580,18 @@ function isLegacyContextReceipt(turn) {
 function historicalAttachment(turn) {
   if (atlasMode()) {
     const turnMarks = Array.isArray(turn.selection?.marks) ? turn.selection.marks : [];
+    const focus = turn.selection?.focus?.kind === "node" ? turn.selection.focus : null;
     const labels = turnMarks.map((mark) => mark.label ?? mark.id ?? mark.markId).filter(Boolean);
     const selectedIds = turn.selection?.selectedMarkIds ?? turn.selection?.markIds ?? [];
-    const names = labels.length ? labels : (Array.isArray(selectedIds) ? selectedIds : []);
+    const names = focus
+      ? [focus.label ?? focus.id]
+      : labels.length ? labels : (Array.isArray(selectedIds) ? selectedIds : []);
     if (!names.length) return null;
     const attachment = document.createElement("div");
     attachment.className = "turn-attachment";
-    attachment.setAttribute("aria-label", "Attached visual context for selected marks");
+    attachment.setAttribute("aria-label", focus
+      ? `Attached visual context for component ${names[0]}`
+      : "Attached visual context for selected marks");
     const label = document.createElement("span");
     label.className = "turn-attachment-label";
     label.textContent = "From visualization";
@@ -578,7 +600,9 @@ function historicalAttachment(turn) {
     selected.textContent = names.join(" · ");
     const meta = document.createElement("span");
     meta.className = "turn-attachment-meta";
-    meta.textContent = `${names.length} selected mark${names.length === 1 ? "" : "s"}`;
+    meta.textContent = focus
+      ? `${turnMarks.length} connected relationship${turnMarks.length === 1 ? "" : "s"}`
+      : `${names.length} selected mark${names.length === 1 ? "" : "s"}`;
     attachment.append(label, selected, meta);
     return attachment;
   }
@@ -606,14 +630,19 @@ function historicalAttachment(turn) {
 function linkedQuestionReference(turn) {
   if (atlasMode()) {
     const marks = Array.isArray(turn.selection?.marks) ? turn.selection.marks : [];
+    const focus = turn.selection?.focus?.kind === "node" ? turn.selection.focus : null;
     const ids = turn.selection?.selectedMarkIds ?? turn.selection?.markIds ?? [];
     const names = marks.map((mark) => mark.label ?? mark.id ?? mark.markId).filter(Boolean);
-    const selected = names.length ? names : (Array.isArray(ids) ? ids : []);
+    const selected = focus
+      ? [focus.label ?? focus.id]
+      : names.length ? names : (Array.isArray(ids) ? ids : []);
     if (!selected.length) return null;
     const reference = document.createElement("div");
     reference.className = "turn-reply-reference";
     const text = document.createElement("span");
-    text.textContent = `Using ${selected.length} selected mark${selected.length === 1 ? "" : "s"} as context · ${selected.join(" · ")}`;
+    text.textContent = focus
+      ? `Using the ${selected[0]} component and ${marks.length} connected relationship${marks.length === 1 ? "" : "s"} as context`
+      : `Using ${selected.length} selected mark${selected.length === 1 ? "" : "s"} as context · ${selected.join(" · ")}`;
     reference.append(text);
     return reference;
   }
@@ -955,10 +984,17 @@ function renderState({ followConversation = false, focusConversationTurnId = nul
   if (atlasMode()) renderAtlasVisualization().catch(() => {});
 }
 
-async function selectAtlasMark(markId) {
+async function selectAtlasTarget(target) {
   if (!atlasMode() || pending) return;
+  const isNode = target?.kind === "node";
+  const markId = isNode || typeof target !== "string" ? null : target;
+  if ((isNode && (typeof target.nodeId !== "string" || !target.nodeId)) || (!isNode && !markId)) return;
   const selected = atlasSelectedMarkIds();
-  if (selected.includes(String(markId))) {
+  const focus = atlasSelectedFocus();
+  const alreadySelected = isNode
+    ? focus?.id === target.nodeId
+    : focus === null && selected.includes(markId);
+  if (alreadySelected) {
     pinDraftToCurrentSelection();
     syncComposer();
     setStatus("");
@@ -968,15 +1004,17 @@ async function selectAtlasMark(markId) {
   }
   pending = true;
   syncComposer();
-  setStatus("Attaching the selected mark…");
+  setStatus(isNode ? "Attaching the selected component…" : "Attaching the selected mark…");
   try {
     const payload = await request("selection", {
       method: "POST",
-      // Atlas selection is deliberately the small untrusted browser envelope.
+      // The service re-derives a node's connected marks from the canonical package.
       body: JSON.stringify({
         sessionId: atlasSessionId(),
         revision: sessionRevision(),
-        markId: String(markId),
+        ...(target.kind === "node"
+          ? { nodeId: target.nodeId }
+          : { markId }),
       }),
     });
     acceptChatProjection(payload);

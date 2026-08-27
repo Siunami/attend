@@ -1,31 +1,62 @@
-# Attend
+# Attend Local
 
-Attend gives coding agents a governed way to look for relationships and patterns in evidence you authorize, test them as visual hypotheses, and point out what may deserve your attention. It keeps every attempted experiment in one traceable inbox and renders the results in a private local workspace with selection-aware chat.
+Attend Local turns evidence from explicitly authorized files into a designed visualization in a private local artifact view with selection-aware chat.
 
-## Install in this project
+## Install with a coding agent
 
-From the project root, paste this one command into a terminal or compatible coding agent:
+Open the repository where you want Attend to work. Paste this prompt into your coding agent:
 
-```sh
-curl -fsSL https://attend-cli.matthewwilsonsiu.workers.dev/releases/0.4.0/install.sh | sh
+```text
+Install Attend Local and set it up for this repository.
+
+You may install Attend globally, add its setup files to this repository, install llama.cpp with Homebrew if needed, and download the roughly 12 GB local model. Stay in this repository. Do not upload its files or use sudo.
+
+Attend needs macOS or Linux, Node.js 22 or newer, and npm. If anything is missing, stop and tell me. On macOS, if `llama-server` is missing and Homebrew is available, run `brew install llama.cpp`.
+
+Run `npm install --global attend-local@0.5.1`. If npm cannot install globally without sudo, install Attend under my user account instead. Then run `attend bootstrap --yes` and show me the output. You may retry it after an interrupted download. Drive the setup yourself; I'll only step in for a macOS approval.
+
+Keep any existing Attend chat choice. For a new setup, use Attend's private local chat. Do not sign in to Codex or Claude for Attend. If installation or setup fails, show me the actual error. When Attend is ready, show me its welcome and installed version.
 ```
 
-It installs the pinned `0.4.0` release, configures the current project for both `.agents` and `.claude`, installs the local `gpt-oss-20b` model, and verifies the CLI, catalog, viewer, and private chat runtime. Node.js 22 or newer, npm, llama.cpp, and roughly 12 GB for the model are required. Codex and Claude are not installation requirements.
+`bootstrap` owns the setup and health checks. A successful command means that Attend configured the repository, installed the local model when needed, and verified the installed files and chat route.
+
+## Install from a terminal
+
+Attend requires macOS or Linux, Node.js 22 or newer, npm, and llama.cpp's `llama-server`. The private `gpt-oss-20b` model needs roughly 12 GB of disk space. A machine with at least 24 GB of unified or system memory is recommended.
+
+Run these commands from the repository where Attend will work:
+
+```sh
+npm install --global attend-local@0.5.1
+attend bootstrap --yes
+```
+
+If npm cannot write to its global install directory, use a directory owned by your account:
+
+```sh
+npm install --global --prefix "$HOME/.local" attend-local@0.5.1
+$HOME/.local/bin/attend bootstrap --yes
+```
 
 The host agent does not write chart code. It asks Attend for the installed Family Atlas catalog, selects an executable member for the analytic job, transforms source-backed facts into that member's declared roles, and submits a data-only request. Attend reopens the sources, verifies exact quotes, compiles a canonical package, resolves a fixed bundled renderer, and serves the result on loopback.
 
-This release includes all 19 visualization families. The catalog records every authored form and rejection from the [Family Atlas](https://storytelling-family-atlas.matthewwilsonsiu.workers.dev/), but it is intentionally honest about runtime coverage: 18 families have one tested executable member. Annotated specimen is marked `unavailable` because the text-only request contract cannot bind its required visible specimen yet. Other approved designs remain `documented`; rejected designs remain `rejected`. Attend never falls back to an unimplemented member or generates a substitute chart.
+This release includes all 19 visualization families. The bundled Family Atlas catalog records every authored form and rejection. Eighteen families have one tested executable member. Annotated specimen is marked `unavailable` because the text-only request contract cannot bind its required visible specimen yet. Other approved designs remain `documented`; rejected designs remain `rejected`. Attend never falls back to an unimplemented member or generates a substitute chart.
 
-## Install with one prompt
+## What Attend can make
 
-Open [the Attend Local release page](https://attend-cli.matthewwilsonsiu.workers.dev/) and paste its installation prompt into a coding agent from the project where Attend should run. The prompt pins the release tarball by SHA-256, installs it globally, configures the project, installs the managed agent skill for both `.agents` and `.claude`, installs `gpt-oss-20b`, and verifies private local chat.
+Every label and value in these screenshots is fabricated demo data. No user files, accounts, or private sources were used to make them.
 
-Requirements:
+| Distribution | Flow |
+| --- | --- |
+| [![A distribution plot comparing fabricated session lengths across three kinds of work](docs/images/visual-gallery/distribution.png)](docs/images/visual-gallery/distribution.png) | [![A flow diagram tracing fabricated material through a generic workflow](docs/images/visual-gallery/flow.png)](docs/images/visual-gallery/flow.png) |
+| Reveal shape, spread, gaps, and outliers. | Trace movement, loss, and conversion through a process. |
 
-- macOS or Linux
-- Node.js 22 or newer and npm
-- llama.cpp's `llama-server`
-- About 12 GB of disk space for `gpt-oss-20b`; 24 GB or more of unified/system memory is recommended
+| Field | Collection atlas |
+| --- | --- |
+| [![A field heatmap showing fabricated attention values by weekday and time](docs/images/visual-gallery/field.png)](docs/images/visual-gallery/field.png) | [![A collection atlas grouping fabricated records into a browsable visual field](docs/images/visual-gallery/collection-atlas.png)](docs/images/visual-gallery/collection-atlas.png) |
+| Show intensity across time or space. | Browse a collection without flattening it into a single score. |
+
+[Open the visual gallery](docs/visual-gallery.md) for six full-resolution examples suitable for a case study.
 
 The Attend service handles sidebar questions with `gpt-oss-20b` by default. It owns the loopback page server, durable question queue, and llama.cpp process as one lifecycle. The page URL is not returned until the model is healthy, so a visible page has a working chat path without depending on a coding-agent listener. Codex CLI, Claude CLI, and host-agent routing remain explicit compatibility modes.
 
@@ -33,9 +64,7 @@ For development from a checkout, run these commands in the directory containing 
 
 ```sh
 npm install --global .
-attend setup --json
-attend model install
-attend doctor --json
+attend bootstrap --yes --json
 ```
 
 ## Agent workflow

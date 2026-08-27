@@ -75,6 +75,18 @@ test("viewer assets match the strict self-only CSP and accessible control contra
   }
 });
 
+test("Atlas component clicks attach node focus and keep one vertical scroll owner", async () => {
+  const { app, css } = await readViewerAssets();
+
+  assert.match(app, /target\.kind === "node"/u);
+  assert.match(app, /nodeId:\s*target\.nodeId/u);
+  assert.match(app, /selectedNodeId:\s*atlasSelectedFocus\(\)\?\.id/u);
+  assert.match(app, /label\.textContent = focus[\s\S]*"Attach selected component to next message"/u);
+  assert.match(declarationsFor(css, ".atlas-visual"), /overflow:\s*visible/u);
+  assert.match(css, /\.atlas-visual \.mechanism-node:hover rect/u);
+  assert.match(css, /\.atlas-visual \[data-node-id\]:focus-visible/u);
+});
+
 test("library assets render only API metadata with safe accessible links", async () => {
   const { html, app, css } = await readLibraryAssets();
 

@@ -92,6 +92,7 @@ const VIEWER_ASSETS = fileURLToPath(new URL("../viewer", import.meta.url));
 const HELP = `Attend Local ${PACKAGE_VERSION}
 
 Usage:
+  attend bootstrap --yes [--timeout <minutes>] [--json]
   attend setup [--root <path>] [--agent <agents|claude>]... [--dry-run] [--json]
   attend model install [--timeout <minutes>] [--json]
   attend phrases <path...> --question <text> [options]
@@ -122,6 +123,13 @@ request contracts backed by exact quote evidence.
 `;
 
 const COMMAND_HELP = {
+  bootstrap: `Usage: attend bootstrap --yes [--timeout <minutes>] [--root <path>] [--json]
+
+Configure Attend in the current project, install the private gpt-oss-20b model
+when the selected route requires it, and require every readiness check to pass.
+The --yes flag authorizes the project writes and the roughly 12 GB model
+download when it is needed. Bootstrap is safe to rerun.
+`,
   setup: `Usage: attend setup [--root <path>] [--agent <agents|claude>]... [--dry-run] [--json]
 
 Create project-scoped configuration, local-state exclusions, and the managed
@@ -476,6 +484,99 @@ async function reconcileSetupService(root) {
   };
 }
 
+async function configureProject(root, { dryRun = false, agents = SKILL_TARGET_IDS } = {}) {
+  const result = await setupProject({
+    root,
+    dryRun,
+    skillSource: SKILL_SOURCE,
+    skillMetadataSource: SKILL_METADATA_SOURCE,
+    agents,
+  });
+  result.serviceMigration = result.dryRun
+    ? { status: "not-run", reason: "dry-run" }
+    : await reconcileSetupService(root);
+  return result;
+}
+
+async function bootstrapCommand(args, context) {
+  const parsed = parse("bootstrap", args, {
+    yes: { type: "boolean" },
+    timeout: { type: "string" },
+  });
+  if (parsed.help) return output(context.stdout, parsed.help.trimEnd());
+  if (parsed.positionals.length) throw new Error("bootstrap does not accept positional arguments");
+  if (parsed.values.yes !== true) {
+    throw new Error(
+      "bootstrap requires --yes to authorize project setup and the roughly 12 GB model download when needed",
+    );
+  }
+
+  const root = await detectedRoot(context.cwd, parsed.values.root);
+  const timeoutMinutes = positiveInteger("--timeout", parsed.values.timeout, 120);
+  const setup = await configureProject(root);
+  const before = await doctorReport(root);
+  let model;
+  if (before.readiness.localModel.required && !before.readiness.localModel.ready) {
+    if (!parsed.values.json) {
+      output(
+        context.stdout,
+        `Installing ${LOCAL_MODEL.id}. The model download is about 12 GB and may take a while.`,
+      );
+    }
+    const installed = await installLocalModel(root, {
+      timeoutMinutes,
+      createRunner: context.modelDependencies?.createRunner ?? createLlamaCppModelRunner,
+    });
+    model = {
+      status: "installed",
+      receipt: installed.model,
+      capability: installed.capability,
+    };
+  } else {
+    model = {
+      status: before.readiness.localModel.required ? "already-ready" : "not-required",
+    };
+  }
+
+  const doctor = model.status === "installed" ? await doctorReport(root) : before;
+  if (!doctor.ok) {
+    const failed = doctor.checks
+      .filter((check) => check.status === "fail")
+      .map((check) => check.id);
+    throw new Error(
+      `Attend bootstrap failed readiness checks${failed.length ? `: ${failed.join(", ")}` : ""}`,
+    );
+  }
+  const catalog = catalogResult();
+  const result = {
+    ok: true,
+    packageVersion: PACKAGE_VERSION,
+    root,
+    setup: { ok: true, ...setup },
+    model,
+    doctor,
+    catalog: {
+      catalogVersion: catalog.catalogVersion,
+      counts: catalog.counts,
+    },
+  };
+  if (parsed.values.json) return jsonOutput(context.stdout, result);
+  output(context.stdout, `Attend ${PACKAGE_VERSION} is configured at ${root}.`);
+  output(
+    context.stdout,
+    model.status === "installed"
+      ? `${LOCAL_MODEL.id} is installed and ready for private local chat.`
+      : model.status === "already-ready"
+        ? `${LOCAL_MODEL.id} was already ready.`
+        : "The selected chat route does not require the local model.",
+  );
+  output(
+    context.stdout,
+    `Catalog ${catalog.catalogVersion}: ${catalog.counts.families} families, ${catalog.counts.executable} executable, ${catalog.counts.unavailable} unavailable.`,
+  );
+  output(context.stdout, "Attend is ready.");
+}
+
 async function setupCommand(args, context) {
   const parsed = parse("setup", args, {
     "dry-run": { type: "boolean" },
@@ -484,16 +585,10 @@ async function setupCommand(args, context) {
   if (parsed.help) return output(context.stdout, parsed.help.trimEnd());
   if (parsed.positionals.length) throw new Error("setup does not accept positional arguments");
   const root = await detectedRoot(context.cwd, parsed.values.root);
-  const result = await setupProject({
-    root,
+  const result = await configureProject(root, {
     dryRun: parsed.values["dry-run"] || false,
-    skillSource: SKILL_SOURCE,
-    skillMetadataSource: SKILL_METADATA_SOURCE,
     agents: parsed.values.agent ?? SKILL_TARGET_IDS,
   });
-  result.serviceMigration = result.dryRun
-    ? { status: "not-run", reason: "dry-run" }
-    : await reconcileSetupService(root);
   if (parsed.values.json) return jsonOutput(context.stdout, { ok: true, ...result });
 
   const changed = [...result.created, ...result.updated];
@@ -514,31 +609,12 @@ async function setupCommand(args, context) {
   }
 }
 
-async function modelCommand(args, context) {
-  const [subcommand, ...rest] = args;
-  if (!subcommand || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
-    return output(context.stdout, COMMAND_HELP.model.trimEnd());
-  }
-  if (subcommand !== "install") {
-    throw new Error(`Unknown model command: ${subcommand}. Run \`attend model --help\`.`);
-  }
-  const parsed = parse("model", rest, { timeout: { type: "string" } });
-  if (parsed.help) return output(context.stdout, parsed.help.trimEnd());
-  if (parsed.positionals.length) throw new Error("model install does not accept positional arguments");
-  const root = await detectedRoot(context.cwd, parsed.values.root);
+async function installLocalModel(root, { timeoutMinutes, createRunner }) {
   await requireSetup(root);
-  const timeoutMinutes = positiveInteger("--timeout", parsed.values.timeout, 120);
-  const createRunner = context.modelDependencies?.createRunner ?? createLlamaCppModelRunner;
   const runner = createRunner({
     allowDownload: true,
     startupTimeoutMs: timeoutMinutes * 60 * 1_000,
   });
-  if (!parsed.values.json) {
-    output(
-      context.stdout,
-      `Installing ${LOCAL_MODEL.id}. The verified model download is about 12 GB and may take a while.`,
-    );
-  }
   let installed;
   try {
     installed = await runner.start();
@@ -563,22 +639,48 @@ async function modelCommand(args, context) {
     installedAt: new Date().toISOString(),
   };
   await writeJsonAtomic(join(projectPaths(root).local, "model.json"), receipt, { root });
-  const result = { ok: true, root, model: receipt, capability: installed };
+  return { ok: true, root, model: receipt, capability: installed };
+}
+
+async function modelCommand(args, context) {
+  const [subcommand, ...rest] = args;
+  if (!subcommand || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    return output(context.stdout, COMMAND_HELP.model.trimEnd());
+  }
+  if (subcommand !== "install") {
+    throw new Error(`Unknown model command: ${subcommand}. Run \`attend model --help\`.`);
+  }
+  const parsed = parse("model", rest, { timeout: { type: "string" } });
+  if (parsed.help) return output(context.stdout, parsed.help.trimEnd());
+  if (parsed.positionals.length) throw new Error("model install does not accept positional arguments");
+  const root = await detectedRoot(context.cwd, parsed.values.root);
+  const timeoutMinutes = positiveInteger("--timeout", parsed.values.timeout, 120);
+  const createRunner = context.modelDependencies?.createRunner ?? createLlamaCppModelRunner;
+  if (!parsed.values.json) {
+    output(
+      context.stdout,
+      `Installing ${LOCAL_MODEL.id}. The model download is about 12 GB and may take a while.`,
+    );
+  }
+  const result = await installLocalModel(root, { timeoutMinutes, createRunner });
   if (parsed.values.json) return jsonOutput(context.stdout, result);
   output(context.stdout, `${LOCAL_MODEL.id} is installed and ready for private local chat.`);
+}
+
+function catalogResult() {
+  return {
+    ok: true,
+    catalogVersion: CATALOG_VERSION,
+    counts: CATALOG_COUNTS,
+    families: listCatalogFamilies(),
+  };
 }
 
 async function familiesCommand(args, context) {
   const parsed = parse("families", args, {});
   if (parsed.help) return output(context.stdout, parsed.help.trimEnd());
   if (parsed.positionals.length) throw new Error("families does not accept positional arguments");
-  const families = listCatalogFamilies();
-  const result = {
-    ok: true,
-    catalogVersion: CATALOG_VERSION,
-    counts: CATALOG_COUNTS,
-    families,
-  };
+  const result = catalogResult();
   if (parsed.values.json) return jsonOutput(context.stdout, result);
   output(
     context.stdout,
@@ -2194,13 +2296,7 @@ async function replyCommand(args, context) {
   );
 }
 
-async function doctorCommand(args, context) {
-  const parsed = parse("doctor", args, {
-    adapter: { type: "string" },
-  });
-  if (parsed.help) return output(context.stdout, parsed.help.trimEnd());
-  if (parsed.positionals.length) throw new Error("doctor does not accept positional arguments");
-  const root = await detectedRoot(context.cwd, parsed.values.root);
+async function doctorReport(root, adapter) {
   const paths = projectPaths(root);
   const checks = [];
   const add = (id, status, detail, group = "core") => checks.push({
@@ -2286,8 +2382,8 @@ async function doctorCommand(args, context) {
   }
 
   let requestedAdapter = null;
-  if (parsed.values.adapter !== undefined) {
-    requestedAdapter = detachedAdapterId(parsed.values.adapter, "--adapter");
+  if (adapter !== undefined) {
+    requestedAdapter = detachedAdapterId(adapter, "--adapter");
   }
   for (const adapter of ["codex-cli", "claude-cli"]) {
     if (adapter !== requestedAdapter) {
@@ -2458,7 +2554,7 @@ async function doctorCommand(args, context) {
       "local-model",
       localModelReady ? "pass" : "fail",
       localModelReady
-        ? `${LOCAL_MODEL.id} has a verified local installation receipt.`
+        ? `${LOCAL_MODEL.id} has a local installation receipt.`
         : `Run \`attend model install\` before opening a visualization.`,
       "chat",
     );
@@ -2503,8 +2599,21 @@ async function doctorCommand(args, context) {
     },
     checks,
   };
+  return result;
+}
+
+async function doctorCommand(args, context) {
+  const parsed = parse("doctor", args, {
+    adapter: { type: "string" },
+  });
+  if (parsed.help) return output(context.stdout, parsed.help.trimEnd());
+  if (parsed.positionals.length) throw new Error("doctor does not accept positional arguments");
+  const root = await detectedRoot(context.cwd, parsed.values.root);
+  const result = await doctorReport(root, parsed.values.adapter);
   if (parsed.values.json) return jsonOutput(context.stdout, result);
-  for (const check of checks) output(context.stdout, `${check.status.padEnd(5)} ${check.id}: ${check.detail}`);
+  for (const check of result.checks) {
+    output(context.stdout, `${check.status.padEnd(5)} ${check.id}: ${check.detail}`);
+  }
   output(context.stdout, result.ok ? "Attend is ready." : "Attend needs attention.");
   if (!result.ok) process.exitCode = 1;
 }
@@ -2530,6 +2639,7 @@ export async function run(
     output(stdout, PACKAGE_VERSION);
     return;
   }
+  if (command === "bootstrap") return bootstrapCommand(args, context);
   if (command === "setup") return setupCommand(args, context);
   if (command === "model") return modelCommand(args, context);
   if (command === "phrases") return phrasesCommand(args, context);

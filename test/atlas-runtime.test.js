@@ -18,7 +18,7 @@ import {
   buildEvidenceStore,
   writeEvidenceStore,
 } from "../src/evidence.js";
-import { compileMapWithEvidence } from "../src/pipeline/compile.js";
+import { compileMap, compileMapWithEvidence } from "../src/pipeline/compile.js";
 import { createQuestionWorker } from "../src/question-worker.js";
 import { createViewerServer } from "../src/server.js";
 import {
@@ -83,6 +83,34 @@ async function fixturePackage() {
       text: sourceText,
     }],
   };
+}
+
+async function fixtureMechanismPackage() {
+  return compileMap({
+    familyId: "mechanism",
+    catalog: catalogReceiptForMember("mechanism", "flowchart"),
+    question: { text: "How does Attend turn a request into a view?", target: "fixture system" },
+    roleMapping: { source: "source", target: "target", relation: "relation" },
+    sourceBundle: {
+      kind: "attend-normalized-source-bundle",
+      schemaVersion: 1,
+      adapter: { id: "fixture-adapter", version: 1 },
+      medium: "structured",
+      requestedInputs: ["fixtures/mechanism.jsonl"],
+      sources: [{
+        id: "src_mechanism",
+        displayPath: "fixtures/mechanism.jsonl",
+        sha256: "c".repeat(64),
+        kind: "normalized-records",
+        byteLength: 600,
+      }],
+      records: [
+        { id: "record_ask", sourceId: "src_mechanism", fields: { source: "host agent", target: "Attend", relation: "asks" } },
+        { id: "record_compile", sourceId: "src_mechanism", fields: { source: "Attend", target: "canonical package", relation: "compiles" } },
+        { id: "record_verify", sourceId: "src_mechanism", fields: { source: "Attend", target: "exact quotes", relation: "verifies" } },
+      ],
+    },
+  });
 }
 
 async function project(t) {
@@ -358,6 +386,57 @@ test("atlas-v2 server routes use a tiny revision-bound mark envelope and expose 
   const loaded = await loadSession({ root, sessionId: session.id });
   assert.deepEqual(loaded.state, { revision: 2, markIds: [] });
   assert.deepEqual(loaded.conversation.turns.at(-1).selection.selectedMarkIds, [markId]);
+});
+
+test("mechanism node selection attaches its server-derived connected evidence to chat", async (t) => {
+  const root = await project(t);
+  const dataPackage = await fixtureMechanismPackage();
+  const session = await createSession({ root, dataPackage, id: "atlas_mechanism_node" });
+  const viewer = await createViewerServer({
+    root,
+    analysisId: session.id,
+    assetsDir: VIEWER_ASSETS,
+    token: "atlas-mechanism-token-0123456789",
+    instanceId: "atlas-mechanism-instance-0123456789",
+    resolveQuestionRoute: async () => ({ kind: "detached", adapter: "codex-cli" }),
+  });
+  t.after(() => viewer.close());
+
+  const selectedResponse = await post(viewer.url, "selection", {
+    sessionId: session.id,
+    revision: 0,
+    nodeId: "Attend",
+  });
+  assert.equal(selectedResponse.status, 200);
+  const selected = await selectedResponse.json();
+  const connectedMarkIds = dataPackage.marks
+    .filter((mark) => mark.values.source === "Attend" || mark.values.target === "Attend")
+    .map((mark) => mark.id);
+  assert.deepEqual(selected.state, {
+    revision: 1,
+    markIds: connectedMarkIds,
+    focus: { kind: "node", id: "Attend" },
+  });
+  assert.deepEqual(selected.selection.selectedMarkIds, connectedMarkIds);
+  assert.deepEqual(selected.selection.focus, { kind: "node", id: "Attend", label: "Attend" });
+
+  const unknown = await post(viewer.url, "selection", {
+    sessionId: session.id,
+    revision: 1,
+    nodeId: "invented component",
+  });
+  assert.equal(unknown.status, 400);
+
+  const chatResponse = await post(viewer.url, "chat", {
+    expectedRevision: 1,
+    selectionId: selected.selection.id,
+    message: "What role does this component play?",
+  });
+  assert.equal(chatResponse.status, 200);
+  const chat = await chatResponse.json();
+  assert.deepEqual(chat.question.selection.focus, { kind: "node", id: "Attend", label: "Attend" });
+  assert.deepEqual(chat.question.selection.selectedMarkIds, connectedMarkIds);
+  assert.deepEqual(chat.session.state, { revision: 2, markIds: [] });
 });
 
 test("atlas-v2 library keeps valid sessions available when a stale package fails validation", async (t) => {

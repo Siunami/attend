@@ -24,6 +24,7 @@ import {
   managedSkillContents,
   managedSkillMetadataContents,
 } from "../src/project.js";
+import { auditPackage } from "./package-audit.mjs";
 
 const DISTRIBUTION_ROOT = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(DISTRIBUTION_ROOT, "..");
@@ -75,53 +76,6 @@ function npmPack(destination) {
     throw new Error("npm pack returned an unexpected result");
   }
   return parsed[0];
-}
-
-function auditPackage(pack, packageJson) {
-  const files = Array.isArray(pack.files) ? pack.files.map((file) => file.path) : [];
-  const forbidden = files.filter((path) =>
-    /(^|\/)(?:\.attend|\.context|\.git|distribution|test|node_modules)(?:\/|$)/u.test(path),
-  );
-  if (forbidden.length) {
-    throw new Error("Refusing to release private or development files: " + forbidden.join(", "));
-  }
-  const required = [
-    "package.json",
-    "README.md",
-    "bin/attend.js",
-    "agent-skill/attend-visualize/SKILL.md",
-    "agent-skill/attend-visualize/agents/openai.yaml",
-    "src/opportunity-store.js",
-    "viewer/index.html",
-    "viewer/app.js",
-    "viewer/styles.css",
-    "viewer/workspace.html",
-    "viewer/workspace.js",
-    "viewer/workspace.css",
-    "viewer/package-model.js",
-    "viewer/package-renderer.js",
-    "viewer/family-renderers.js",
-    "viewer/vendor/d3.min.js",
-    "viewer/vendor/topojson-client.min.js",
-    "viewer/vendor/us-states.json",
-    "viewer/vendor/us-counties.json",
-    "viewer/vendor/world-countries.json",
-    "viewer/vendor/THIRD_PARTY_NOTICES.md",
-    "viewer/vendor/licenses/d3-7.9.0.txt",
-    "viewer/vendor/licenses/topojson-client-3.1.0.txt",
-    "viewer/vendor/licenses/us-atlas-3.0.1.txt",
-    "viewer/vendor/licenses/world-atlas-2.0.2.txt",
-  ];
-  const missing = required.filter((path) => !files.includes(path));
-  if (missing.length) {
-    throw new Error("Release package is missing required files: " + missing.join(", "));
-  }
-  if (Object.keys(packageJson.dependencies ?? {}).length) {
-    throw new Error("Release package must not require runtime npm dependencies");
-  }
-  if (packageJson.license !== "UNLICENSED") {
-    throw new Error("Release package license must remain UNLICENSED");
-  }
 }
 
 async function sha256(path) {

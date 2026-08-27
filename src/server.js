@@ -403,18 +403,47 @@ function validateSelection(body, dataPackage, sessionId) {
     return { revision, patch: { selectedIds } };
   }
 
-  assertOnlyKeys(body, new Set(["sessionId", "revision", "markId"]));
+  assertOnlyKeys(body, new Set(["sessionId", "revision", "markId", "nodeId"]));
   if (body.sessionId !== sessionId) {
     throw new HttpError(400, "invalid_selection", "Atlas selection sessionId does not match the routed session");
   }
   const revision = expectedRevision(body.revision);
+  const hasMarkId = Object.hasOwn(body, "markId");
+  const hasNodeId = Object.hasOwn(body, "nodeId");
+  if (hasMarkId === hasNodeId) {
+    throw new HttpError(400, "invalid_selection", "Atlas selection requires exactly one markId or nodeId");
+  }
+  if (hasNodeId) {
+    if (typeof body.nodeId !== "string" || body.nodeId.length === 0) {
+      throw new HttpError(400, "invalid_selection", "nodeId must be a selectable graph node id");
+    }
+    const knownNodes = new Set(
+      Array.isArray(dataPackage.payload?.nodes) ? dataPackage.payload.nodes.map(String) : [],
+    );
+    if (!knownNodes.has(body.nodeId)) {
+      throw new HttpError(400, "invalid_selection", `unknown Atlas node id: ${String(body.nodeId)}`);
+    }
+    const markIds = dataPackage.marks
+      .filter((mark) => String(mark.values?.source) === body.nodeId || String(mark.values?.target) === body.nodeId)
+      .map((mark) => mark.id);
+    if (markIds.length === 0 || markIds.length > MAX_SELECTIONS) {
+      throw new HttpError(400, "invalid_selection", `node must resolve to between 1 and ${MAX_SELECTIONS} evidence marks`);
+    }
+    return {
+      revision,
+      patch: { markIds, focus: { kind: "node", id: body.nodeId } },
+    };
+  }
   if (body.markId !== null && (typeof body.markId !== "string" || body.markId.length === 0)) {
     throw new HttpError(400, "invalid_selection", "markId must be a selectable mark id or null");
   }
   if (body.markId !== null && !new Set(selectableIdsForArtifact(dataPackage)).has(body.markId)) {
     throw new HttpError(400, "invalid_selection", `unknown Atlas mark id: ${String(body.markId)}`);
   }
-  return { revision, patch: { markIds: body.markId === null ? [] : [body.markId] } };
+  return {
+    revision,
+    patch: { markIds: body.markId === null ? [] : [body.markId], focus: null },
+  };
 }
 
 function validateSort(value, currentSort) {

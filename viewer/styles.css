@@ -259,13 +259,14 @@ h2 {
 
 .atlas-visual {
   min-height: 280px;
-  overflow: auto;
+  overflow: visible;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   padding: 18px 0;
 }
 
-.atlas-visual [data-mark-id]:focus-visible {
+.atlas-visual [data-mark-id]:focus-visible,
+.atlas-visual [data-node-id]:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 4px;
 }
@@ -355,6 +356,13 @@ h2 {
 .atlas-visual [data-mark-id] { cursor: pointer; }
 .atlas-visual [data-mark-id]:hover,
 .atlas-visual [data-mark-id].is-selected { filter: brightness(0.9); stroke: var(--foreground); }
+.atlas-visual [data-node-id] { cursor: pointer; }
+.atlas-visual .mechanism-node:hover rect,
+.atlas-visual .mechanism-node.is-selected rect {
+  filter: brightness(0.9);
+  stroke: var(--foreground);
+  stroke-width: 2;
+}
 
 .atlas-visual .passage-columns {
   max-width: 820px;

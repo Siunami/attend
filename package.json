@@ -1,11 +1,18 @@
 {
   "name": "attend-local",
-  "version": "0.4.0",
-  "description": "Local, agent-native visualization harness for question-shaped views over private work.",
+  "version": "0.5.1",
+  "description": "Evidence-backed visualizations for coding agents in a private local workspace.",
+  "homepage": "https://www.npmjs.com/package/attend-local",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Siunami/attend-local.git"
   },
+  "keywords": [
+    "agents",
+    "evidence",
+    "local-first",
+    "visualization"
+  ],
   "type": "module",
   "bin": {
     "attend": "bin/attend.js"
@@ -19,10 +26,15 @@
   ],
   "scripts": {
     "test": "node --test",
-    "verify": "node --test && npm pack --dry-run"
+    "verify:package": "node distribution/verify-package.mjs",
+    "verify": "node --test && npm run verify:package"
   },
   "engines": {
     "node": ">=22.0.0"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }

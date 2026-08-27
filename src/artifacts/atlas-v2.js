@@ -144,6 +144,33 @@ function assertKnownMarkIds(dataPackage, markIds) {
   return markIds;
 }
 
+function incidentMarkIds(dataPackage, nodeId) {
+  return dataPackage.marks
+    .filter((mark) => String(mark.values?.source) === nodeId || String(mark.values?.target) === nodeId)
+    .map((mark) => mark.id);
+}
+
+function normalizeFocus(dataPackage, focus, markIds) {
+  if (focus === null || focus === undefined) return null;
+  if (!focus || typeof focus !== "object" || Array.isArray(focus)) {
+    throw new TypeError("Atlas selection focus must be a node focus or null");
+  }
+  const unknown = Object.keys(focus).filter((key) => key !== "kind" && key !== "id");
+  if (unknown.length || focus.kind !== "node" || typeof focus.id !== "string" || !focus.id) {
+    throw new TypeError("Atlas selection focus must identify one known node");
+  }
+  const knownNodes = new Set(Array.isArray(dataPackage.payload?.nodes) ? dataPackage.payload.nodes.map(String) : []);
+  if (!knownNodes.has(focus.id)) throw new TypeError(`Unknown Atlas node id: ${focus.id}`);
+  const connected = incidentMarkIds(dataPackage, focus.id);
+  if (
+    connected.length !== markIds.length ||
+    connected.some((markId, index) => markId !== markIds[index])
+  ) {
+    throw new TypeError("Atlas node focus must select every connected evidence mark");
+  }
+  return { kind: "node", id: focus.id };
+}
+
 function initialState(dataPackage, overrides = {}) {
   if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
     throw new TypeError("state must be an object");
@@ -152,12 +179,15 @@ function initialState(dataPackage, overrides = {}) {
     throw new TypeError("A new session always starts at revision 0");
   }
   const unknown = Object.keys(overrides).filter(
-    (key) => key !== "revision" && key !== "markIds",
+    (key) => key !== "revision" && key !== "markIds" && key !== "focus",
   );
   if (unknown.length) throw new TypeError(`Unknown Atlas session state field: ${unknown.join(", ")}`);
+  const markIds = assertKnownMarkIds(dataPackage, normalizeMarkIds(overrides.markIds ?? []));
+  const focus = normalizeFocus(dataPackage, overrides.focus, markIds);
   return {
     revision: 0,
-    markIds: assertKnownMarkIds(dataPackage, normalizeMarkIds(overrides.markIds ?? [])),
+    markIds,
+    ...(focus ? { focus } : {}),
   };
 }
 
@@ -165,12 +195,18 @@ function applyStatePatch(dataPackage, current, patch) {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     throw new TypeError("patch must be an object");
   }
-  const unknown = Object.keys(patch).filter((key) => key !== "markIds");
+  const unknown = Object.keys(patch).filter((key) => key !== "markIds" && key !== "focus");
   if (unknown.length) throw new TypeError(`Unknown Atlas session state field: ${unknown.join(", ")}`);
   const next = cloneJson(current, "session state");
   if (Object.hasOwn(patch, "markIds")) {
     const markIds = normalizeMarkIds(patch.markIds);
     next.markIds = assertKnownMarkIds(dataPackage, markIds);
+    if (!Object.hasOwn(patch, "focus")) delete next.focus;
+  }
+  if (Object.hasOwn(patch, "focus")) {
+    const focus = normalizeFocus(dataPackage, patch.focus, next.markIds ?? []);
+    if (focus) next.focus = focus;
+    else delete next.focus;
   }
   return next;
 }
@@ -181,6 +217,9 @@ function normalizeStoredState(dataPackage, state) {
   }
   const markIds = normalizeMarkIds(state.markIds ?? []);
   state.markIds = assertKnownMarkIds(dataPackage, markIds);
+  const focus = normalizeFocus(dataPackage, state.focus, state.markIds);
+  if (focus) state.focus = focus;
+  else delete state.focus;
   delete state.selectedIds;
   return state;
 }
@@ -221,6 +260,7 @@ function buildSelection(dataPackage, state) {
   const renderer = resolveRenderer(dataPackage);
   const marks = selectedMarks(dataPackage, state);
   const evidenceRefIds = evidenceReferenceIds(marks);
+  const focus = normalizeFocus(dataPackage, state.focus, marks.map((mark) => mark.id));
   const value = {
     kind: "attend-selection",
     artifactKind: "atlas-v2",
@@ -251,6 +291,7 @@ function buildSelection(dataPackage, state) {
     },
     evidenceRefCount: evidenceRefIds.length,
     evidenceRefIds,
+    ...(focus ? { focus: { ...focus, label: focus.id } } : {}),
   };
   return { id: selectionId(value), ...value };
 }
@@ -360,7 +401,11 @@ export const atlasV2Adapter = Object.freeze({
   initialState,
   applyStatePatch,
   normalizeStoredState,
-  clearSelectionState: (state) => ({ ...state, markIds: [] }),
+  clearSelectionState: (state) => {
+    const next = { ...state, markIds: [] };
+    delete next.focus;
+    return next;
+  },
   listMarks,
   selectableIds,
   buildSelection,
@@ -370,7 +415,7 @@ export const atlasV2Adapter = Object.freeze({
   publicPackageForBrowser,
   deriveSelection: (dataPackage, markId, state = {}) => buildSelection(
     dataPackage,
-    { ...state, markIds: markId === null ? [] : [markId] },
+    { ...state, markIds: markId === null ? [] : [markId], focus: null },
   ),
   deriveEvidence: (dataPackage, selection) => ({
     evidenceRefIds: evidenceReferenceIdsForSelection(dataPackage, selection),

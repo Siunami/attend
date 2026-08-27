@@ -1,8 +1,20 @@
-# Attend Local release site
+# Legacy Attend Local release site
 
-This directory publishes a versioned npm tarball and its SHA-256 receipt as a
-Cloudflare Workers static-assets site. It never contains a corpus, session,
-private evidence store, npm credentials, or repository checkout.
+Attend Local 0.5.0 and later publish through npm. The release workflow in
+`.github/workflows/publish.yml` verifies a GitHub release tag, runs the full
+test and package audit, and publishes with npm trusted publishing.
+
+Keep this directory for the immutable release URLs issued before the npm
+cutover. Do not remove an existing release or republish a released version.
+The staged site never contains a corpus, session, private evidence store, npm
+credentials, or repository checkout.
+
+To verify the npm package without publishing it, run:
+
+    npm run verify
+
+The commands below rebuild the legacy static site only. Do not use them for a
+new npm release.
 
 Run these commands from attend-cli:
 

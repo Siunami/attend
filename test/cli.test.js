@@ -327,6 +327,75 @@ test("model install verifies gpt-oss-20b and makes local-first doctor ready", as
   });
 });
 
+test("bootstrap requires explicit model-download authorization before changing the project", async (t) => {
+  const root = await projectFixture(t);
+
+  await assert.rejects(
+    runJson(root, ["bootstrap", "--json"]),
+    /bootstrap requires --yes/u,
+  );
+  await assert.rejects(readFile(join(root, ".attend", "project.json")), /ENOENT/u);
+});
+
+test("bootstrap configures Attend once and converges without reloading a ready model", async (t) => {
+  const root = await projectFixture(t);
+  let starts = 0;
+  let closes = 0;
+  const modelDependencies = {
+    createRunner(options) {
+      assert.equal(options.allowDownload, true);
+      assert.equal(options.startupTimeoutMs, 180_000);
+      return {
+        async start() {
+          starts += 1;
+          return {
+            adapter: "gpt-oss-20b",
+            available: true,
+            authenticated: true,
+            model: "gpt-oss-20b",
+            runtime: "llama.cpp",
+            privacy: "local-only",
+          };
+        },
+        async close() {
+          closes += 1;
+        },
+      };
+    },
+  };
+
+  const first = await runJson(
+    root,
+    ["bootstrap", "--yes", "--timeout", "3", "--json"],
+    { modelDependencies },
+  );
+  assert.equal(first.ok, true);
+  assert.equal(first.model.status, "installed");
+  assert.equal(first.doctor.ok, true);
+  assert.equal(first.doctor.readiness.core, true);
+  assert.equal(first.doctor.readiness.localModel.ready, true);
+  assert.deepEqual(first.catalog.counts, CATALOG_COUNTS);
+  assert.equal(starts, 1);
+  assert.equal(closes, 1);
+  const firstReceipt = await readFile(join(root, ".attend", "local", "model.json"), "utf8");
+
+  const second = await runJson(
+    root,
+    ["bootstrap", "--yes", "--timeout", "3", "--json"],
+    { modelDependencies },
+  );
+  assert.equal(second.ok, true);
+  assert.equal(second.model.status, "already-ready");
+  assert.deepEqual(second.setup.created, []);
+  assert.deepEqual(second.setup.updated, []);
+  assert.equal(starts, 1);
+  assert.equal(closes, 1);
+  assert.equal(
+    await readFile(join(root, ".attend", "local", "model.json"), "utf8"),
+    firstReceipt,
+  );
+});
+
 test("doctor never probes Codex or Claude executables from the analyzed project", async (t) => {
   const root = await projectFixture(t);
   await runJson(root, ["setup", "--json"]);
