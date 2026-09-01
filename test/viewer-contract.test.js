@@ -33,7 +33,8 @@ async function readWorkspaceAssets() {
 }
 
 function declarationsFor(css, selector) {
-  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+  // A comment ahead of a rule lands inside the selector capture, so strip comments first.
+  return [...css.replace(/\/\*[\s\S]*?\*\//gu, "").matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
     .filter(([, selectors]) =>
       selectors
         .split(",")
@@ -76,7 +77,8 @@ test("viewer assets match the strict self-only CSP and accessible control contra
 test("Atlas component clicks attach node focus and keep one vertical scroll owner", async () => {
   const { app, css } = await readViewerAssets();
 
-  assert.match(app, /target\.kind === "node"/u);
+  assert.match(app, /target\?\.kind === "node"/u);
+  assert.match(app, /target\?\.kind === "target"/u);
   assert.match(app, /nodeId:\s*target\.nodeId/u);
   assert.match(app, /selectedNodeId:\s*atlasSelectedFocus\(\)\?\.id/u);
   assert.doesNotMatch(app, /Replying to/u);
@@ -112,6 +114,52 @@ test("selected context copies the minimal OpenAI reply strip inside the composer
   assert.doesNotMatch(attachment, /\bborder\s*:/u);
   assert.match(declarationsFor(css, ".attachment-copy"), /flex:\s*1\s+1\s+auto/u);
   assert.match(declarationsFor(css, ".reply-arrow"), /stroke:\s*currentColor/u);
+});
+
+test("aggregate evidence membership is server-resolved and paginated in the selection drawer", async () => {
+  const { app, css } = await readViewerAssets();
+
+  assert.match(app, /function targetMembersPath\(targetId, offset\)/u);
+  assert.match(app, /return `target-members\?\$\{query\}`/u);
+  assert.match(app, /targetId,[\s\S]*offset: String\(offset\),[\s\S]*limit: String\(TARGET_MEMBER_PAGE_LIMIT\)/u);
+  assert.match(app, /payload\?\.target\?\.id !== targetId/u);
+  assert.match(app, /Showing \$\{start\}–\$\{end\} of \$\{targetMemberPage\.count\}/u);
+  assert.match(app, /navigation\.setAttribute\("aria-label", "Aggregate evidence pages"\)/u);
+  assert.match(app, /previous\.addEventListener\("click", \(\) => loadTargetMemberPage/u);
+  assert.match(app, /next\.addEventListener\("click", \(\) => loadTargetMemberPage/u);
+  assert.match(app, /if \(targetMemberPage\.targetId !== null\) resetTargetMemberPage\(\)/u);
+  assert.match(declarationsFor(css, ".target-members-body"), /max-height:\s*220px/u);
+  assert.match(declarationsFor(css, ".target-members-body"), /overflow-y:\s*auto/u);
+});
+
+test("a selected contact opens only its owning-session staged whole-file evidence", async () => {
+  const { app, css } = await readViewerAssets();
+  const start = app.indexOf("function selectedContactOriginal");
+  const end = app.indexOf("function atlasSelectedFocus", start);
+  const contactSource = app.slice(start, end);
+
+  assert.ok(start >= 0 && end > start, "the contact evidence action must remain inspectable");
+  assert.match(contactSource, /model\.familyId !== "collection-atlas" \|\| model\.memberId !== "contact-atlas"/u);
+  assert.match(contactSource, /\^asset_\[a-f0-9\]\{32\}\$/u);
+  assert.match(contactSource, /route !== `assets\/\$\{assetId\}`/u);
+  assert.match(contactSource, /mark\.media\?\.preview\?\.src !== route/u);
+  assert.match(contactSource, /href\.origin !== window\.location\.origin/u);
+  assert.match(contactSource, /href\.pathname\.startsWith\(assetRoot\.pathname\)/u);
+  assert.match(contactSource, /Whole-file evidence · staged JPEG/u);
+  assert.match(contactSource, /Open staged original/u);
+  assert.match(contactSource, /link\.rel = "noopener"/u);
+  assert.doesNotMatch(contactSource, /displayPath|relativePath|file:\/\//u);
+  assert.match(declarationsFor(css, ".contact-original-detail"), /display:\s*flex/u);
+});
+
+test("clearing an Atlas aggregate sends one neutral selector key", async () => {
+  const { app } = await readViewerAssets();
+  const start = app.indexOf("async function clearSelection()");
+  const end = app.indexOf("async function sendMessage", start);
+  const clearSource = app.slice(start, end);
+
+  assert.match(clearSource, /\{ sessionId: atlasSessionId\(\), revision: sessionRevision\(\), markId: null \}/u);
+  assert.doesNotMatch(clearSource, /targetId:\s*null/u);
 });
 
 test("chat chrome is only history, new chat, and a small close control", async () => {
@@ -229,13 +277,29 @@ test("experiment workspace renders one canonical, filterable exploration trail",
   assert.match(html, /name="experiment-filter" value="all" checked/u);
   assert.match(html, /name="experiment-filter" value="promoted"/u);
   assert.match(html, /name="experiment-filter" value="starred"/u);
+  assert.match(html, /name="workspace-view" value="gallery" checked/u);
+  assert.match(html, /name="workspace-view" value="debug"/u);
   assert.match(html, /<input id="strict-chronology" type="checkbox">/u);
 
   assert.match(app, /fetch\("\.\/api\/exploration"/u);
   assert.match(app, /payload\.schemaVersion !== 1/u);
   assert.match(app, /function canonicalExperiments\(values\)[\s\S]*const byId = new Map\(\)/u);
-  assert.match(app, /elements\.list\.replaceChildren\(\.\.\.visible\.map\(renderExperiment\)\)/u);
+  assert.match(
+    app,
+    /elements\.list\.replaceChildren\(\s*\.\.\.visible\.map\(activeView === "gallery" \? renderGalleryItem : renderExperiment\),?\s*\)/u,
+  );
   assert.doesNotMatch(app, /promotionQuota|MAX_PROMOT|promotedList|starredList/iu);
+
+  // The gallery is the end-user surface: finished runs with artifacts only,
+  // and previews ask the viewer for its chrome-free embed mode.
+  const galleryStart = app.indexOf("function galleryReady");
+  assert.ok(galleryStart >= 0, "gallery admission must remain inspectable");
+  const gallerySource = app.slice(galleryStart, app.indexOf("}", galleryStart));
+  assert.match(gallerySource, /"completed", "succeeded"/u);
+  assert.match(gallerySource, /isNullResult/u);
+  assert.match(gallerySource, /safeArtifactHref/u);
+  assert.match(app, /attend-preview/u);
+  assert.match(app, /function relevance\(experiment\)/u);
 
   const orderStart = app.indexOf("function defaultOrder");
   const orderEnd = app.indexOf("function chronologicalOrder", orderStart);
@@ -550,10 +614,11 @@ test("drawer, attachment, and suggested-question interactions preserve exact cha
       `the draft pin must include selection.${field}`,
     );
   }
+  assert.match(attachmentKeySource, /const targetId = atlasMode\(\) \? atlasSelectedTargetId\(value\) : null/u);
   assert.match(
     attachmentKeySource,
-    /if \(!selection\?\.selectedMarkIds\?\.length\) return null/u,
-    "an unattached follow-up draft must not be pinned to unrelated view filters",
+    /if \(!selection\?\.selectedMarkIds\?\.length && !targetId\) return null/u,
+    "a draft without direct marks or an aggregate target must not be pinned to unrelated view filters",
   );
   assert.doesNotMatch(
     attachmentKeySource,
@@ -700,4 +765,189 @@ test("assistant answers render as safe, readable rich text without flattening co
   assert.match(app, /findLast\(\(turn\) => turn\.role === "assistant"/u);
   assert.match(app, /focusConversationTurnId = chatPinned \? newAssistant\?\.id \?\? null : null/u);
   assert.match(app, /turnRect\.top - scrollRect\.top - 18/u);
+});
+
+test("a composer tool arms an area drag that attaches every mark the rectangle touches", async () => {
+  const { html, app, css } = await readViewerAssets();
+
+  assert.match(html, /<button\b[^>]*\bid="chat-area-select"/u);
+  assert.match(html, /id="chat-area-select"[\s\S]{0,220}?aria-pressed="false"/u);
+  assert.match(
+    html,
+    /id="chat-area-select"[\s\S]{0,220}?aria-label="Select an area of the visualization"/u,
+  );
+  assert.match(html, /<main id="workspace"[^>]*\bdata-area-select="false"/u);
+
+  assert.match(app, /function setAreaSelectMode\(on\)/u);
+  assert.match(app, /elements\.workspace\.dataset\.areaSelect = String\(next\)/u);
+  assert.match(app, /elements\.areaSelect\.setAttribute\("aria-pressed", String\(next\)\)/u);
+  assert.match(app, /Area select on\. Drag across the chart to attach marks\. Escape exits\./u);
+  assert.match(app, /elements\.areaSelect\.hidden = !atlasMode\(\)/u);
+
+  assert.match(app, /async function selectAtlasMarks\(markIds\)/u);
+  assert.match(app, /markIds: attached,/u);
+  assert.match(app, /const MAX_AREA_SELECTION = 50/u);
+  assert.match(app, /setStatus\("No marks in that area\."\)/u);
+  assert.match(
+    app,
+    /Attached \$\{attached\.length\} of \$\{unique\.length\} marks \(selection limit\)\./u,
+  );
+
+  assert.match(app, /elements\.atlasVisual\.addEventListener\("pointerdown"/u);
+  assert.match(app, /elements\.atlasVisual\.addEventListener\("pointermove"/u);
+  assert.match(app, /elements\.atlasVisual\.addEventListener\("pointerup"/u);
+  assert.match(app, /elements\.atlasVisual\.setPointerCapture\(event\.pointerId\)/u);
+  assert.match(app, /marquee\.classList\.add\("area-select-marquee"\)/u);
+  assert.match(app, /querySelectorAll\("\[data-mark-id\]"\)/u);
+  assert.doesNotMatch(
+    app,
+    /getScreenCTM/u,
+    "marquee geometry must be derived from the parsed viewBox, not a screen CTM",
+  );
+
+  const escapeMode = app.indexOf('event.key === "Escape" && areaSelectMode');
+  const escapeChat = app.indexOf('event.key === "Escape" && chatOpen');
+  assert.ok(
+    escapeMode >= 0 && escapeChat > escapeMode,
+    "Escape must leave area select before it closes the chat drawer",
+  );
+  assert.match(app, /async function clearSelection\(\) \{\n  setAreaSelectMode\(false\);/u);
+
+  assert.match(app, /function atlasMultiSelectionSummary\(marks\)/u);
+  assert.match(app, /marks\.length > 3\n?\s*\? atlasMultiSelectionSummary\(marks\)/u);
+  assert.match(app, /\$\{marks\.length\} marks/u);
+  assert.match(app, /Remove \$\{marks\.length\} selected marks/u);
+  assert.match(app, /const SHARED_FACET_KEYS = \["series", "category", "kind", "source", "status"\]/u);
+
+  const marquee = declarationsFor(css, ".area-select-marquee");
+  assert.match(marquee, /fill:\s*color-mix/u);
+  assert.match(marquee, /stroke:\s*var\(--accent\)/u);
+  assert.match(marquee, /pointer-events:\s*none/u);
+  assert.doesNotMatch(marquee, /background|border\s*:/u, "an SVG marquee paints with fill and stroke");
+  assert.match(
+    declarationsFor(css, '#workspace[data-area-select="true"] .atlas-visual svg'),
+    /cursor:\s*crosshair/u,
+  );
+  assert.match(
+    declarationsFor(css, '#workspace[data-area-select="true"] .atlas-visual [data-mark-id]'),
+    /pointer-events:\s*none/u,
+  );
+  assert.doesNotMatch(
+    declarationsFor(css, ".atlas-visual [data-mark-id]"),
+    /pointer-events:\s*none/u,
+    "marks stay clickable and keyboard-selectable outside the mode",
+  );
+  assert.match(
+    declarationsFor(css, ".chat-icon-button[hidden]"),
+    /display:\s*none/u,
+    "the icon base sets display:grid, which outranks the user-agent [hidden] rule",
+  );
+  assert.match(declarationsFor(css, ".composer-actions"), /display:\s*flex/u);
+  assert.match(
+    declarationsFor(css, ".composer-field"),
+    /grid-template-columns:\s*minmax\(0, 1fr\) auto;/u,
+    "the tool button rides in the action group so hiding it leaves no empty grid track",
+  );
+
+  const mobileStart = css.indexOf("@media (max-width: 820px) {");
+  const mobileEnd = css.indexOf("@media (max-width: 820px), (pointer: coarse)");
+  assert.ok(mobileStart >= 0 && mobileEnd > mobileStart, "the mobile canvas block must remain");
+  const mobile = css.slice(mobileStart, mobileEnd);
+  assert.match(
+    mobile,
+    /#workspace\[data-area-select="true"\] \.visualization-scroll-region \{[^}]*touch-action:\s*none/u,
+  );
+  assert.match(
+    mobile,
+    /#workspace\[data-area-select="true"\] \.visualization-scroll-region \{[^}]*overscroll-behavior:\s*contain/u,
+  );
+  assert.doesNotMatch(
+    declarationsFor(css, ".visualization-scroll-region"),
+    /touch-action:\s*none/u,
+    "the scroll region must still pan by touch when the mode is off",
+  );
+});
+
+test("the chat echoes the sent turn and streams the answer over the event stream", async () => {
+  const { app, css } = await readViewerAssets();
+
+  assert.match(app, /new EventSource\(apiUrl\("events"\)\)/u);
+  assert.match(app, /source\.addEventListener\("state", scheduleStateRefresh\)/u);
+  assert.match(app, /source\.addEventListener\("question",/u);
+  assert.match(
+    app,
+    /source\.addEventListener\("error", \(\) => \{\n\s*eventStreamHealthy = false;/u,
+    "an EventSource error only marks the stream unhealthy; the browser owns the retry",
+  );
+  assert.match(app, /const QUESTION_EVENT_HANDLERS = \{/u);
+  for (const type of ["status", "delta", "answer", "failed"]) {
+    assert.match(
+      app,
+      new RegExp(String.raw`const QUESTION_EVENT_HANDLERS = \{[\s\S]*?\n\s{2}${type}:`, "u"),
+      `the question event union must dispatch on ${type}`,
+    );
+  }
+  assert.match(
+    app,
+    /questionPreview\.text \+= typeof event\.text === "string"/u,
+    "delta frames carry their chunk on `text`",
+  );
+  assert.match(
+    app,
+    /answer: \(\) => \{\n\s*questionPreview = null;\n\s*refreshState\(\)/u,
+    "a committed answer drops the preview and refetches the stored turn",
+  );
+  assert.doesNotMatch(
+    app,
+    /answerTurnId/u,
+    "the preview never renders from the stream; the session store stays the source of truth",
+  );
+
+  assert.equal(
+    [...app.matchAll(/if \(turn\.id === OPTIMISTIC_TURN_ID\) wrap\.setAttribute\("data-optimistic", "true"\);/gu)].length,
+    2,
+    "both the echoed user turn and its answering row carry the echo marker",
+  );
+  assert.match(app, /const OPTIMISTIC_TURN_ID = "optimistic"/u);
+  assert.match(
+    app,
+    /function acceptThreadProjection\(payload\) \{[\s\S]*?\n\s*optimisticTurn = null;/u,
+    "a server-confirmed thread is what retires the echo, since the real turn id differs",
+  );
+  assert.match(
+    app,
+    /catch \(error\) \{\n\s*optimisticTurn = null;\n\s*renderConversation\(\);/u,
+    "a failed send retires the echo and repaints, leaving the retained draft alone",
+  );
+
+  assert.match(app, /wrap\.setAttribute\("data-question-id", turn\.id\)/u);
+  assert.match(app, /message\.classList\.add\("turn-stream"\)/u);
+  assert.match(app, /function paintQuestionPreview\(\)/u);
+  assert.match(
+    app,
+    /if \(!paintQuestionPreview\(\)\) renderConversation\(\)/u,
+    "a delta patches the live row in place and only re-renders when that row is missing",
+  );
+
+  assert.match(app, /const STREAMED_POLL_BEATS = 3/u);
+  assert.match(
+    app,
+    /if \(eventStreamHealthy && pollBeat % STREAMED_POLL_BEATS !== 0\) return;/u,
+    "a healthy stream throttles the safety poll rather than replacing it",
+  );
+  assert.match(app, /\}, POLL_INTERVAL_MS\);/u);
+  assert.match(app, /const POLL_INTERVAL_MS = 1500/u);
+
+  assert.match(declarationsFor(css, ".turn-stream"), /color:\s*var\(--foreground\)/u);
+  assert.match(
+    declarationsFor(css, ".turn-stream > :last-child::after"),
+    /animation:\s*response-pulse/u,
+  );
+  const reducedMotionStart = css.indexOf("@media (prefers-reduced-motion: reduce) {");
+  assert.ok(reducedMotionStart >= 0, "the reduced-motion block must remain");
+  assert.match(
+    css.slice(reducedMotionStart),
+    /\.turn-stream > :last-child::after \{[^}]*animation:\s*none/u,
+  );
+  assert.doesNotMatch(app, /\.style\b/u, "the viewer paints through classes under a strict CSP");
 });

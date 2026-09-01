@@ -17,6 +17,7 @@ import {
   completeQuestionResponse,
   createSession,
   loadSession,
+  markQuestionResponseFailed,
   markQuestionResponseRunning,
   pendingQuestionResponseJobs,
   retryQuestionResponse,
@@ -447,6 +448,77 @@ test("cold-start recovery automatically replays interrupted local inference", as
   assert.equal(stored.conversation.turns[1].content, "Recovered privately on this Mac.");
 });
 
+test("a question queued for another route is skipped rather than failed", async (t) => {
+  const root = await fixture(t);
+  const job = await queuedQuestion(root, "foreign_route", {
+    route: { kind: "local", model: "gpt-oss-20b" },
+  });
+  let called = false;
+  const worker = createQuestionWorker({
+    root,
+    evidenceForSelection: fixtureEvidenceForSelection,
+    capability: { adapter: "codex-cli", available: true, authenticated: true },
+    runner: {
+      async respond() {
+        called = true;
+        return { answer: "This worker does not own the question." };
+      },
+    },
+  });
+  t.after(() => worker.close());
+
+  assert.deepEqual(
+    await worker.enqueueQuestion({
+      root,
+      sessionId: job.sessionId,
+      questionId: job.questionId,
+    }),
+    { accepted: true },
+  );
+  await worker.whenIdle();
+
+  assert.equal(called, false);
+  const stored = await loadSession({ root, sessionId: job.sessionId });
+  const response = stored.conversation.turns[0].response;
+  assert.equal(response.status, "queued");
+  assert.equal(Object.hasOwn(response, "errorCode"), false);
+});
+
+test("a response that is no longer queued keeps its recorded failure", async (t) => {
+  const root = await fixture(t);
+  const job = await queuedQuestion(root, "not_runnable");
+  await markQuestionResponseFailed({ root, ...job, errorCode: "timeout" });
+  let called = false;
+  const worker = createQuestionWorker({
+    root,
+    evidenceForSelection: fixtureEvidenceForSelection,
+    capability: { adapter: "codex-cli", available: true, authenticated: true },
+    runner: {
+      async respond() {
+        called = true;
+        return { answer: "The recorded failure must survive." };
+      },
+    },
+  });
+  t.after(() => worker.close());
+
+  assert.deepEqual(
+    await worker.enqueueQuestion({
+      root,
+      sessionId: job.sessionId,
+      questionId: job.questionId,
+    }),
+    { accepted: true },
+  );
+  await worker.whenIdle();
+
+  assert.equal(called, false);
+  const stored = await loadSession({ root, sessionId: job.sessionId });
+  const response = stored.conversation.turns[0].response;
+  assert.equal(response.status, "failed");
+  assert.equal(response.errorCode, "timeout");
+});
+
 test("runner failures persist only the bounded public error vocabulary", async (t) => {
   assert.equal(questionResponseErrorCode({ code: "AGENT_RUN_UNAVAILABLE" }), "runner_unavailable");
   assert.equal(questionResponseErrorCode({ code: "AGENT_RUN_TIMEOUT" }), "timeout");
@@ -518,4 +590,94 @@ test("a previously unavailable Codex capability is re-probed without restarting"
   assert.equal(responses, 1);
   const stored = await loadSession({ root, sessionId: job.sessionId });
   assert.equal(stored.conversation.turns[0].response.status, "completed");
+});
+
+test("a streamed run publishes the running status, every delta, and the answer turn", async (t) => {
+  const root = await fixture(t);
+  const job = await queuedQuestion(root, "streamed");
+  const captured = [];
+  const streamRelay = {
+    publish(sessionId, event) {
+      captured.push([sessionId, event]);
+    },
+  };
+  const worker = createQuestionWorker({
+    root,
+    streamRelay,
+    evidenceForSelection: fixtureEvidenceForSelection,
+    capability: { adapter: "codex-cli", available: true, authenticated: true },
+    runner: {
+      async respond(request) {
+        request.onDelta("Part one. ");
+        request.onDelta("Part two.");
+        return { answer: "Part one. Part two." };
+      },
+    },
+  });
+  t.after(() => worker.close());
+
+  assert.deepEqual(await worker.recover(), { recovered: 1, interrupted: 0 });
+  await worker.whenIdle();
+
+  const events = captured.map(([, event]) => event);
+  assert.deepEqual(
+    new Set(captured.map(([sessionId]) => sessionId)),
+    new Set([job.sessionId]),
+  );
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["status", "delta", "delta", "answer"],
+  );
+  assert.deepEqual(
+    new Set(events.map((event) => event.questionId)),
+    new Set([job.questionId]),
+  );
+  assert.equal(events[0].status, "running");
+  assert.deepEqual(
+    events.slice(1, 3).map((event) => event.text),
+    ["Part one. ", "Part two."],
+  );
+
+  const stored = await loadSession({ root, sessionId: job.sessionId });
+  const answer = stored.conversation.turns.find(
+    (turn) => turn.replyToTurnId === job.questionId,
+  );
+  assert.equal(events[3].answerTurnId, answer.id);
+});
+
+test("a streamed failure publishes the same error code the session records", async (t) => {
+  const root = await fixture(t);
+  const job = await queuedQuestion(root, "streamed_failure");
+  const captured = [];
+  const worker = createQuestionWorker({
+    root,
+    streamRelay: {
+      publish(sessionId, event) {
+        captured.push([sessionId, event]);
+      },
+    },
+    evidenceForSelection: fixtureEvidenceForSelection,
+    capability: { adapter: "codex-cli", available: true, authenticated: true },
+    runner: {
+      async respond() {
+        const error = new Error("raw provider timeout must not escape");
+        error.code = "AGENT_RUN_TIMEOUT";
+        throw error;
+      },
+    },
+  });
+  t.after(() => worker.close());
+
+  assert.deepEqual(await worker.recover(), { recovered: 1, interrupted: 0 });
+  await worker.whenIdle();
+
+  const stored = await loadSession({ root, sessionId: job.sessionId });
+  const response = stored.conversation.turns[0].response;
+  assert.equal(response.status, "failed");
+  assert.equal(response.errorCode, "timeout");
+  assert.deepEqual(captured.at(-1), [job.sessionId, {
+    type: "failed",
+    questionId: job.questionId,
+    errorCode: response.errorCode,
+  }]);
 });

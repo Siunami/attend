@@ -1,8 +1,9 @@
 import SAMPLE_SOURCES from "./family-datasets.js";
 import { mountFamilyBrowser } from "./family-browser.js";
 import { RENDERER_IDS } from "./family-renderers.js";
-import { toCompilerRequest } from "./family-compiler-adapter.js";
+import { formFixtureDataset, toCompilerRequest } from "./family-compiler-adapter.js";
 import { atlasPackageToRenderModel } from "./package-model.js";
+import { legacyIncumbentMemberId } from "./form-registry.js";
 import { renderAtlasPackage } from "./package-renderer.js";
 import {
   CANONICAL_INPUT_MEDIA,
@@ -51,11 +52,13 @@ const elements = {
 
 const state = {
   familyId: FAMILY_ORDER[0],
+  memberId: legacyIncumbentMemberId(FAMILY_ORDER[0]),
   galleryRenderRevision: 0,
   mediaRenderRevision: 0,
   mode: "browse",
   selectedId: null,
   selectedNodeId: null,
+  selectedTargetId: null,
 };
 
 function words(value) {
@@ -282,17 +285,24 @@ function locatorLabel(locator) {
   return locator.path ?? locator.kind;
 }
 
-function updateMarkSelect(dataset) {
+function updateMarkSelect(dataset, rendered) {
   const placeholder = makeOption("", "Choose a target…");
-  const selectableMarkIds = new Set(list(dataset.selectableMarkIds).map(String));
+  const selectableMarkIds = new Set(list(rendered?.selectableMarkIds).map(String));
+  const selectableTargetIds = new Set(list(rendered?.selectableTargetIds).map(String));
+  const selectableNodeIds = new Set(list(rendered?.selectableNodeIds).map(String));
   const markRecords = dataset.records.filter((record) => selectableMarkIds.has(recordId(dataset, record)));
-  const nodeRecords = dataset.records.filter((record) => (
-    !selectableMarkIds.has(recordId(dataset, record))
-    && list(dataset.links).some((link) => (
-      String(link.source) === recordId(dataset, record) || String(link.target) === recordId(dataset, record)
-    ))
-  ));
+  const nodeRecords = dataset.records.filter((record) => selectableNodeIds.has(recordId(dataset, record)));
+  const targets = list(dataset.visualTargets).filter((target) => selectableTargetIds.has(String(target.id)));
   const options = [placeholder];
+  if (targets.length) {
+    const aggregates = document.createElement("optgroup");
+    aggregates.label = "Aggregates";
+    aggregates.append(...targets.map((target) => makeOption(
+      `target:${String(target.id)}`,
+      `${target.label} (${target.count} evidence mark${target.count === 1 ? "" : "s"})`,
+    )));
+    options.push(aggregates);
+  }
   if (markRecords.length) {
     const marks = document.createElement("optgroup");
     marks.label = "Marks";
@@ -308,23 +318,34 @@ function updateMarkSelect(dataset) {
   if (list(dataset.links).length) {
     const relationships = document.createElement("optgroup");
     relationships.label = "Relationships";
-    relationships.append(...dataset.links.map((link) => makeOption(`mark:${String(link.id)}`, inspectableLabel(dataset, { kind: "relationship", item: link }))));
-    options.push(relationships);
+    relationships.append(...dataset.links
+      .filter((link) => selectableMarkIds.has(String(link.id)))
+      .map((link) => makeOption(`mark:${String(link.id)}`, inspectableLabel(dataset, { kind: "relationship", item: link }))));
+    if (relationships.children.length) options.push(relationships);
   }
   elements.markSelect.replaceChildren(...options);
-  elements.markSelect.value = state.selectedNodeId
-    ? `node:${state.selectedNodeId}`
-    : state.selectedId ? `mark:${state.selectedId}` : "";
+  elements.markSelect.value = state.selectedTargetId
+    ? `target:${state.selectedTargetId}`
+    : state.selectedNodeId ? `node:${state.selectedNodeId}`
+      : state.selectedId ? `mark:${state.selectedId}` : "";
 }
 
 function updateSelection(dataset) {
+  if (state.selectedTargetId) {
+    const target = dataset.targetById?.[state.selectedTargetId]
+      ?? list(dataset.visualTargets).find((candidate) => String(candidate.id) === state.selectedTargetId);
+    elements.selection.textContent = target
+      ? `${target.label} · ${target.count} evidence mark${target.count === 1 ? "" : "s"} · Verified aggregate target. Choose the blank option to clear it.`
+      : "The selected aggregate is no longer present in this visualization.";
+    return;
+  }
   if (state.selectedNodeId) {
     const node = dataset.records.find((record) => recordId(dataset, record) === state.selectedNodeId);
     const relationshipCount = list(dataset.links).filter((link) => (
       String(link.source) === state.selectedNodeId || String(link.target) === state.selectedNodeId
     )).length;
     elements.selection.textContent = node
-      ? `${recordLabel(dataset, node)} · ${relationshipCount} connected relationship${relationshipCount === 1 ? "" : "s"} · See the Context ledger for attributes and typed connections.`
+      ? `${recordLabel(dataset, node)} · ${relationshipCount} connected relationship${relationshipCount === 1 ? "" : "s"} · The data list below shows its connected rows.`
       : "The selected component is no longer present in this visualization.";
     return;
   }
@@ -353,42 +374,56 @@ function fallbackSummary(dataset) {
   return `${dataset.question} The view contains ${dataset.records.length} primary marks${relationshipCount ? ` and ${relationshipCount} evidence-bearing relationships` : ""}: ${labels.join(", ")}${dataset.records.length > labels.length ? ", and more" : ""}.`;
 }
 
+function currentFormDataset() {
+  return formFixtureDataset(
+    state.familyId,
+    state.memberId,
+    SAMPLE_SOURCES[state.familyId],
+  );
+}
+
 async function renderGallery() {
   const revision = ++state.galleryRenderRevision;
-  const dataset = SAMPLE_SOURCES[state.familyId];
+  const dataset = currentFormDataset();
   const manifest = manifestById.get(state.familyId) ?? { id: state.familyId, title: words(state.familyId) };
   const request = await toCompilerRequest(dataset, manifest, {
     availableWidth: Math.max(elements.visual.clientWidth || 0, 320),
+    memberId: state.memberId,
   });
   const packageValue = await compileMap(request);
   const renderModel = atlasPackageToRenderModel(packageValue);
-  if (state.familyId !== renderModel.familyId) return;
+  if (state.familyId !== renderModel.familyId || state.memberId !== renderModel.memberId) return;
   elements.kicker.textContent = `${groupLabel(manifest)} family · ${dataset.mediaType} sample`;
   elements.title.textContent = renderModel.title || manifest.title || words(state.familyId);
   elements.question.textContent = renderModel.question || dataset.question;
   elements.description.textContent = familyDescription(manifest);
-  elements.status.textContent = maturity(manifest);
+  elements.status.textContent = `${maturity(manifest)} · ${words(renderModel.memberId)}`;
   elements.fallback.textContent = fallbackSummary(renderModel);
   renderContract(manifest);
-  updateMarkSelect(renderModel);
-  updateSelection(renderModel);
   elements.visual.setAttribute("aria-busy", "true");
   const stagingRoot = document.createElement("div");
   try {
-    await renderAtlasPackage({
+    const renderReceipt = await renderAtlasPackage({
       root: stagingRoot,
       packageValue,
       selectedMarkIds: state.selectedId ? [state.selectedId] : [],
       selectedNodeId: state.selectedNodeId,
+      selectedTargetId: state.selectedTargetId,
       onSelect: (target) => selectVisualTarget(target),
     });
-    if (revision === state.galleryRenderRevision) elements.visual.replaceChildren(...stagingRoot.childNodes);
+    if (revision === state.galleryRenderRevision) {
+      elements.visual.replaceChildren(...stagingRoot.childNodes);
+      updateMarkSelect(renderModel, renderReceipt);
+      updateSelection(renderModel);
+    }
   } catch (error) {
     if (revision === state.galleryRenderRevision) {
       const notice = document.createElement("p");
       notice.className = "render-error";
       notice.textContent = error instanceof Error ? `This specimen could not render: ${error.message}` : "This specimen could not render.";
       elements.visual.replaceChildren(notice);
+      updateMarkSelect(renderModel, { selectableMarkIds: [], selectableTargetIds: [], selectableNodeIds: [] });
+      updateSelection(renderModel);
     }
   } finally {
     if (revision === state.galleryRenderRevision) elements.visual.setAttribute("aria-busy", "false");
@@ -422,26 +457,29 @@ function renderPipelineStages() {
 }
 
 async function renderPipelineReceipt() {
-  const dataset = SAMPLE_SOURCES[state.familyId];
+  const dataset = currentFormDataset();
   const manifest = manifestById.get(state.familyId);
   const requestedFamilyId = state.familyId;
+  const requestedMemberId = state.memberId;
   const request = await toCompilerRequest(dataset, manifest, {
     availableWidth: Math.max(elements.pipeline.clientWidth || 0, 320),
+    memberId: state.memberId,
   });
   const packageValue = await compileMap(request);
-  if (state.familyId !== requestedFamilyId) return;
+  if (state.familyId !== requestedFamilyId || state.memberId !== requestedMemberId) return;
   const evidenceReferences = packageValue.quality.coverage.evidenceRefCount;
   elements.family.textContent = manifest?.title ?? words(state.familyId);
   elements.marks.textContent = String(packageValue.marks.length);
   elements.evidence.textContent = String(evidenceReferences);
   elements.pipelineHash.textContent = packageValue.hashes.package.slice(0, 12);
-  const collection = manifest.transformation.payload.collection;
+  const collection = Object.entries(packageValue.payload)
+    .find(([key, value]) => key !== "visualTargets" && Array.isArray(value))?.[0];
   const excerpt = {
     ...packageValue,
     marks: packageValue.marks.slice(0, 2),
     payload: {
       ...packageValue.payload,
-      [collection]: `[${packageValue.payload[collection].length} validated ${collection}]`,
+      ...(collection ? { [collection]: `[${packageValue.payload[collection].length} validated ${collection}]` } : {}),
     },
   };
   elements.packagePreview.textContent = JSON.stringify(excerpt, null, 2);
@@ -734,10 +772,20 @@ async function renderMediaPolicy() {
 }
 
 async function setFamily(familyId) {
+  const memberId = legacyIncumbentMemberId(familyId);
+  if (!memberId) return;
+  return setForm(familyId, memberId);
+}
+
+async function setForm(familyId, memberId) {
   if (!SAMPLE_SOURCES[familyId]) return;
   state.familyId = familyId;
+  state.memberId = memberId;
   state.selectedId = null;
   state.selectedNodeId = null;
+  state.selectedTargetId = null;
+  document.body.dataset.familyId = familyId;
+  document.body.dataset.memberId = memberId;
   updateNavigationState();
   await renderGallery();
   if (state.mode === "pipeline") await renderPipelineReceipt();
@@ -762,6 +810,7 @@ function setMode(mode) {
 async function selectMark(markId) {
   state.selectedId = markId || null;
   state.selectedNodeId = null;
+  state.selectedTargetId = null;
   await renderGallery();
 }
 
@@ -769,9 +818,19 @@ async function selectVisualTarget(target) {
   if (target && typeof target === "object" && target.kind === "node") {
     state.selectedId = null;
     state.selectedNodeId = String(target.nodeId);
+    state.selectedTargetId = null;
+  } else if (target && typeof target === "object" && target.kind === "target") {
+    state.selectedId = null;
+    state.selectedNodeId = null;
+    state.selectedTargetId = String(target.targetId);
+  } else if (target && typeof target === "object" && target.kind === "mark") {
+    state.selectedId = String(target.markId);
+    state.selectedNodeId = null;
+    state.selectedTargetId = null;
   } else {
     state.selectedId = target ? String(target) : null;
     state.selectedNodeId = null;
+    state.selectedTargetId = null;
   }
   await renderGallery();
 }
@@ -785,6 +844,7 @@ elements.familySelect.addEventListener("change", () => setFamily(elements.family
 elements.markSelect.addEventListener("change", () => {
   const selection = elements.markSelect.value;
   if (selection.startsWith("node:")) selectVisualTarget({ kind: "node", nodeId: selection.slice(5) });
+  else if (selection.startsWith("target:")) selectVisualTarget({ kind: "target", targetId: selection.slice(7) });
   else selectMark(selection.startsWith("mark:") ? selection.slice(5) : null);
 });
 document.querySelectorAll(".mode-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
@@ -824,8 +884,8 @@ function validateGalleryParity() {
 validateGalleryParity();
 mountFamilyBrowser({
   root: elements.browserRoot,
-  onOpenRuntime: async ({ familyId }) => {
-    await setFamily(familyId);
+  onOpenRuntime: async ({ familyId, memberId }) => {
+    await setForm(familyId, memberId);
     setMode("gallery");
     elements.title.focus();
   },

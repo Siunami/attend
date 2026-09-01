@@ -27,6 +27,7 @@ const elements = {
 };
 
 const filterInputs = [...document.querySelectorAll('input[name="experiment-filter"]')];
+const viewInputs = [...document.querySelectorAll('input[name="workspace-view"]')];
 
 const hostAttachmentRoute = (() => {
   const params = new URLSearchParams(window.location.hash.slice(1));
@@ -45,6 +46,9 @@ const hostAttachmentRoute = (() => {
 let exploration = null;
 let experiments = [];
 let activeFilter = "all";
+let activeView = new URLSearchParams(window.location.hash.slice(1)).get("attend-view") === "debug"
+  ? "debug"
+  : "gallery";
 let strictChronology = false;
 let refreshing = false;
 
@@ -159,7 +163,30 @@ function matchesFilter(experiment) {
   return true;
 }
 
+// The gallery is the end-user surface: only finished runs with an artifact
+// belong there. Failures, abstentions, and runs in flight are working state
+// and stay in the debug view.
+function galleryReady(experiment) {
+  return ["completed", "succeeded"].includes(executionStatus(experiment))
+    && !isNullResult(experiment)
+    && Boolean(safeArtifactHref(experiment.artifact));
+}
+
+function galleryOrder(left, right) {
+  const tier = (experiment) => (starredAt(experiment) ? 0 : promotedAt(experiment) ? 1 : 2);
+  return tier(left) - tier(right)
+    || (relevance(right)?.score ?? -1) - (relevance(left)?.score ?? -1)
+    || executionTimestamp(right) - executionTimestamp(left)
+    || String(left.id).localeCompare(String(right.id));
+}
+
 function visibleExperiments() {
+  if (activeView === "gallery") {
+    return experiments
+      .filter(galleryReady)
+      .filter(matchesFilter)
+      .sort(galleryOrder);
+  }
   return experiments
     .filter(matchesFilter)
     .sort(strictChronology ? chronologicalOrder : defaultOrder);
@@ -308,14 +335,7 @@ function branchLine(experiment) {
   return line;
 }
 
-function hypothesisPanel(experiment, position) {
-  const panel = makeElement("section", "hypothesis-panel");
-  panel.setAttribute("aria-labelledby", `experiment-heading-${position}`);
-
-  const top = makeElement("div", "experiment-topline");
-  top.append(makeElement("span", "experiment-number", `Experiment ${position + 1}`));
-  top.append(badgesFor(experiment));
-
+function starButton(experiment) {
   const star = makeElement(
     "button",
     "star-button",
@@ -329,6 +349,18 @@ function hypothesisPanel(experiment, position) {
     `${experiment.human?.starred === true ? "Remove star from" : "Star"} experiment: ${experimentTitle(experiment)}`,
   );
   star.addEventListener("click", () => setStar(experiment, star));
+  return star;
+}
+
+function hypothesisPanel(experiment, position) {
+  const panel = makeElement("section", "hypothesis-panel");
+  panel.setAttribute("aria-labelledby", `experiment-heading-${position}`);
+
+  const top = makeElement("div", "experiment-topline");
+  top.append(makeElement("span", "experiment-number", `Experiment ${position + 1}`));
+  top.append(badgesFor(experiment));
+
+  const star = starButton(experiment);
 
   const headingRow = makeElement("div", "hypothesis-heading-row");
   const heading = makeElement("h3", "hypothesis", experimentTitle(experiment));
@@ -587,6 +619,148 @@ function experimentFooter(experiment, position) {
   return footer;
 }
 
+const RELEVANCE_BENEFITS = Object.freeze([
+  ["taskRelevance", "Task relevance"],
+  ["evidenceSufficiency", "Evidence sufficiency"],
+  ["surprise", "Surprise vs. baseline"],
+  ["novelty", "Novelty"],
+  ["actionability", "Actionability"],
+  ["representationalDiversity", "Representational diversity"],
+]);
+
+const RELEVANCE_COSTS = Object.freeze([
+  ["uncertainty", "Uncertainty"],
+  ["interruptionCost", "Interruption cost"],
+]);
+
+// One number for the gallery: the mean of the benefit dimensions. The cost
+// dimensions stay out of the aggregate and appear only in the breakdown.
+function relevance(experiment) {
+  const vector = experiment.assessment?.interestingness;
+  if (!isObject(vector)) return null;
+  const scores = RELEVANCE_BENEFITS
+    .map(([key]) => vector[key])
+    .filter((score) => Number.isFinite(score));
+  if (!scores.length) return null;
+  return {
+    score: scores.reduce((total, score) => total + score, 0) / scores.length,
+    vector,
+  };
+}
+
+function relevanceGauge(experiment) {
+  const value = relevance(experiment);
+  if (!value) return null;
+  const percent = Math.round(value.score * 100);
+  const holder = makeElement("div", "relevance");
+  holder.tabIndex = 0;
+  holder.setAttribute(
+    "aria-label",
+    `Relevance ${percent} of 100. Hover or focus for the assessment breakdown.`,
+  );
+
+  const namespace = "http://www.w3.org/2000/svg";
+  const ring = document.createElementNS(namespace, "svg");
+  ring.setAttribute("viewBox", "0 0 20 20");
+  ring.setAttribute("class", "relevance-ring");
+  ring.setAttribute("aria-hidden", "true");
+  const circumference = 2 * Math.PI * 8;
+  const track = document.createElementNS(namespace, "circle");
+  const fill = document.createElementNS(namespace, "circle");
+  for (const [circle, className] of [[track, "relevance-track"], [fill, "relevance-fill"]]) {
+    circle.setAttribute("cx", "10");
+    circle.setAttribute("cy", "10");
+    circle.setAttribute("r", "8");
+    circle.setAttribute("class", className);
+  }
+  fill.setAttribute("stroke-dasharray", String(circumference));
+  fill.setAttribute("stroke-dashoffset", String(circumference * (1 - value.score)));
+  fill.setAttribute("transform", "rotate(-90 10 10)");
+  ring.append(track, fill);
+
+  const popover = makeElement("div", "relevance-popover");
+  popover.setAttribute("role", "presentation");
+  popover.append(makeElement("p", "relevance-popover-title", "Assessment breakdown"));
+  for (const [group, dimensions] of [["benefit", RELEVANCE_BENEFITS], ["cost", RELEVANCE_COSTS]]) {
+    for (const [key, label] of dimensions) {
+      const score = value.vector[key];
+      if (!Number.isFinite(score)) continue;
+      const row = makeElement("div", "relevance-row");
+      row.dataset.group = group;
+      const bar = document.createElementNS(namespace, "svg");
+      bar.setAttribute("class", "relevance-bar");
+      bar.setAttribute("viewBox", "0 0 100 4");
+      bar.setAttribute("preserveAspectRatio", "none");
+      bar.setAttribute("aria-hidden", "true");
+      const barFill = document.createElementNS(namespace, "rect");
+      barFill.setAttribute("width", String(Math.round(score * 100)));
+      barFill.setAttribute("height", "4");
+      bar.append(barFill);
+      row.append(
+        makeElement("span", "relevance-row-label", label),
+        bar,
+        makeElement("span", "relevance-row-value", score.toFixed(2)),
+      );
+      popover.append(row);
+    }
+  }
+
+  holder.append(ring, makeElement("span", "relevance-number", String(percent)), popover);
+  return holder;
+}
+
+function previewHref(href) {
+  const url = new URL(href, window.location.href);
+  const params = new URLSearchParams(url.hash.slice(1));
+  params.set("attend-preview", "1");
+  url.hash = params.toString();
+  return url.href;
+}
+
+function galleryPreview(experiment) {
+  const href = safeArtifactHref(experiment.artifact);
+  const preview = makeElement("a", "gallery-preview");
+  preview.href = href;
+  preview.setAttribute("aria-label", `Open visualization: ${experimentTitle(experiment)}`);
+  const frame = document.createElement("iframe");
+  frame.className = "gallery-frame";
+  frame.loading = "lazy";
+  frame.src = previewHref(href);
+  frame.tabIndex = -1;
+  frame.setAttribute("aria-hidden", "true");
+  frame.setAttribute("title", "");
+  preview.append(frame, makeElement("span", "gallery-open", "Open"));
+  return preview;
+}
+
+function renderGalleryItem(experiment, position) {
+  const item = makeElement("li", "gallery-item");
+  item.dataset.experimentId = experiment.id;
+  item.dataset.starred = String(experiment.human?.starred === true);
+
+  const card = makeElement("article", "gallery-card");
+  card.setAttribute("aria-labelledby", `experiment-heading-${position}`);
+  card.append(galleryPreview(experiment));
+
+  const body = makeElement("div", "gallery-body");
+  const titleRow = makeElement("div", "gallery-title-row");
+  const heading = makeElement("h3", "gallery-question", experimentTitle(experiment));
+  heading.id = `experiment-heading-${position}`;
+  titleRow.append(heading);
+  const gauge = relevanceGauge(experiment);
+  if (gauge) titleRow.append(gauge);
+  body.append(titleRow);
+  const why = text(experiment.hypothesis?.whyUseful);
+  if (why) body.append(makeElement("p", "gallery-why", why));
+  card.append(body);
+
+  const footer = makeElement("footer", "gallery-footer");
+  footer.append(starButton(experiment), feedbackForm(experiment, position));
+  card.append(footer);
+  item.append(card);
+  return item;
+}
+
 function renderExperiment(experiment, position) {
   const item = makeElement("li", "experiment-item");
   item.dataset.experimentId = experiment.id;
@@ -646,18 +820,36 @@ function focusControl(kind, experimentId) {
   filterInputs.find((input) => input.checked)?.focus();
 }
 
+function renderEmptyState(visibleCount) {
+  elements.empty.hidden = visibleCount !== 0;
+  if (visibleCount !== 0) return;
+  const heading = elements.empty.querySelector("h3");
+  const detail = elements.empty.querySelector("p");
+  if (activeView === "gallery") {
+    heading.textContent = "No finished visualizations yet";
+    detail.textContent = "Runs that complete with an artifact appear here. The debug view shows everything, including failures and runs still in flight.";
+  } else {
+    heading.textContent = "No experiments match this view";
+    detail.textContent = "Change the filter to see the rest of this exploration.";
+  }
+}
+
 function render({ focus = null } = {}) {
   renderHeader();
+  document.body.dataset.view = activeView;
   const visible = visibleExperiments();
-  elements.list.replaceChildren(...visible.map(renderExperiment));
-  elements.empty.hidden = visible.length !== 0;
+  elements.list.replaceChildren(
+    ...visible.map(activeView === "gallery" ? renderGalleryItem : renderExperiment),
+  );
+  renderEmptyState(visible.length);
   const filterLabel = activeFilter === "promoted"
     ? "agent-promoted"
     : activeFilter === "starred"
       ? "starred"
-      : "total";
-  const orderLabel = strictChronology ? " in strict chronology" : "";
-  elements.status.textContent = `${visible.length} ${filterLabel} ${plural(visible.length, "experiment")}${orderLabel}`;
+      : activeView === "gallery" ? "finished" : "total";
+  const noun = activeView === "gallery" ? "visualization" : "experiment";
+  const orderLabel = activeView === "debug" && strictChronology ? " in strict chronology" : "";
+  elements.status.textContent = `${visible.length} ${filterLabel} ${plural(visible.length, noun)}${orderLabel}`;
   if (focus) focusControl(focus.kind, focus.experimentId);
 }
 
@@ -823,10 +1015,28 @@ for (const input of filterInputs) {
   });
 }
 
+function setView(view) {
+  activeView = view === "debug" ? "debug" : "gallery";
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  if (activeView === "debug") params.set("attend-view", "debug");
+  else params.delete("attend-view");
+  const hash = params.toString();
+  history.replaceState(null, "", hash ? `#${hash}` : window.location.pathname + window.location.search);
+  render();
+}
+
+for (const input of viewInputs) {
+  input.checked = input.value === activeView;
+  input.addEventListener("change", () => {
+    if (input.checked) setView(input.value);
+  });
+}
+
 elements.chronology.addEventListener("change", () => {
   strictChronology = elements.chronology.checked;
   render();
 });
 
 elements.refresh.addEventListener("click", refresh);
+document.body.dataset.view = activeView;
 refresh();

@@ -1,9 +1,18 @@
 // The browser consumes the compiler's public v2 package directly. This module
-// is the closed adapter from that canonical package to the fixed family
-// grammars; it does not define or serialize a second package shape.
+// is the closed adapter from that canonical package to exact, catalog-governed
+// forms; it does not define or serialize a second package shape.
+
+import { FAMILY_BROWSER_CATALOG } from "./family-catalog.js";
+import { GENERATED_FORM_RUNTIME } from "./form-runtime-generated.js";
+import {
+  allowlistedCatalogReceipt,
+  currentCatalogReceipt,
+  expectedPresentationVariantForCatalogReceipt,
+  executableMemberIds,
+} from "./form-registry.js";
 
 export const ATLAS_SCHEMA_VERSION = 2;
-export const ATLAS_CATALOG_VERSION = "3904c28aabcbc405";
+export const ATLAS_CATALOG_VERSION = FAMILY_BROWSER_CATALOG.catalogVersion;
 
 export const ATLAS_FAMILY_IDS = Object.freeze([
   "rank",
@@ -30,30 +39,6 @@ export const ATLAS_FAMILY_IDS = Object.freeze([
 const FAMILY_SET = new Set(ATLAS_FAMILY_IDS);
 const OPAQUE_EVIDENCE_REF = /^evidence_[a-f0-9]{16}$/u;
 
-// This is a generated-at-release catalog snapshot. The browser may audit a
-// receipt against it, but it never uses the package to choose a module or URL.
-const CATALOG_ALLOWLIST = Object.freeze({
-  rank: { member: "bar-list", rendererId: "attend-rank", rendererVariantId: "bar-list", rendererVersion: 1 },
-  distribution: { member: "strip", rendererId: "attend-distribution", rendererVariantId: "strip", rendererVersion: 1 },
-  composition: { member: "hundred-bar", rendererId: "attend-composition", rendererVariantId: "normalized-parts", rendererVersion: 1 },
-  profile: { member: "parallel", rendererId: "attend-profile", rendererVariantId: "parallel-profile", rendererVersion: 1 },
-  "passage-comparison": { member: "parallel-text", rendererId: "attend-passage-comparison", rendererVariantId: "aligned-passages", rendererVersion: 1 },
-  trend: { member: "line", rendererId: "attend-trend", rendererVariantId: "observed-line", rendererVersion: 1 },
-  timeline: { member: "interval", rendererId: "attend-timeline", rendererVariantId: "lane-timeline", rendererVersion: 1 },
-  sequence: { member: "step-strip", rendererId: "attend-sequence", rendererVariantId: "storyboard", rendererVersion: 1 },
-  relationship: { member: "scatter", rendererId: "attend-relationship", rendererVariantId: "scatter", rendererVersion: 1 },
-  matrix: { member: "heatmap", rendererId: "attend-matrix", rendererVariantId: "heat-matrix", rendererVersion: 1 },
-  hierarchy: { member: "tidy", rendererId: "attend-hierarchy", rendererVariantId: "node-tree", rendererVersion: 1 },
-  network: { member: "local", rendererId: "attend-network", rendererVariantId: "node-link", rendererVersion: 1 },
-  flow: { member: "sankey", rendererId: "attend-flow", rendererVariantId: "sankey", rendererVersion: 1 },
-  mechanism: { member: "flowchart", rendererId: "attend-mechanism", rendererVariantId: "system-schematic", rendererVersion: 1 },
-  "region-map": { member: "choropleth", rendererId: "attend-region-map", rendererVariantId: "choropleth", rendererVersion: 1 },
-  "point-map": { member: "exact-points", rendererId: "attend-point-map", rendererVariantId: "dot-map", rendererVersion: 1 },
-  field: { member: "sample-raster", rendererId: "attend-field", rendererVariantId: "sample-raster", rendererVersion: 1 },
-  "annotated-specimen": { member: "callout-overlay", rendererId: "attend-annotated-specimen", rendererVariantId: "callout-overlay", rendererVersion: 1 },
-  "collection-atlas": { member: "faceted-atlas", rendererId: "attend-collection-atlas", rendererVariantId: "contact-atlas", rendererVersion: 1 },
-});
-
 const PAYLOAD_COLLECTIONS = Object.freeze({
   rank: "items",
   distribution: "observations",
@@ -76,6 +61,41 @@ const PAYLOAD_COLLECTIONS = Object.freeze({
   "collection-atlas": "items",
 });
 
+function browserPackageContract(contract) {
+  return Object.freeze({
+    schemaVersion: contract.payload.schemaVersion,
+    kind: contract.payload.kind,
+    collection: contract.payload.collection,
+    requiredRoles: Object.freeze(contract.roles.required.map((role) => Object.freeze({
+      id: role.id,
+      types: Object.freeze([...role.types]),
+    }))),
+    optionalRoles: Object.freeze(contract.roles.optional.map((role) => Object.freeze({
+      id: role.id,
+      types: Object.freeze([...role.types]),
+    }))),
+  });
+}
+
+const CURRENT_FORM_PACKAGE_CONTRACTS = new Map(GENERATED_FORM_RUNTIME.forms.map((form) => [
+  `${form.familyId}/${form.memberId}`,
+  browserPackageContract(form.packageContract),
+]));
+
+const HISTORICAL_FORM_PACKAGE_CONTRACTS = new Map(Object.entries(
+  GENERATED_FORM_RUNTIME.historicalPackageContracts ?? {},
+).map(([key, contract]) => [key, browserPackageContract(contract)]));
+
+function formPackageContract(catalog) {
+  if (!isObject(catalog)) return null;
+  if (catalog.version === ATLAS_CATALOG_VERSION) {
+    return CURRENT_FORM_PACKAGE_CONTRACTS.get(`${catalog.family}/${catalog.member}`) ?? null;
+  }
+  return HISTORICAL_FORM_PACKAGE_CONTRACTS.get(
+    `${catalog.version}/${catalog.family}/${catalog.member}`,
+  ) ?? null;
+}
+
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -86,6 +106,37 @@ function array(value) {
 
 function nonEmpty(value) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function roleValueMatches(value, type) {
+  if (type === "string") return typeof value === "string" && value.trim().length > 0 && value.length <= 16_384;
+  if (type === "number") return typeof value === "number" && Number.isFinite(value);
+  if (type === "time") {
+    if (typeof value === "number") return Number.isFinite(value);
+    return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value));
+  }
+  if (type === "identifier") {
+    return (typeof value === "string" && value.trim().length > 0 && value.length <= 1_024)
+      || (typeof value === "number" && Number.isFinite(value));
+  }
+  if (type === "latitude") return typeof value === "number" && Number.isFinite(value) && value >= -90 && value <= 90;
+  if (type === "longitude") return typeof value === "number" && Number.isFinite(value) && value >= -180 && value <= 180;
+  if (type === "ratio") return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+  if (type === "media") return isObject(value) || (typeof value === "string" && value.trim().length > 0);
+  return false;
+}
+
+function marksMatchRoleContract(marks, contract) {
+  const roles = [...contract.requiredRoles, ...contract.optionalRoles];
+  const rolesById = new Map(roles.map((role) => [role.id, role]));
+  return marks.every((mark) => {
+    if (!isObject(mark.values)) return false;
+    if (contract.requiredRoles.some((role) => !Object.hasOwn(mark.values, role.id))) return false;
+    return Object.entries(mark.values).every(([roleId, value]) => {
+      const role = rolesById.get(roleId);
+      return role?.types.some((type) => roleValueMatches(value, type)) === true;
+    });
+  });
 }
 
 function immutableCopy(value) {
@@ -106,41 +157,22 @@ function packageMarks(packageValue) {
   return array(packageValue?.marks).filter((mark) => isObject(mark) && nonEmpty(mark.id));
 }
 
-function catalogAuthority(familyId) {
-  return CATALOG_ALLOWLIST[familyId] ?? null;
+export function catalogReceiptForMember(familyId, memberId) {
+  const receipt = currentCatalogReceipt(familyId, memberId);
+  if (!receipt || !FAMILY_SET.has(familyId)) {
+    throw new TypeError(`Unknown executable Atlas form: ${String(familyId)}/${String(memberId)}`);
+  }
+  return { ...receipt };
 }
 
-// The family lab is served as an ES-module graph. Keep this receipt factory
-// beside the browser allowlist so the lab never needs to import the Node-only
-// catalog implementation just to compile a fixture package.
-export function catalogReceiptForFamily(familyId) {
-  const authority = catalogAuthority(familyId);
-  if (!authority || !FAMILY_SET.has(familyId)) throw new TypeError(`Unknown Atlas family: ${String(familyId)}`);
-  return {
-    version: ATLAS_CATALOG_VERSION,
-    family: familyId,
-    member: authority.member,
-    rendererId: authority.rendererId,
-    rendererVariantId: authority.rendererVariantId,
-    rendererVersion: authority.rendererVersion,
-  };
-}
-
-export function executableMemberIdForFamily(familyId) {
-  return catalogReceiptForFamily(familyId).member;
+export function executableMemberIdsForFamily(familyId) {
+  return executableMemberIds(familyId);
 }
 
 export function isCatalogReceiptAllowlisted(catalog) {
-  const familyId = catalog?.family;
-  const authority = catalogAuthority(familyId);
   return isObject(catalog)
-    && catalog.version === ATLAS_CATALOG_VERSION
-    && FAMILY_SET.has(familyId)
-    && authority !== null
-    && catalog.member === authority.member
-    && catalog.rendererId === authority.rendererId
-    && catalog.rendererVariantId === authority.rendererVariantId
-    && catalog.rendererVersion === authority.rendererVersion;
+    && FAMILY_SET.has(catalog.family)
+    && allowlistedCatalogReceipt(catalog) !== null;
 }
 
 function catalogIsAllowlisted(packageValue, familyId) {
@@ -149,7 +181,7 @@ function catalogIsAllowlisted(packageValue, familyId) {
 }
 
 function payloadRecords(packageValue, familyId) {
-  const collection = PAYLOAD_COLLECTIONS[familyId];
+  const collection = formPackageContract(packageValue?.catalog)?.collection ?? PAYLOAD_COLLECTIONS[familyId];
   return collection ? array(packagePayload(packageValue)[collection]).filter(isObject) : [];
 }
 
@@ -514,14 +546,36 @@ function specimenModel(payload, records) {
   };
 }
 
+function visualTargetsForPackage(packageValue) {
+  const candidates = Array.isArray(packageValue?.visualTargets)
+    ? packageValue.visualTargets
+    : array(packageValue?.payload?.visualTargets);
+  const seen = new Set();
+  return candidates.filter((target) => {
+    if (!isObject(target) || !nonEmpty(target.id) || seen.has(target.id)) return false;
+    if (!nonEmpty(target.kind) || !nonEmpty(target.label)) return false;
+    if (!Number.isInteger(target.count) || target.count < 1 || !nonEmpty(target.membershipHash)) return false;
+    seen.add(target.id);
+    return true;
+  }).map(immutableCopy);
+}
+
 export function isAtlasPackage(value) {
   if (!isObject(value) || value.kind !== "attend-data-package" || value.schemaVersion !== ATLAS_SCHEMA_VERSION) return false;
   if (!nonEmpty(value.id) || !isObject(value.family) || !isObject(value.payload)) return false;
   const familyId = value.family.id;
+  const contract = formPackageContract(value.catalog);
   return FAMILY_SET.has(familyId)
     && catalogIsAllowlisted(value, familyId)
+    && contract !== null
+    && value.payload.schemaVersion === contract.schemaVersion
+    && value.payload.kind === contract.kind
+    && Array.isArray(value.payload[contract.collection])
+    && (!isObject(value.presentation)
+      || value.presentation.variant === expectedPresentationVariantForCatalogReceipt(value.catalog))
     && Array.isArray(value.marks)
     && value.marks.length > 0
+    && marksMatchRoleContract(value.marks, contract)
     && value.marks.every((mark) => (
       isObject(mark)
       && nonEmpty(mark.id)
@@ -543,6 +597,7 @@ export function atlasPackageToRenderModel(packageValue) {
   const records = normalizeRecords(packageValue, familyId, marks);
   const familyModel = familySpecificModel(familyId, payload, marks, records);
   const renderRecords = familyModel.records.map((record) => immutableCopy(record));
+  const visualTargets = visualTargetsForPackage(packageValue);
   const markById = Object.fromEntries(marks.map((mark) => [String(mark.id), {
     id: String(mark.id),
     kind: mark.kind,
@@ -550,11 +605,13 @@ export function atlasPackageToRenderModel(packageValue) {
     summary: String(mark.summary ?? ""),
     evidenceRefs: opaqueEvidenceRefs(mark.evidenceRefs),
     values: markValues(mark),
+    ...(isObject(mark.media) ? { media: immutableCopy(mark.media) } : {}),
   }]));
   const question = isObject(packageValue.question) ? packageValue.question : {};
 
   return {
     familyId,
+    memberId: String(packageValue.catalog.member),
     title: String(question.target ?? question.text ?? familyId),
     question: String(question.text ?? question.target ?? "Explore the evidence-bearing view."),
     roles: familyModel.roles,
@@ -563,7 +620,10 @@ export function atlasPackageToRenderModel(packageValue) {
     evidence: evidenceForMarks(marks),
     specimen: familyId === "annotated-specimen" ? specimenModel(payload, records) : undefined,
     selectableMarkIds: marks.map((mark) => String(mark.id)),
+    selectableTargetIds: visualTargets.map((target) => String(target.id)),
     markById,
+    targetById: Object.fromEntries(visualTargets.map((target) => [String(target.id), immutableCopy(target)])),
+    visualTargets,
     packageId: String(packageValue.id),
     packageHash: String(packageValue.hashes?.package ?? ""),
     catalog: {
@@ -574,7 +634,9 @@ export function atlasPackageToRenderModel(packageValue) {
       rendererVariantId: String(packageValue.catalog.rendererVariantId),
       rendererVersion: packageValue.catalog.rendererVersion,
     },
-    assets: [],
+    payloadKind: String(payload.kind ?? ""),
+    payload: immutableCopy(payload),
+    assets: array(packageValue.assets).map(immutableCopy),
     similarityReceipt: familyModel.similarityReceipt ?? null,
   };
 }

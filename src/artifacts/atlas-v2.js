@@ -2,8 +2,14 @@ import { createHash } from "node:crypto";
 
 import {
   CATALOG_VERSION,
-  requireExecutableCatalogMember,
+  historicalPresentationVariantForMember,
+  resolveCatalogReceipt,
 } from "../catalog/index.js";
+import {
+  canonicalObservationsFromPackage,
+  requireExecutableForm,
+  resolveVisualTarget,
+} from "../forms/index.js";
 import { getMapFamily } from "../map-families/registry.js";
 import {
   validateDataPackage,
@@ -21,6 +27,7 @@ const MARK_KINDS = new Set([
 ]);
 const AUTHORIZED_CATALOG_VERSIONS = new Set([
   CATALOG_VERSION,
+  "3904c28aabcbc405",
   "3bcb588eaf291763",
 ]);
 const FAMILY_MARK_KINDS = Object.freeze({
@@ -88,21 +95,24 @@ function resolveRenderer(dataPackage) {
     error.code = "ATLAS_CATALOG_UNAUTHORIZED";
     throw error;
   }
-  let member;
+  let receipt;
   try {
-    member = requireExecutableCatalogMember(catalog.family, catalog.member);
+    receipt = resolveCatalogReceipt(catalog);
   } catch (cause) {
     const error = new TypeError("Atlas catalog receipt does not identify an executable bundled member", { cause });
     error.code = "ATLAS_CATALOG_UNAUTHORIZED";
     throw error;
   }
+  const presentationVariant = catalog.version === CATALOG_VERSION
+    ? receipt.rendererVariantId
+    : historicalPresentationVariantForMember(catalog.version, receipt.family, receipt.member);
   if (
-    catalog.rendererId !== member.rendererId ||
-    catalog.rendererVersion !== member.rendererVersion ||
-    catalog.rendererVariantId !== member.rendererVariantId ||
-    member.rendererId !== manifest.renderer.id ||
-    member.rendererVersion !== manifest.renderer.version ||
-    dataPackage.presentation?.variant !== member.rendererVariantId
+    catalog.rendererId !== receipt.rendererId ||
+    catalog.rendererVersion !== receipt.rendererVersion ||
+    catalog.rendererVariantId !== receipt.rendererVariantId ||
+    receipt.rendererId !== manifest.renderer.id ||
+    receipt.rendererVersion !== manifest.renderer.version ||
+    dataPackage.presentation?.variant !== presentationVariant
   ) {
     const error = new TypeError("Atlas catalog member does not resolve to the package's bundled renderer");
     error.code = "ATLAS_CATALOG_UNAUTHORIZED";
@@ -113,13 +123,21 @@ function resolveRenderer(dataPackage) {
     rendererId: manifest.renderer.id,
     rendererVersion: manifest.renderer.version,
     catalogVersion: catalog.version,
-    memberId: member.id,
-    rendererVariantId: member.rendererVariantId,
+    memberId: receipt.member,
+    rendererVariantId: receipt.rendererVariantId,
   });
 }
 
 function validatePackage(value) {
-  const dataPackage = validateDataPackage(value);
+  let dataPackage;
+  try {
+    dataPackage = validateDataPackage(value);
+  } catch (cause) {
+    if (cause?.code !== "INVALID_CATALOG") throw cause;
+    const error = new TypeError("Atlas catalog receipt is not authorized", { cause });
+    error.code = "ATLAS_CATALOG_UNAUTHORIZED";
+    throw error;
+  }
   resolveRenderer(dataPackage);
   return dataPackage;
 }
@@ -146,6 +164,14 @@ function assertKnownMarkIds(dataPackage, markIds) {
     if (!known.has(markId)) throw new TypeError(`Unknown Atlas mark id: ${markId}`);
   }
   return markIds;
+}
+
+function normalizeTargetId(dataPackage, targetId) {
+  if (targetId === null || targetId === undefined) return null;
+  if (typeof targetId !== "string" || !targetId) throw new TypeError("targetId must be a non-empty string or null");
+  const known = dataPackage.payload?.visualTargets?.some((target) => target.id === targetId);
+  if (!known) throw new TypeError(`Unknown Atlas visual target id: ${targetId}`);
+  return targetId;
 }
 
 function incidentMarkIds(dataPackage, nodeId) {
@@ -183,14 +209,17 @@ function initialState(dataPackage, overrides = {}) {
     throw new TypeError("A new session always starts at revision 0");
   }
   const unknown = Object.keys(overrides).filter(
-    (key) => key !== "revision" && key !== "markIds" && key !== "focus",
+    (key) => key !== "revision" && key !== "markIds" && key !== "focus" && key !== "targetId",
   );
   if (unknown.length) throw new TypeError(`Unknown Atlas session state field: ${unknown.join(", ")}`);
   const markIds = assertKnownMarkIds(dataPackage, normalizeMarkIds(overrides.markIds ?? []));
+  const targetId = normalizeTargetId(dataPackage, overrides.targetId);
+  if (targetId && markIds.length > 0) throw new TypeError("Aggregate target state cannot also store direct mark ids");
   const focus = normalizeFocus(dataPackage, overrides.focus, markIds);
   return {
     revision: 0,
     markIds,
+    ...(targetId ? { targetId } : {}),
     ...(focus ? { focus } : {}),
   };
 }
@@ -199,13 +228,24 @@ function applyStatePatch(dataPackage, current, patch) {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     throw new TypeError("patch must be an object");
   }
-  const unknown = Object.keys(patch).filter((key) => key !== "markIds" && key !== "focus");
+  const unknown = Object.keys(patch).filter((key) => key !== "markIds" && key !== "focus" && key !== "targetId");
   if (unknown.length) throw new TypeError(`Unknown Atlas session state field: ${unknown.join(", ")}`);
   const next = cloneJson(current, "session state");
   if (Object.hasOwn(patch, "markIds")) {
     const markIds = normalizeMarkIds(patch.markIds);
     next.markIds = assertKnownMarkIds(dataPackage, markIds);
+    if (markIds.length > 0) delete next.targetId;
     if (!Object.hasOwn(patch, "focus")) delete next.focus;
+  }
+  if (Object.hasOwn(patch, "targetId")) {
+    const targetId = normalizeTargetId(dataPackage, patch.targetId);
+    if (targetId) {
+      next.targetId = targetId;
+      next.markIds = [];
+      delete next.focus;
+    } else {
+      delete next.targetId;
+    }
   }
   if (Object.hasOwn(patch, "focus")) {
     const focus = normalizeFocus(dataPackage, patch.focus, next.markIds ?? []);
@@ -221,6 +261,10 @@ function normalizeStoredState(dataPackage, state) {
   }
   const markIds = normalizeMarkIds(state.markIds ?? []);
   state.markIds = assertKnownMarkIds(dataPackage, markIds);
+  const targetId = normalizeTargetId(dataPackage, state.targetId);
+  if (targetId && markIds.length > 0) throw new TypeError("Aggregate target state cannot also store direct mark ids");
+  if (targetId) state.targetId = targetId;
+  else delete state.targetId;
   const focus = normalizeFocus(dataPackage, state.focus, state.markIds);
   if (focus) state.focus = focus;
   else delete state.focus;
@@ -260,11 +304,39 @@ function evidenceReferenceIds(marks) {
   return refs;
 }
 
+function resolvedAggregate(dataPackage, renderer, targetId) {
+  if (!targetId) return null;
+  const form = requireExecutableForm(renderer.familyId, renderer.memberId);
+  return resolveVisualTarget(
+    form,
+    targetId,
+    canonicalObservationsFromPackage(dataPackage),
+    dataPackage.payload,
+  );
+}
+
 function buildSelection(dataPackage, state) {
   const renderer = resolveRenderer(dataPackage);
-  const marks = selectedMarks(dataPackage, state);
-  const evidenceRefIds = evidenceReferenceIds(marks);
-  const focus = normalizeFocus(dataPackage, state.focus, marks.map((mark) => mark.id));
+  const directMarks = selectedMarks(dataPackage, state);
+  const focus = normalizeFocus(dataPackage, state.focus, directMarks.map((mark) => mark.id));
+  const targetId = normalizeTargetId(dataPackage, state.targetId);
+  const aggregate = resolvedAggregate(dataPackage, renderer, targetId);
+  const marksById = new Map(dataPackage.marks.map((mark) => [mark.id, mark]));
+  const completeMarks = aggregate
+    ? aggregate.markIds.map((markId) => marksById.get(markId))
+    : directMarks;
+  const previewMarks = aggregate ? completeMarks.slice(0, 12) : completeMarks;
+  const completeEvidenceRefIds = evidenceReferenceIds(completeMarks);
+  const evidenceRefIds = aggregate
+    ? evidenceReferenceIds(previewMarks).slice(0, 50)
+    : completeEvidenceRefIds;
+  const projectedMarks = previewMarks.map((mark) => ({
+    id: mark.id,
+    kind: universalMarkKind(dataPackage, mark),
+    label: mark.label,
+    summary: mark.summary,
+    values: cloneJson(mark.values, "Atlas mark values"),
+  }));
   const value = {
     kind: "attend-selection",
     artifactKind: "atlas-v2",
@@ -277,25 +349,26 @@ function buildSelection(dataPackage, state) {
       rendererVersion: renderer.rendererVersion,
     },
     stateRevision: state.revision,
-    selectedMarkIds: marks.map((mark) => mark.id),
-    marks: marks.map((mark) => ({
-      id: mark.id,
-      kind: universalMarkKind(dataPackage, mark),
-      label: mark.label,
-      summary: mark.summary,
-      values: cloneJson(mark.values, "Atlas mark values"),
-    })),
-    predicate: marks.length === 0
-      ? null
-      : { field: "markId", operator: "in", values: marks.map((mark) => mark.id) },
+    selectedMarkIds: aggregate ? [] : directMarks.map((mark) => mark.id),
+    marks: projectedMarks,
+    predicate: aggregate
+      ? { kind: "visual-target", form: `${renderer.familyId}/${renderer.memberId}`, targetId }
+      : directMarks.length === 0
+        ? null
+        : { field: "markId", operator: "in", values: directMarks.map((mark) => mark.id) },
     aggregation: {
       family: dataPackage.family.id,
       rendererId: renderer.rendererId,
-      markKinds: [...new Set(marks.map((mark) => universalMarkKind(dataPackage, mark)))],
+      markKinds: [...new Set(completeMarks.map((mark) => universalMarkKind(dataPackage, mark)))],
+      ...(aggregate ? { targetKind: aggregate.target.kind, count: aggregate.count } : {}),
     },
-    evidenceRefCount: evidenceRefIds.length,
+    evidenceRefCount: completeEvidenceRefIds.length,
     evidenceRefIds,
     ...(focus ? { focus: { ...focus, label: focus.id } } : {}),
+    ...(aggregate ? {
+      target: cloneJson(aggregate.target, "Atlas aggregate target"),
+      omissionCount: Math.max(0, aggregate.count - previewMarks.length),
+    } : {}),
   };
   return { id: selectionId(value), ...value };
 }
@@ -305,7 +378,13 @@ function marksForSelection(dataPackage, selection) {
   if (!selection || typeof selection !== "object" || Array.isArray(selection)) {
     throw new TypeError("selection must be an object or null");
   }
-  const markIds = Array.isArray(selection.selectedMarkIds)
+  const targetId = selection.target?.id ?? (selection.predicate?.kind === "visual-target" ? selection.predicate.targetId : null);
+  const aggregate = targetId
+    ? resolvedAggregate(dataPackage, resolveRenderer(dataPackage), normalizeTargetId(dataPackage, targetId))
+    : null;
+  const markIds = aggregate
+    ? aggregate.markIds
+    : Array.isArray(selection.selectedMarkIds)
     ? selection.selectedMarkIds
     : Array.isArray(selection.marks)
       ? selection.marks.map((mark) => mark?.id).filter(Boolean)
@@ -375,6 +454,51 @@ function publicPackageForBrowser(dataPackage) {
   }, "Atlas browser projection");
 }
 
+/**
+ * Resolve a browser-supplied target id through the exact form projector. The
+ * package contributes only the id and recorded semantic structure; membership,
+ * count, and hash are recomputed from canonical marks before pagination.
+ */
+export async function resolveArtifactVisualTarget(value, targetId, {
+  offset = 0,
+  limit = 50,
+} = {}) {
+  const dataPackage = validatePackage(value);
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new TypeError("offset must be a non-negative integer");
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new TypeError("limit must be an integer from 1 to 100");
+  const renderer = resolveRenderer(dataPackage);
+  const form = requireExecutableForm(renderer.familyId, renderer.memberId);
+  const resolved = await resolveVisualTarget(
+    form,
+    normalizeTargetId(dataPackage, targetId),
+    canonicalObservationsFromPackage(dataPackage),
+    dataPackage.payload,
+  );
+  const markById = new Map(dataPackage.marks.map((mark) => [mark.id, mark]));
+  const pageMarkIds = resolved.markIds.slice(offset, offset + limit);
+  const pageMarks = pageMarkIds.map((markId) => markById.get(markId));
+  const evidenceRefIds = evidenceReferenceIds(pageMarks);
+  return Object.freeze({
+    target: cloneJson(resolved.target, "Atlas aggregate target"),
+    predicate: {
+      kind: "visual-target",
+      form: form.key,
+      targetId: resolved.target.id,
+    },
+    count: resolved.count,
+    membershipHash: resolved.membershipHash,
+    markIds: pageMarkIds,
+    evidenceRefIds,
+    page: {
+      offset,
+      limit,
+      returned: pageMarkIds.length,
+      nextOffset: offset + pageMarkIds.length < resolved.count ? offset + pageMarkIds.length : null,
+    },
+    omitted: Math.max(0, resolved.count - pageMarkIds.length),
+  });
+}
+
 export const atlasV2Adapter = Object.freeze({
   artifactKind: "atlas-v2",
   matches: (value) => value?.schemaVersion === 2 && value?.kind === "attend-data-package",
@@ -408,6 +532,7 @@ export const atlasV2Adapter = Object.freeze({
   clearSelectionState: (state) => {
     const next = { ...state, markIds: [] };
     delete next.focus;
+    delete next.targetId;
     return next;
   },
   listMarks,
@@ -419,8 +544,13 @@ export const atlasV2Adapter = Object.freeze({
   publicPackageForBrowser,
   deriveSelection: (dataPackage, markId, state = {}) => buildSelection(
     dataPackage,
-    { ...state, markIds: markId === null ? [] : [markId], focus: null },
+    { ...state, markIds: markId === null ? [] : [markId], focus: null, targetId: null },
   ),
+  deriveTargetSelection: (dataPackage, targetId, state = {}) => buildSelection(
+    dataPackage,
+    { ...state, markIds: [], focus: null, targetId },
+  ),
+  resolveVisualTarget: resolveArtifactVisualTarget,
   deriveEvidence: (dataPackage, selection) => ({
     evidenceRefIds: evidenceReferenceIdsForSelection(dataPackage, selection),
   }),

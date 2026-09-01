@@ -8,12 +8,12 @@ function deepFreeze(value) {
 
 export const FAMILY_BROWSER_CATALOG = deepFreeze({
   "schemaVersion": 1,
-  "catalogVersion": "3904c28aabcbc405",
+  "catalogVersion": "1f779625a35096f7",
   "counts": {
     "families": 19,
     "approved": 106,
-    "documented": 87,
-    "executable": 18,
+    "documented": 71,
+    "executable": 34,
     "unavailable": 1,
     "rejected": 38
   },
@@ -63,7 +63,7 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "What matters on this particular artifact, and exactly where?",
       "oneLine": "One primary artifact with restrained labels anchored to its native page, image, route, or time geometry.",
       "summary": "Locate evidence-linked callouts and layers on a source image, frame, page, or document.",
-      "executableMemberId": null,
+      "executableMemberIds": [],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-annotated-specimen",
@@ -643,7 +643,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "callout-overlay",
           "name": "Anchored callout overlay",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2–12 callouts on one specimen",
+          "executableQuantityBand": [],
           "status": "unavailable",
           "when": "a few observed regions need names",
           "rationale": "Short labels sit inside or just outside the artifact with hairline leaders to exact boxes or points. The label is selectable evidence, not decoration.",
@@ -705,6 +707,62 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
               "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "specimen",
+              "label",
+              "x",
+              "y"
+            ],
+            "properties": {
+              "specimen": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Stable specimen id."
+              },
+              "label": {
+                "type": "string",
+                "description": "Annotation label."
+              },
+              "x": {
+                "type": "number",
+                "description": "Normalized horizontal anchor."
+              },
+              "y": {
+                "type": "number",
+                "description": "Normalized vertical anchor."
+              },
+              "layer": {
+                "type": "string",
+                "description": "Declared annotation layer."
+              },
+              "width": {
+                "type": "number",
+                "description": "Normalized region width."
+              },
+              "height": {
+                "type": "number",
+                "description": "Normalized region height."
+              },
+              "order": {
+                "type": "number",
+                "description": "Callout order."
+              }
+            }
+          },
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -714,10 +772,7 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
               "form": [
                 "callout-overlay"
               ],
-              "interaction": [
-                "pan-zoom",
-                "selection"
-              ],
+              "interaction": [],
               "motion": [
                 "static"
               ],
@@ -731,12 +786,15 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "callout-overlay"
           },
-          "mediaPolicy": "normalized-text"
+          "mediaPolicy": "normalized-text",
+          "fixtureId": null
         },
         {
           "id": "layered-lens",
           "name": "Layered evidence lens",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2–4 layers; ≤20 anchors visible at once",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "several annotation types share one artifact",
           "rationale": "Geometry, labels, confidence, and one selected layer use distinct visual weights. All layers preserve the same base scale and coordinate frame.",
@@ -745,14 +803,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "detail-in-context",
           "name": "Detail in context",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "1–3 insets; enlargement ratio printed",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "one small region must be read closely",
           "rationale": "A magnified inset repeats the selected region at a declared scale while its locator stays visible on the whole artifact.",
@@ -761,14 +828,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "before-after",
           "name": "Unannotated / annotated pair",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "one pair; identical crop and scale",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "unguided inspection should come first",
           "rationale": "The same specimen appears twice at constant scale, first untouched and then with restrained guidance. The reader can distinguish observation from editorial emphasis.",
@@ -777,14 +853,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "time-anchored",
           "name": "Time-anchored annotation",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2–12 labelled intervals per recording",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the specimen is audio or video",
           "rationale": "Labels attach to exact time ranges on a waveform or frame strip. The transcript or clip at that interval opens directly.",
@@ -793,14 +878,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "opaque-callouts",
           "name": "Opaque callout boxes",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never over evidence",
           "rationale": "White cards and dark outlines cover the specimen and create a second panel system. Use unboxed type, a light leader, and a subtle translucent wash only when needed.",
@@ -809,14 +903,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "White cards and dark outlines cover the specimen and create a second panel system. Use unboxed type, a light leader, and a subtle translucent wash only when needed.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "numbered-key",
           "name": "Detached numbered key",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected as default",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "not when labels can fit",
           "rationale": "Numbers force repeated travel between artifact and legend and hide the meaning of the mark. Put the words at the region they describe.",
@@ -825,9 +928,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Numbers force repeated travel between artifact and legend and hide the meaning of the mark. Put the words at the region they describe.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -838,8 +948,11 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "group": "browse",
       "question": "What is here, and how can I move through it?",
       "oneLine": "A complete visual index whose units remain recognizable and return to their native records.",
-      "summary": "Navigate a complete collection through deterministic faceted atlas positions derived by the CLI.",
-      "executableMemberId": "faceted-atlas",
+      "summary": "Navigate a large text or media collection through stable two-dimensional similarity coordinates.",
+      "executableMemberIds": [
+        "contact-atlas",
+        "faceted-atlas"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-collection-atlas",
@@ -863,15 +976,22 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "roles": {
         "required": [
           {
-            "id": "label",
-            "description": "Item label.",
+            "id": "x",
+            "description": "Stable atlas x coordinate.",
             "types": [
-              "string"
+              "number"
             ]
           },
           {
-            "id": "cluster",
-            "description": "Declared cluster or facet label.",
+            "id": "y",
+            "description": "Stable atlas y coordinate.",
+            "types": [
+              "number"
+            ]
+          },
+          {
+            "id": "label",
+            "description": "Item label.",
             "types": [
               "string"
             ]
@@ -879,8 +999,22 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         ],
         "optional": [
           {
+            "id": "cluster",
+            "description": "Bounded cluster or region label.",
+            "types": [
+              "string"
+            ]
+          },
+          {
+            "id": "similarity",
+            "description": "Optional neighborhood strength.",
+            "types": [
+              "number"
+            ]
+          },
+          {
             "id": "order",
-            "description": "Optional local order within a cluster.",
+            "description": "Optional local order.",
             "types": [
               "number"
             ]
@@ -1420,7 +1554,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "image-quilt",
           "name": "Image quilt",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "100–500 images per screen; ≥32 px color, ≥96 px for personal recognition",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "visual range is the first question",
           "rationale": "Gapless, equally treated frames expose repetition and outliers. Order is declared, borders are omitted, and every picture opens its record.",
@@ -1429,74 +1565,193 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "contact-atlas",
           "name": "Contact atlas",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "12–200 frames per session",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 200,
+              "minimum": 12
+            }
+          ],
+          "status": "executable",
           "when": "capture order must remain visible",
           "rationale": "Frames follow recorded time at one scale. The sheet reveals bursts, near-duplicates, and the path to a keeper without sorting the sequence away.",
           "band": "12–200 frames per session",
           "lineage": "photographic contact sheet; Magnum practice",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
-        },
-        {
-          "id": "faceted-atlas",
-          "name": "Faceted atlas",
-          "authoredBand": "core",
-          "status": "executable",
-          "when": "one observed category partitions the set",
-          "rationale": "Separate strips for camera, kind, app, or source retain the same tile size. Facet names and counts sit directly above their objects.",
-          "band": "2–12 facets; 5–200 items each",
-          "lineage": "small multiples; Tufte, Visual Explanations, pp. 105–119",
-          "rejectionReason": null,
-          "unavailableReason": null,
           "requirements": [
             {
-              "id": "bounded-clusters",
-              "kind": "group-size",
-              "field": "cluster",
-              "minimumGroups": 2,
-              "maximumGroups": 12,
-              "minimumItems": 5,
-              "maximumItems": 200
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 200,
+              "minimum": 12
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
+              "adapterId": "local-image-set-v1",
+              "id": "one-directory",
+              "kind": "adapter-policy"
+            },
+            {
               "fields": [
+                "captureTime"
+              ],
+              "id": "capture-time",
+              "kind": "required-fields"
+            },
+            {
+              "fields": [
+                "assetId"
+              ],
+              "id": "unique-assets",
+              "kind": "unique-tuple"
+            },
+            {
+              "id": "jpeg-only",
+              "kind": "media-policy",
+              "mimeTypes": [
+                "image/jpeg"
+              ]
+            },
+            {
+              "fields": [
+                "assetId",
+                "previewRoute",
                 "label",
-                "cluster",
+                "captureTime",
+                "width",
+                "height",
+                "orientation",
+                "captureTimezone",
+                "tieDisclosure",
                 "order"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
-            },
-            {
-              "id": "derived-layout",
-              "kind": "derived-layout",
-              "fields": [
-                "x",
-                "y"
-              ],
-              "policy": "Atlas coordinates are derived deterministically from cluster and order. Requests may not supply semantic coordinates."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-collection-atlas",
-              "rendererVariantId": "contact-atlas",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "contact-atlas"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "assetId",
+              "previewRoute",
+              "label",
+              "captureTime",
+              "width",
+              "height",
+              "orientation"
+            ],
+            "properties": {
+              "assetId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Opaque staged asset identifier."
+              },
+              "previewRoute": {
+                "type": "string",
+                "description": "Relative same-origin preview route."
+              },
+              "label": {
+                "type": "string",
+                "description": "Item label."
+              },
+              "captureTime": {
+                "type": "string",
+                "description": "Camera-local DateTimeOriginal in sortable ISO form."
+              },
+              "width": {
+                "type": "number",
+                "description": "Verified JPEG width in pixels."
+              },
+              "height": {
+                "type": "number",
+                "description": "Verified JPEG height in pixels."
+              },
+              "orientation": {
+                "type": "number",
+                "description": "Verified EXIF orientation value."
+              },
+              "captureTimezone": {
+                "type": "string",
+                "description": "Capture timezone when evidenced."
+              },
+              "tieDisclosure": {
+                "type": "string",
+                "description": "Disclosure for tied camera-local timestamps."
+              },
+              "order": {
+                "type": "number",
+                "description": "Optional local order."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Any file, timestamp, path, format, size, or staged hash cannot be verified.",
+            "avoidWhen": "Items are not camera captures or need semantic clustering.",
+            "preferOver": [
+              "collection-atlas/faceted-atlas"
+            ],
+            "preferWhen": "Capture order across one verified JPEG directory must remain visible."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "local-image-set-v1"
+            ],
+            "directoryCount": 1,
+            "media": [
+              "image"
+            ]
+          },
+          "projector": {
+            "id": "attend-collection-atlas-contact-atlas-projector-v2",
+            "version": 2
+          },
+          "payload": {
+            "collection": "items",
+            "fields": [
+              "captureOrder",
+              "captureTimeDisclosure",
+              "pageSize"
+            ],
+            "kind": "attend-collection-atlas-contact-atlas-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-collection-atlas-contact-atlas-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -1504,11 +1759,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "contact-atlas",
-                "faceted-atlas"
+                "contact-atlas"
               ],
               "interaction": [
-                "pan-zoom",
                 "selection"
               ],
               "motion": [
@@ -1524,12 +1777,164 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "contact-atlas"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "verified-jpeg-session-assets-v1",
+            "maximumBytesPerAsset": 12582912,
+            "maximumItems": 200,
+            "maximumOriginalsPerPage": 8,
+            "maximumPixelsPerAsset": 16777216,
+            "maximumTotalBytes": 268435456,
+            "mimeTypes": [
+              "image/jpeg"
+            ],
+            "minimumItems": 12
+          },
+          "fixtureId": "collection-atlas/contact-atlas/fixture-v1"
+        },
+        {
+          "id": "faceted-atlas",
+          "name": "Faceted atlas",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2–12 facets; 5–200 items each",
+          "executableQuantityBand": [
+            {
+              "field": "cluster",
+              "id": "bounded-clusters",
+              "kind": "group-size",
+              "maximumGroups": 12,
+              "maximumItems": 200,
+              "minimumGroups": 2,
+              "minimumItems": 5
+            }
+          ],
+          "status": "executable",
+          "when": "one observed category partitions the set",
+          "rationale": "Separate strips for camera, kind, app, or source retain the same tile size. Facet names and counts sit directly above their objects.",
+          "band": "2–12 facets; 5–200 items each",
+          "lineage": "small multiples; Tufte, Visual Explanations, pp. 105–119",
+          "rejectionReason": null,
+          "unavailableReason": null,
+          "requirements": [
+            {
+              "field": "cluster",
+              "id": "bounded-clusters",
+              "kind": "group-size",
+              "maximumGroups": 12,
+              "maximumItems": 200,
+              "minimumGroups": 2,
+              "minimumItems": 5
+            },
+            {
+              "fields": [
+                "label",
+                "cluster",
+                "order"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-collection-atlas",
+              "rendererVariantId": "contact-atlas"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "label",
+              "cluster"
+            ],
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Item label."
+              },
+              "cluster": {
+                "type": "string",
+                "description": "Bounded cluster or region label."
+              },
+              "order": {
+                "type": "number",
+                "description": "Optional local order."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Facet labels are absent or any facet or item count falls outside the executable bounds.",
+            "avoidWhen": "Spatial neighborhoods or camera capture order are the primary organizing evidence.",
+            "preferOver": [
+              "collection-atlas/contact-atlas"
+            ],
+            "preferWhen": "Two to twelve named facets organize a collection into comparable labeled strips of five to two hundred items each."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "collection-atlas/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "items",
+            "fields": [
+              "clusters",
+              "domains"
+            ],
+            "kind": "attend-collection-atlas-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-collection-atlas-faceted-atlas-target-resolver-v1",
+            "targetKinds": []
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "faceted-atlas"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "none"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-collection-atlas",
+            "version": 1,
+            "variantId": "contact-atlas"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "collection-atlas/faceted-atlas/fixture-v1"
         },
         {
           "id": "poster-atlas",
           "name": "Poster-frame atlas",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "12–120 clips; ≥160×90 per poster",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "each item is a video or recording",
           "rationale": "One scene-boundary frame, duration, date, and app identify each clip. A selected poster opens every keyframe and timecode.",
@@ -1538,14 +1943,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "document-atlas",
           "name": "Document-page atlas",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "12–120 documents; ≥110×140 per page",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "page shape and kind support discovery",
           "rationale": "One page thumbnail per document preserves page aspect and OCR regions. It is an index only; selecting it opens readable OCR and page geometry.",
@@ -1554,14 +1968,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "similarity-field",
           "name": "Unexplained similarity field",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected for this corpus",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never without a model record",
           "rationale": "UMAP or t-SNE coordinates have no ordinary axes and can change with features, seed, and parameters. Use only as an explicitly model-derived variant with all of those recorded.",
@@ -1570,14 +1993,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "UMAP or t-SNE coordinates have no ordinary axes and can change with features, seed, and parameters. Use only as an explicitly model-derived variant with all of those recorded.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "thumbnail-treemap",
           "name": "Thumbnail treemap",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for equal-status objects",
           "rationale": "Arbitrary rectangle area and aggressive cropping imply quantity while making some items recognizable and others invisible. Use equal treatment and a declared order.",
@@ -1586,14 +2018,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Arbitrary rectangle area and aggressive cropping imply quantity while making some items recognizable and others invisible. Use equal treatment and a declared order.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "micro-tiles",
           "name": "Sub-recognition micro-tiles",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected below 32 px color or 96 px page recognition",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never as an image index",
           "rationale": "Below the recognition floor, pictures become color swatches. Aggregate or page the collection rather than claim that a texture is a browseable atlas.",
@@ -1602,9 +2043,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Below the recognition floor, pictures become color swatches. Aggregate or page the collection rather than claim that a texture is a browseable atlas.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -1616,7 +2064,10 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "What makes up this whole, and how stable are its shares?",
       "oneLine": "Parts measured against an explicit total, with every denominator printed.",
       "summary": "Compare how a total is divided into named parts.",
-      "executableMemberId": "hundred-bar",
+      "executableMemberIds": [
+        "part-list",
+        "hundred-bar"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-composition",
@@ -1955,23 +2406,197 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "part-list",
           "name": "Part-to-whole bar list",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2-30 parts",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 30,
+              "minimum": 2
+            },
+            {
+              "field": "whole",
+              "id": "one-whole",
+              "kind": "distinct-count",
+              "maximum": 1,
+              "minimum": 1
+            }
+          ],
+          "status": "executable",
           "when": "exact shares are primary",
           "rationale": "Each part gets a zero-based bar, its value, its share, and the total in the heading. This is the clearest default.",
           "band": "2-30 parts",
           "lineage": "Playfair's bars, 1786; Cleveland's position and length judgments, 1984",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 30,
+              "minimum": 2
+            },
+            {
+              "fields": [
+                "whole"
+              ],
+              "id": "named-whole",
+              "kind": "required-fields"
+            },
+            {
+              "field": "whole",
+              "id": "one-whole",
+              "kind": "distinct-count",
+              "maximum": 1,
+              "minimum": 1
+            },
+            {
+              "fields": [
+                "part"
+              ],
+              "id": "unique-parts",
+              "kind": "unique-tuple"
+            },
+            {
+              "field": "value",
+              "id": "nonnegative-parts",
+              "kind": "numeric-range",
+              "minimum": 0
+            },
+            {
+              "exclusiveMinimum": 0,
+              "field": "value",
+              "id": "positive-total",
+              "kind": "numeric-aggregate",
+              "operation": "sum"
+            },
+            {
+              "fields": [
+                "part",
+                "value",
+                "whole"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-composition",
+              "rendererVariantId": "part-list"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "part",
+              "value",
+              "whole"
+            ],
+            "properties": {
+              "part": {
+                "type": "string",
+                "description": "Named part."
+              },
+              "value": {
+                "type": "number",
+                "description": "Non-negative part magnitude."
+              },
+              "whole": {
+                "type": "string",
+                "description": "Named whole or comparison group."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Parts are negative, duplicated, or do not form one positive whole.",
+            "avoidWhen": "Many wholes must be compared.",
+            "preferOver": [
+              "composition/hundred-bar"
+            ],
+            "preferWhen": "Exact values and shares of one named whole must be read."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-composition-part-list-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "parts",
+            "fields": [
+              "total",
+              "whole"
+            ],
+            "kind": "attend-composition-part-list-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-composition-part-list-target-resolver-v1",
+            "targetKinds": []
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "part-list"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "cartesian"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-composition",
+            "version": 1,
+            "variantId": "part-list"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "composition/part-list/fixture-v1"
         },
         {
           "id": "hundred-bar",
           "name": "100% bar",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2-6 parts",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 6,
+              "minimum": 2
+            },
+            {
+              "field": "whole",
+              "id": "one-whole",
+              "kind": "distinct-count",
+              "maximum": 1,
+              "minimum": 1
+            }
+          ],
           "status": "executable",
           "when": "one compact whole",
           "rationale": "A single linear whole works when there are few, well-labelled parts. Labels sit on or beside segments; no legend is needed.",
@@ -1983,61 +2608,117 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "record-count",
               "kind": "record-count",
-              "minimum": 2,
-              "maximum": 6
+              "maximum": 6,
+              "minimum": 2
             },
             {
-              "id": "named-whole",
-              "kind": "required-fields",
               "fields": [
                 "whole"
-              ]
+              ],
+              "id": "named-whole",
+              "kind": "required-fields"
             },
             {
+              "field": "whole",
               "id": "one-whole",
               "kind": "distinct-count",
-              "field": "whole",
-              "minimum": 1,
-              "maximum": 1
+              "maximum": 1,
+              "minimum": 1
             },
             {
-              "id": "unique-parts",
-              "kind": "unique-tuple",
               "fields": [
                 "part"
-              ]
+              ],
+              "id": "unique-parts",
+              "kind": "unique-tuple"
             },
             {
+              "field": "value",
               "id": "nonnegative-parts",
               "kind": "numeric-range",
-              "field": "value",
               "minimum": 0
             },
             {
+              "exclusiveMinimum": 0,
+              "field": "value",
               "id": "positive-total",
               "kind": "numeric-aggregate",
-              "field": "value",
-              "operation": "sum",
-              "exclusiveMinimum": 0
+              "operation": "sum"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "part",
                 "value",
                 "whole"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-composition",
-              "rendererVariantId": "normalized-parts",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "normalized-parts"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "part",
+              "value"
+            ],
+            "properties": {
+              "part": {
+                "type": "string",
+                "description": "Named part."
+              },
+              "value": {
+                "type": "number",
+                "description": "Non-negative part magnitude."
+              },
+              "whole": {
+                "type": "string",
+                "description": "Named whole or comparison group."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Parts are duplicated, negative, span multiple wholes, or sum to zero.",
+            "avoidWhen": "Exact part values or more than one whole are the primary lookup task.",
+            "preferOver": [
+              "composition/part-list"
+            ],
+            "preferWhen": "The proportional composition of one named whole can be read from two to six parts."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "composition/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "parts",
+            "fields": [
+              "totals"
+            ],
+            "kind": "attend-composition-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-composition-hundred-bar-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -2045,8 +2726,7 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "hundred-bar",
-                "normalized-parts"
+                "hundred-bar"
               ],
               "interaction": [
                 "selection"
@@ -2064,12 +2744,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "normalized-parts"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "composition/hundred-bar/fixture-v1"
         },
         {
           "id": "small-multiples",
           "name": "100% small multiples",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2-12 wholes, 2-6 parts",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "several comparable wholes",
           "rationale": "One part order and one 0-100% frame make shifts in balance visible across periods or groups.",
@@ -2078,14 +2763,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "composition-table",
           "name": "Composition table",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "8-100 parts",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "parts are numerous",
           "rationale": "Counts, shares, and a compact bar sit in aligned columns. The table scrolls instead of dropping the tail.",
@@ -2094,14 +2788,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "mosaic",
           "name": "Mosaic",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2-5 by 2-5 cells",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "two categorical partitions cross",
           "rationale": "Area represents joint count only after row and column margins are shown. Every rectangle states both categories.",
@@ -2110,14 +2813,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "marimekko",
           "name": "Marimekko",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2-8 wholes, 2-5 parts",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "wholes differ in size and share",
           "rationale": "Column width carries each whole's absolute total while height carries its internal share. Use only when both readings are asked for.",
@@ -2126,14 +2838,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "pie",
           "name": "Pie or donut",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never as the compiler default",
           "rationale": "Angles lack a common baseline, interior labels fail quickly, and a donut removes the one useful reference point. Use a linear whole.",
@@ -2142,9 +2863,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Angles lack a common baseline, interior labels fail quickly, and a donut removes the one useful reference point. Use a linear whole.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -2156,7 +2884,11 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "What is typical, how much does it vary, and what is unusual?",
       "oneLine": "Every observed value, or an honest count of values, arranged to reveal shape.",
       "summary": "Show the shape, spread, gaps, and outliers of one measure.",
-      "executableMemberId": "strip",
+      "executableMemberIds": [
+        "strip",
+        "histogram",
+        "ecdf"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-distribution",
@@ -2507,7 +3239,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "strip",
           "name": "Strip or rug plot",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5–400 observations",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 400,
+              "minimum": 5
+            }
+          ],
           "status": "executable",
           "when": "the observations still fit",
           "rationale": "One tick or dot per value. Nothing is summarized away; stacking or a small deterministic jitter separates ties. Exact observations remain selectable.",
@@ -2519,28 +3260,89 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "record-count",
               "kind": "record-count",
-              "minimum": 5,
-              "maximum": 400
+              "maximum": 400,
+              "minimum": 5
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "value",
                 "label",
                 "group",
                 "weight"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-distribution",
-              "rendererVariantId": "strip",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "strip"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "number",
+                "description": "Observed numeric value."
+              },
+              "label": {
+                "type": "string",
+                "description": "Observation label."
+              },
+              "group": {
+                "type": "string",
+                "description": "Comparison group."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Explicit observation weight."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "There are fewer than five or more than four hundred evidenced observations.",
+            "avoidWhen": "The question is about interval counts, percentiles, or threshold shares in a large sample.",
+            "preferOver": [
+              "distribution/histogram",
+              "distribution/ecdf"
+            ],
+            "preferWhen": "Exact observations, pileups, gaps, and outliers should remain individually visible."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "distribution/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "observations",
+            "fields": [
+              "groups",
+              "valueExtent"
+            ],
+            "kind": "attend-distribution-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-distribution-strip-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -2566,44 +3368,310 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "strip"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "distribution/strip/fixture-v1"
         },
         {
           "id": "histogram",
           "name": "Histogram",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "50–100,000 observations; usually 8–40 bins",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 50000,
+              "minimum": 50
+            }
+          ],
+          "status": "executable",
           "when": "marks collide and counts by interval matter",
           "rationale": "Adjacent bars count observations in declared equal-width bins. The baseline is zero, boundaries are printed, and one alternate binning is checked before publication.",
           "band": "50–100,000 observations; usually 8–40 bins",
           "lineage": "Pearson, 1895; Tufte redesign, VDQI, pp. 126–129",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 50000,
+              "minimum": 50
+            },
+            {
+              "fields": [
+                "weight"
+              ],
+              "id": "unweighted",
+              "kind": "absent-fields"
+            },
+            {
+              "fields": [
+                "value",
+                "label",
+                "group",
+                "weight"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-distribution",
+              "rendererVariantId": "histogram"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "number",
+                "description": "Observed numeric value."
+              },
+              "label": {
+                "type": "string",
+                "description": "Observation label."
+              },
+              "group": {
+                "type": "string",
+                "description": "Comparison group."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Explicit observation weight."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "There are fewer than 50 unweighted observations.",
+            "avoidWhen": "Threshold shares or exact observed values matter more than bins.",
+            "preferOver": [
+              "distribution/strip"
+            ],
+            "preferWhen": "Counts by interval and distribution shape matter."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-distribution-histogram-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "observations",
+            "fields": [
+              "binning",
+              "bins",
+              "valueExtent",
+              "visualTargets"
+            ],
+            "kind": "attend-distribution-histogram-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct-and-aggregate",
+            "resolver": "attend-distribution-histogram-target-resolver-v1",
+            "targetKinds": [
+              "histogram-bin"
+            ]
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "histogram"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "cartesian"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-distribution",
+            "version": 1,
+            "variantId": "histogram"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "distribution/histogram/fixture-v1"
         },
         {
           "id": "ecdf",
           "name": "Empirical cumulative distribution",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "20–1,000,000 observations",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 50000,
+              "minimum": 20
+            }
+          ],
+          "status": "executable",
           "when": "percentiles or thresholds are the question",
           "rationale": "Every observation advances a step by exactly 1/n. No bins and no smoothing; any x answers ‘what share is at or below this value?’",
           "band": "20–1,000,000 observations",
           "lineage": "Empirical distribution function; Tukey's exploratory tradition",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 50000,
+              "minimum": 20
+            },
+            {
+              "fields": [
+                "weight"
+              ],
+              "id": "unweighted",
+              "kind": "absent-fields"
+            },
+            {
+              "fields": [
+                "value",
+                "label",
+                "group",
+                "weight"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-distribution",
+              "rendererVariantId": "ecdf"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "number",
+                "description": "Observed numeric value."
+              },
+              "label": {
+                "type": "string",
+                "description": "Observation label."
+              },
+              "group": {
+                "type": "string",
+                "description": "Comparison group."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Explicit observation weight."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Observations are weighted or fewer than 20.",
+            "avoidWhen": "Interval counts are the question.",
+            "preferOver": [
+              "distribution/histogram"
+            ],
+            "preferWhen": "Percentiles or the share at or below a threshold matter."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-distribution-ecdf-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "observations",
+            "fields": [
+              "steps",
+              "valueExtent",
+              "visualTargets"
+            ],
+            "kind": "attend-distribution-ecdf-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct-and-aggregate",
+            "resolver": "attend-distribution-ecdf-target-resolver-v1",
+            "targetKinds": [
+              "ecdf-threshold"
+            ]
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "ecdf"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "cartesian"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-distribution",
+            "version": 1,
+            "variantId": "ecdf"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "distribution/ecdf/fixture-v1"
         },
         {
           "id": "quartile",
           "name": "Quartile plot",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "≥20 observations per group; 2–80 groups",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "many groups need compact comparison",
           "rationale": "Five values in a few hairlines: minimum, lower quartile, median, upper quartile, maximum. Tufte's erased box plot spends ink on the summary itself.",
@@ -2612,14 +3680,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "small-multiple",
           "name": "Shared-scale distribution multiples",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2–30 groups within one eyespan",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the distribution must be compared across groups",
           "rationale": "The same strip, histogram, or ECDF repeated with identical scales and boundaries. Data changes; the frame does not.",
@@ -2628,14 +3705,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "quantile-dots",
           "name": "Quantile dot plot",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "20–100 dots",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the distribution represents uncertainty",
           "rationale": "Twenty or fifty equally weighted dots make probability countable: five of twenty means one chance in four. Better decisions than a density silhouette when readers need thresholds.",
@@ -2644,14 +3730,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "stem-leaf",
           "name": "Stem-and-leaf",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "20–300 rounded values",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "exact values and shape must coexist",
           "rationale": "The digits are both records and histogram marks. It preserves every value while revealing the distribution's silhouette.",
@@ -2660,14 +3755,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "beeswarm",
           "name": "Beeswarm",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "20–2,000 observations",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "individual identity matters and ties are dense",
           "rationale": "Dots move only perpendicular to the measured axis, so their x-position stays exact. Use sparingly: collision packing adds visual motion but no second variable.",
@@ -2676,14 +3780,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "letter-value",
           "name": "Letter-value plot",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "≥1,000 observations",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "tails matter and the sample is large",
           "rationale": "Nested quantile intervals continue beyond the quartiles, showing tail depth without a kernel. Each layer has an explicit probability mass.",
@@ -2692,14 +3805,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "violin",
           "name": "Violin plot",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected as the default",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "not by default",
           "rationale": "A kernel, bandwidth, mirrored silhouette, and area judgment intervene between observations and reader. If used for a very large sample, print the bandwidth and overlay observations or quantiles.",
@@ -2708,14 +3830,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "A kernel, bandwidth, mirrored silhouette, and area judgment intervene between observations and reader. If used for a very large sample, print the bandwidth and overlay observations or quantiles.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "radial",
           "name": "Radial histogram",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "—",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for an ordinary distribution",
           "rationale": "Equal counts occupy unequal outer areas, baselines curve, and bins near twelve o'clock appear related. The circle adds no meaning unless the variable itself is cyclic.",
@@ -2724,9 +3855,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Equal counts occupy unequal outer areas, baselines curve, and bins near twelve o'clock appear related. The circle adds no meaning unless the variable itself is cyclic.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -2738,7 +3876,10 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "How does a measured quantity vary across two dimensions?",
       "oneLine": "Samples, calibrated cells, contours, or vectors showing a continuous two-dimensional phenomenon.",
       "summary": "Show a continuous or sampled value across constructed or physical space.",
-      "executableMemberId": "sample-raster",
+      "executableMemberIds": [
+        "sample-raster",
+        "contours"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-field",
@@ -3195,7 +4336,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "sample-raster",
           "name": "Sample raster",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "20–250,000 cells; ≥2 px per visible cell",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 2500,
+              "minimum": 20
+            }
+          ],
           "status": "executable",
           "when": "cells are directly observed",
           "rationale": "Each fixed cell shows a measured count or value; unobserved cells stay blank. Cell dimensions and the full value range are printed.",
@@ -3207,20 +4357,18 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "record-count",
               "kind": "record-count",
-              "minimum": 20,
-              "maximum": 250000
+              "maximum": 2500,
+              "minimum": 20
             },
             {
-              "id": "unique-samples",
-              "kind": "unique-tuple",
               "fields": [
                 "x",
                 "y"
-              ]
+              ],
+              "id": "unique-samples",
+              "kind": "unique-tuple"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "x",
                 "y",
@@ -3228,16 +4376,83 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "label",
                 "uncertainty"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-field",
-              "rendererVariantId": "sample-raster",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "sample-raster"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "x",
+              "y",
+              "value"
+            ],
+            "properties": {
+              "x": {
+                "type": "number",
+                "description": "Horizontal coordinate."
+              },
+              "y": {
+                "type": "number",
+                "description": "Vertical coordinate."
+              },
+              "value": {
+                "type": "number",
+                "description": "Observed field value."
+              },
+              "label": {
+                "type": "string",
+                "description": "Sample label."
+              },
+              "uncertainty": {
+                "type": "number",
+                "description": "Measurement or interpolation uncertainty."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Sample coordinates repeat or the field falls outside twenty to 2,500 observations.",
+            "avoidWhen": "Threshold topology is the question or interpolation would be mistaken for observation.",
+            "preferOver": [
+              "field/contours"
+            ],
+            "preferWhen": "Observed samples on stable x/y coordinates should remain visible as a bounded value field."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "field/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "samples",
+            "fields": [
+              "domains"
+            ],
+            "kind": "attend-field-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-field-sample-raster-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -3263,28 +4478,178 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "sample-raster"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "field/sample-raster/fixture-v1"
         },
         {
           "id": "contours",
           "name": "Contour field",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5–20 contour levels; samples dense relative to interval",
+          "executableQuantityBand": [
+            {
+              "id": "sample-count",
+              "kind": "record-count",
+              "maximum": 50000,
+              "minimum": 100
+            }
+          ],
+          "status": "executable",
           "when": "levels, ridges, or thresholds matter",
           "rationale": "Lines connect equal estimated values at declared intervals. Sample points remain visible so a contour cannot masquerade as direct measurement.",
           "band": "5–20 contour levels; samples dense relative to interval",
           "lineage": "Halley, 1701; Humboldt and Berghaus, nineteenth century",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "sample-count",
+              "kind": "record-count",
+              "maximum": 50000,
+              "minimum": 100
+            },
+            {
+              "id": "regular-grid",
+              "kind": "regular-grid",
+              "maximumSamples": 50000,
+              "minimumHeight": 10,
+              "minimumWidth": 10,
+              "xField": "x",
+              "yField": "y"
+            },
+            {
+              "field": "value",
+              "id": "nonconstant-field",
+              "kind": "nonconstant"
+            },
+            {
+              "fields": [
+                "x",
+                "y",
+                "value",
+                "label",
+                "uncertainty"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-field",
+              "rendererVariantId": "contours"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "x",
+              "y",
+              "value"
+            ],
+            "properties": {
+              "x": {
+                "type": "number",
+                "description": "Horizontal coordinate."
+              },
+              "y": {
+                "type": "number",
+                "description": "Vertical coordinate."
+              },
+              "value": {
+                "type": "number",
+                "description": "Observed field value."
+              },
+              "label": {
+                "type": "string",
+                "description": "Sample label."
+              },
+              "uncertainty": {
+                "type": "number",
+                "description": "Measurement or interpolation uncertainty."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Samples are irregular, incomplete, constant, or outside grid limits.",
+            "avoidWhen": "Individual sample values or uncertainty dominate.",
+            "preferOver": [
+              "field/sample-raster"
+            ],
+            "preferWhen": "Threshold topology in a complete regular field matters."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-field-contours-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "cells",
+            "fields": [
+              "domains",
+              "levels",
+              "thresholds",
+              "visualTargets"
+            ],
+            "kind": "attend-field-contours-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct-and-aggregate",
+            "resolver": "attend-field-contours-target-resolver-v1",
+            "targetKinds": [
+              "contour-level"
+            ]
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "contours"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "cartesian"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-field",
+            "version": 1,
+            "variantId": "contours"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "field/contours/fixture-v1"
         },
         {
           "id": "density",
           "name": "Kernel density field",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "200–1,000,000 points; bandwidth tested at ≥2 values",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "point concentration is the phenomenon",
           "rationale": "A fixed bandwidth turns events into a records-per-area estimate. The bandwidth, denominator, and edge limitations are written on the figure.",
@@ -3293,14 +4658,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "vectors",
           "name": "Vector field",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "20–2,000 vectors; thin before sampling",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "magnitude and direction are measured",
           "rationale": "Short strokes point with the local direction and scale modestly with magnitude. Orientation, length, and position all come from observed path tangents.",
@@ -3309,14 +4683,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "field-multiples",
           "name": "Shared-scale field multiples",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2–12 panels",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "one surface repeats by period or source",
           "rationale": "Domain, raster, bandwidth, and value scale remain fixed. Small panels expose change and sensitivity without animation.",
@@ -3325,14 +4708,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "rainbow",
           "name": "Rainbow heatmap",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for ordered magnitude",
           "rationale": "Hue creates false boundaries and an arbitrary middle. A lightness-ordered ramp or a diverging ramp around a real critical value is easier to order.",
@@ -3341,14 +4733,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Hue creates false boundaries and an arbitrary middle. A lightness-ordered ramp or a diverging ramp around a real critical value is easier to order.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "unsupported-surface",
           "name": "Unsupported smooth surface",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never",
           "rationale": "A smooth interpolation over sparse samples makes confidence look uniform. Keep sampled cells, gaps, and uncertainty visible instead.",
@@ -3357,14 +4758,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "A smooth interpolation over sparse samples makes confidence look uniform. Keep sampled cells, gaps, and uncertainty visible instead.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "region-blur",
           "name": "Blurred choropleth",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never",
           "rationale": "Smoothing values that belong to regions destroys their actual support and creates gradients across borders. Retain the bounded region map.",
@@ -3373,9 +4783,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Smoothing values that belong to regions destroys their actual support and creates gradients across borders. Retain the bounded region map.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -3387,7 +4804,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "How does one additive quantity move between stages or places?",
       "oneLine": "A conserved count or amount, with band width proportional to what passes between named stages.",
       "summary": "Trace quantities moving between stages, states, or categories.",
-      "executableMemberId": "sankey",
+      "executableMemberIds": [
+        "sankey"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-flow",
@@ -3757,7 +5176,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "sankey",
           "name": "Sankey diagram",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2 to 5 stages; up to 30 nodes",
+          "executableQuantityBand": [],
           "status": "executable",
           "when": "the default for measured stages",
           "rationale": "Band width is the amount passed between named nodes; node totals and the source total reconcile.",
@@ -3767,25 +5188,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "unavailableReason": null,
           "requirements": [
             {
+              "acyclic": true,
+              "allowDuplicateEdges": false,
+              "allowSelfEdges": false,
+              "conservationGaps": "derive-and-render",
               "id": "bounded-directed-flow",
               "kind": "directed-flow",
-              "sourceField": "source",
-              "targetField": "target",
-              "valueField": "value",
-              "minimumValue": 0,
-              "minimumStages": 2,
-              "maximumStages": 5,
               "maximumNodes": 30,
+              "maximumStages": 5,
+              "minimumStages": 2,
+              "minimumValue": 0,
+              "sourceField": "source",
               "stageDerivation": "topological-depth",
               "stageFieldPolicy": "evidenced-link-label-only",
-              "conservationGaps": "derive-and-render",
-              "allowSelfEdges": false,
-              "allowDuplicateEdges": false,
-              "acyclic": true
+              "targetField": "target",
+              "valueField": "value"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "source",
                 "target",
@@ -3793,16 +5212,85 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "stage",
                 "label"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-flow",
-              "rendererVariantId": "sankey",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "sankey"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source",
+              "target",
+              "value"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "description": "Origin node or state."
+              },
+              "target": {
+                "type": "string",
+                "description": "Destination node or state."
+              },
+              "value": {
+                "type": "number",
+                "description": "Non-negative flow magnitude."
+              },
+              "stage": {
+                "type": "string",
+                "description": "Declared stage or interval."
+              },
+              "label": {
+                "type": "string",
+                "description": "Flow label."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Links are negative, duplicated, cyclic, self-directed, or exceed the node and stage limits.",
+            "avoidWhen": "Relations have no additive magnitude or cycles are essential to the mechanism.",
+            "preferOver": [
+              "mechanism/flowchart"
+            ],
+            "preferWhen": "Non-negative quantities move through an evidenced acyclic system of two to five stages."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "flow/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "links",
+            "fields": [
+              "nodes",
+              "stages",
+              "totalFlow"
+            ],
+            "kind": "attend-flow-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-flow-sankey-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -3828,12 +5316,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "sankey"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "flow/sankey/fixture-v1"
         },
         {
           "id": "parallel",
           "name": "Parallel sets",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2 to 5 axes; up to 12 categories per axis",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "rows change categorical membership",
           "rationale": "Each record follows one band through aligned categorical axes. Width counts records at every stage.",
@@ -3842,14 +5335,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "alluvial",
           "name": "Alluvial diagram",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2 to 8 states; up to 12 groups per state",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the same populations split across ordered states",
           "rationale": "Blocks and streams show how membership redistributes while keeping each period's total explicit.",
@@ -3858,14 +5360,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "chord",
           "name": "Bounded chord flow",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "3 to 10 entities",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "pairwise two-way flows among a few entities",
           "rationale": "A circular arrangement can show reciprocal transitions when no natural left-to-right stage exists. Every entity is labelled.",
@@ -3874,14 +5385,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "flow-map",
           "name": "Geographic flow",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2 to 30 routes",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "origin and destination geography matter",
           "rationale": "Bands join real places on one projection; width carries the additive amount and endpoints are named.",
@@ -3890,14 +5410,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "funnel",
           "name": "Funnel chart",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never without explicit destinations",
           "rationale": "Centered trapezoids imply a continuous pipe while hiding where missing records went.",
@@ -3906,14 +5435,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Centered trapezoids imply a continuous pipe while hiding where missing records went.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "stream",
           "name": "Decorative streamgraph",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for staged accounting",
           "rationale": "A shifting baseline makes thickness hard to compare and surrounding layers move when one layer changes.",
@@ -3922,9 +5460,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "A shifting baseline makes thickness hard to compare and surrounding layers move when one layer changes.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -3936,7 +5481,12 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "What contains what, and how do I reach a leaf?",
       "oneLine": "Containment and descent, with paths readable from root to leaf.",
       "summary": "Navigate explicit parent–child structure and relative magnitude.",
-      "executableMemberId": "tidy",
+      "executableMemberIds": [
+        "outline",
+        "tidy",
+        "icicle",
+        "treemap"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-hierarchy",
@@ -4420,23 +5970,192 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "outline",
           "name": "Indented outline",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5 to 5,000 nodes in a scrolling column",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 5000,
+              "minimum": 5
+            }
+          ],
+          "status": "executable",
           "when": "names and paths come first",
           "rationale": "Indentation states depth; reading order follows the source; long names remain horizontal.",
           "band": "5 to 5,000 nodes in a scrolling column",
           "lineage": "printed outlines and file browsers",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 5000,
+              "minimum": 5
+            },
+            {
+              "id": "one-rooted-tree",
+              "idField": "id",
+              "kind": "hierarchy-tree",
+              "parentField": "parentId",
+              "rootCount": 1
+            },
+            {
+              "fields": [
+                "parentId",
+                "order"
+              ],
+              "id": "evidenced-sibling-order",
+              "kind": "unique-tuple"
+            },
+            {
+              "fields": [
+                "id",
+                "label",
+                "order",
+                "parentId",
+                "value"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-hierarchy",
+              "rendererVariantId": "outline"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "order"
+            ],
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Stable node id."
+              },
+              "label": {
+                "type": "string",
+                "description": "Node label."
+              },
+              "order": {
+                "type": "number",
+                "description": "order value."
+              },
+              "parentId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Parent node id; absent for roots."
+              },
+              "value": {
+                "type": "number",
+                "description": "Optional node magnitude."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "The source does not evidence one rooted tree and sibling order.",
+            "avoidWhen": "Area comparisons dominate lookup.",
+            "preferOver": [
+              "hierarchy/tidy"
+            ],
+            "preferWhen": "Names, paths, source order, and scrolling lookup matter."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-hierarchy-outline-projector",
+            "orderPolicy": "evidenced-sibling-order-preorder",
+            "version": 1
+          },
+          "payload": {
+            "collection": "nodes",
+            "fields": [
+              "maximumDepth",
+              "rootIds",
+              "visualTargets"
+            ],
+            "kind": "attend-hierarchy-outline-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct-and-aggregate",
+            "resolver": "attend-hierarchy-outline-target-resolver-v1",
+            "targetKinds": [
+              "hierarchy-branch"
+            ]
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "outline"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "none"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-hierarchy",
+            "version": 1,
+            "variantId": "outline"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "hierarchy/outline/fixture-v1"
         },
         {
           "id": "tidy",
           "name": "Tidy node-link tree",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5 to 500 nodes",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 500,
+              "minimum": 5
+            }
+          ],
           "status": "executable",
           "when": "branch shape and paths matter",
           "rationale": "Parents sit above children with deterministic spacing and direct labels at leaves.",
@@ -4448,35 +6167,112 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "record-count",
               "kind": "record-count",
-              "minimum": 5,
-              "maximum": 500
+              "maximum": 500,
+              "minimum": 5
             },
             {
               "id": "one-rooted-tree",
-              "kind": "hierarchy-tree",
               "idField": "id",
+              "kind": "hierarchy-tree",
               "parentField": "parentId",
               "rootCount": 1
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "id",
                 "label",
                 "parentId",
                 "value"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-hierarchy",
-              "rendererVariantId": "node-tree",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "node-tree"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Stable node id."
+              },
+              "label": {
+                "type": "string",
+                "description": "Node label."
+              },
+              "parentId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Parent node id; absent for roots."
+              },
+              "value": {
+                "type": "number",
+                "description": "Optional node magnitude."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "The records do not form one acyclic rooted tree of five to five hundred nodes.",
+            "avoidWhen": "Names require scrolling lookup or branch totals should control area.",
+            "preferOver": [
+              "hierarchy/outline",
+              "hierarchy/icicle",
+              "hierarchy/treemap"
+            ],
+            "preferWhen": "Parent-child topology and depth in a compact rooted tree matter more than additive size."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "hierarchy/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "nodes",
+            "fields": [
+              "maximumDepth",
+              "rootIds"
+            ],
+            "kind": "attend-hierarchy-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-hierarchy-tidy-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -4484,7 +6280,6 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "node-tree",
                 "tidy"
               ],
               "interaction": [
@@ -4503,44 +6298,363 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "node-tree"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "hierarchy/tidy/fixture-v1"
         },
         {
           "id": "icicle",
           "name": "Icicle partition",
-          "authoredBand": "variant",
-          "status": "documented",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2 to 5 levels; up to 300 nodes",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 300,
+              "minimum": 5
+            }
+          ],
+          "status": "executable",
           "when": "depth and additive size both matter",
           "rationale": "Aligned rectangles show depth by rows and leaf size by width. Labels stay horizontal.",
           "band": "2 to 5 levels; up to 300 nodes",
           "lineage": "Kruskal and Landwehr, 1983",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 300,
+              "minimum": 5
+            },
+            {
+              "id": "one-rooted-tree",
+              "idField": "id",
+              "kind": "hierarchy-tree",
+              "parentField": "parentId",
+              "rootCount": 1
+            },
+            {
+              "id": "tree-depth",
+              "kind": "hierarchy-depth",
+              "maximum": 5,
+              "minimum": 2
+            },
+            {
+              "id": "additive-leaf-values",
+              "kind": "hierarchy-leaf-values",
+              "positive": true
+            },
+            {
+              "fields": [
+                "id",
+                "label",
+                "parentId",
+                "value"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-hierarchy",
+              "rendererVariantId": "icicle"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Stable node id."
+              },
+              "label": {
+                "type": "string",
+                "description": "Node label."
+              },
+              "parentId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Parent node id; absent for roots."
+              },
+              "value": {
+                "type": "number",
+                "description": "Optional node magnitude."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Depth exceeds five or leaf values are not positive and additive.",
+            "avoidWhen": "Lookup dominates size comparison.",
+            "preferOver": [
+              "hierarchy/tidy"
+            ],
+            "preferWhen": "Depth and additive size both matter."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-hierarchy-icicle-projector",
+            "orderPolicy": "derived-total-descending-then-id",
+            "version": 1
+          },
+          "payload": {
+            "collection": "nodes",
+            "fields": [
+              "maximumDepth",
+              "rootIds",
+              "visualTargets"
+            ],
+            "kind": "attend-hierarchy-icicle-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct-and-aggregate",
+            "resolver": "attend-hierarchy-icicle-target-resolver-v1",
+            "targetKinds": [
+              "hierarchy-branch"
+            ]
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "icicle"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "none"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-hierarchy",
+            "version": 1,
+            "variantId": "icicle"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "hierarchy/icicle/fixture-v1"
         },
         {
           "id": "treemap",
           "name": "Treemap",
-          "authoredBand": "variant",
-          "status": "documented",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2 to 3 levels; up to 1,000 leaves",
+          "executableQuantityBand": [
+            {
+              "id": "leaf-count",
+              "kind": "hierarchy-leaf-count",
+              "maximum": 1000,
+              "minimum": 2
+            }
+          ],
+          "status": "executable",
           "when": "space is tight and branch totals dominate",
           "rationale": "Containment and leaf size fill a fixed rectangle. Exact values must be printed or opened.",
           "band": "2 to 3 levels; up to 1,000 leaves",
           "lineage": "Shneiderman, 1991",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "one-rooted-tree",
+              "idField": "id",
+              "kind": "hierarchy-tree",
+              "parentField": "parentId",
+              "rootCount": 1
+            },
+            {
+              "id": "tree-depth",
+              "kind": "hierarchy-depth",
+              "maximum": 3,
+              "minimum": 2
+            },
+            {
+              "id": "leaf-count",
+              "kind": "hierarchy-leaf-count",
+              "maximum": 1000,
+              "minimum": 2
+            },
+            {
+              "id": "positive-additive-leaves",
+              "kind": "hierarchy-leaf-values",
+              "positive": true
+            },
+            {
+              "fields": [
+                "id",
+                "label",
+                "parentId",
+                "value"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-hierarchy",
+              "rendererVariantId": "treemap"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Stable node id."
+              },
+              "label": {
+                "type": "string",
+                "description": "Node label."
+              },
+              "parentId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Parent node id; absent for roots."
+              },
+              "value": {
+                "type": "number",
+                "description": "Optional node magnitude."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Depth is outside 2–3 or values are not positive additive leaves.",
+            "avoidWhen": "Precise depth or paths matter.",
+            "preferOver": [
+              "hierarchy/icicle"
+            ],
+            "preferWhen": "Branch totals dominate depth lookup."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-hierarchy-treemap-projector",
+            "orderPolicy": "derived-total-descending-then-id",
+            "version": 1
+          },
+          "payload": {
+            "collection": "nodes",
+            "fields": [
+              "maximumDepth",
+              "rootIds",
+              "visualTargets"
+            ],
+            "kind": "attend-hierarchy-treemap-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct-and-aggregate",
+            "resolver": "attend-hierarchy-treemap-target-resolver-v1",
+            "targetKinds": [
+              "hierarchy-branch"
+            ]
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "treemap"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "none"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-hierarchy",
+            "version": 1,
+            "variantId": "treemap"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "hierarchy/treemap/fixture-v1"
         },
         {
           "id": "sunburst",
           "name": "Sunburst",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never as the default hierarchy",
           "rationale": "Outer cells change area with radius, labels rotate, and paths are harder to trace than in an icicle.",
@@ -4549,14 +6663,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Outer cells change area with radius, labels rotate, and paths are harder to trace than in an icicle.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "circles",
           "name": "Circle packing",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for measured branch size",
           "rationale": "Packing wastes space and asks the reader to compare circle areas without a common scale.",
@@ -4565,14 +6688,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Packing wastes space and asks the reader to compare circle areas without a common scale.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "mind-map",
           "name": "Mind map",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for recorded containment",
           "rationale": "Free placement and decorative branches do not preserve a checkable parent relation.",
@@ -4581,9 +6713,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Free placement and decorative branches do not preserve a checkable parent relation.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -4595,7 +6734,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "Which row and column pairs are strong, weak, or absent?",
       "oneLine": "Two categorical axes, one value per pair, reordered until the blocks become legible.",
       "summary": "Compare values at the intersections of two categorical dimensions.",
-      "executableMemberId": "heatmap",
+      "executableMemberIds": [
+        "heatmap"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-matrix",
@@ -5032,7 +7173,24 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "heatmap",
           "name": "Categorical heatmap",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2 to 50 rows by 2 to 100 columns",
+          "executableQuantityBand": [
+            {
+              "field": "row",
+              "id": "row-count",
+              "kind": "distinct-count",
+              "maximum": 50,
+              "minimum": 2
+            },
+            {
+              "field": "column",
+              "id": "column-count",
+              "kind": "distinct-count",
+              "maximum": 100,
+              "minimum": 2
+            }
+          ],
           "status": "executable",
           "when": "the default",
           "rationale": "A fixed cell for each pair, one lightness scale, and labels on both axes.",
@@ -5042,54 +7200,116 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "unavailableReason": null,
           "requirements": [
             {
+              "field": "row",
               "id": "row-count",
               "kind": "distinct-count",
-              "field": "row",
-              "minimum": 2,
-              "maximum": 50
+              "maximum": 50,
+              "minimum": 2
             },
             {
+              "field": "column",
               "id": "column-count",
               "kind": "distinct-count",
-              "field": "column",
-              "minimum": 2,
-              "maximum": 100
+              "maximum": 100,
+              "minimum": 2
             },
             {
+              "fields": [
+                "row",
+                "column"
+              ],
               "id": "unique-cells",
-              "kind": "unique-tuple",
+              "kind": "unique-tuple"
+            },
+            {
               "fields": [
                 "row",
                 "column"
-              ]
-            },
-            {
+              ],
               "id": "complete-matrix",
-              "kind": "complete-cartesian",
-              "fields": [
-                "row",
-                "column"
-              ]
+              "kind": "complete-cartesian"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "row",
                 "column",
                 "value",
                 "label"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-matrix",
-              "rendererVariantId": "heat-matrix",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "heat-matrix"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "row",
+              "column",
+              "value"
+            ],
+            "properties": {
+              "row": {
+                "type": "string",
+                "description": "Row category."
+              },
+              "column": {
+                "type": "string",
+                "description": "Column category."
+              },
+              "value": {
+                "type": "number",
+                "description": "Cell value."
+              },
+              "label": {
+                "type": "string",
+                "description": "Cell annotation."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "The row-column grid is incomplete, duplicated, or exceeds its row or column limits.",
+            "avoidWhen": "Cells are sparse, row order is hierarchical, or exact tabular lookup dominates pattern reading.",
+            "preferOver": [],
+            "preferWhen": "A complete two-dimensional lookup grid should expose repeated high, low, and contrasting cells."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "matrix/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "cells",
+            "fields": [
+              "columns",
+              "missingCellCount",
+              "rows",
+              "valueExtent"
+            ],
+            "kind": "attend-matrix-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-matrix-heatmap-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -5097,7 +7317,6 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "heat-matrix",
                 "heatmap"
               ],
               "interaction": [
@@ -5116,12 +7335,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "heat-matrix"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "matrix/heatmap/fixture-v1"
         },
         {
           "id": "ordered",
           "name": "Reordered matrix",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5 to 200 categories per axis",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "categories lack a natural order",
           "rationale": "Rows and columns sort by totals or a declared seriation rule so blocks become adjacent.",
@@ -5130,14 +7354,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "correlation",
           "name": "Correlation matrix",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "3 to 20 measures",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the same measured fields repeat on both axes",
           "rationale": "The diagonal names the measures. Signed association uses one diverging scale and prints coefficients.",
@@ -5146,14 +7379,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "adjacency",
           "name": "Adjacency matrix",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "30 to 200 nodes",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "a network is dense or larger than a node-link view",
           "rationale": "The same nodes appear on both axes. Direction and missing edges remain visible.",
@@ -5162,14 +7404,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "upset",
           "name": "Intersection matrix",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "4 to 20 sets; up to 50 intersections",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "four or more overlapping sets",
           "rationale": "Dots name the sets in each intersection; aligned bars show intersection size without overlapping shapes.",
@@ -5178,14 +7429,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "bubble",
           "name": "Count matrix",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "up to 40 by 40 cells",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "zeros must dominate and magnitudes are coarse",
           "rationale": "A dot marks presence and area gives a rough count. Exact counts remain printed or selectable.",
@@ -5194,14 +7454,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "radial",
           "name": "Radial heatmap",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for a categorical matrix",
           "rationale": "Cells change area with radius, labels rotate, and rows stop sharing a common line.",
@@ -5210,9 +7479,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Cells change area with radius, labels rotate, and rows stop sharing a common line.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -5224,7 +7500,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "Which recorded actions connect inputs, states, and outcomes?",
       "oneLine": "A verb on every arrow, evidence behind every step, and no causal claim the files cannot support.",
       "summary": "Explain how named components interact through typed, evidence-bearing links.",
-      "executableMemberId": "flowchart",
+      "executableMemberIds": [
+        "flowchart"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-mechanism",
@@ -5735,7 +8013,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "flowchart",
           "name": "Evidence flowchart",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "3 to 40 nodes",
+          "executableQuantityBand": [],
           "status": "executable",
           "when": "the default",
           "rationale": "Named inputs pass through verb-labelled transforms to outputs. Selection opens the rows handled by each step.",
@@ -5747,14 +8027,12 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "node-count",
               "kind": "graph-node-count",
-              "sourceField": "source",
-              "targetField": "target",
+              "maximum": 40,
               "minimum": 3,
-              "maximum": 40
+              "sourceField": "source",
+              "targetField": "target"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "source",
                 "target",
@@ -5763,16 +8041,103 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "stage",
                 "weight"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-mechanism",
-              "rendererVariantId": "system-schematic",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "system-schematic"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source",
+              "target",
+              "relation"
+            ],
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Origin component."
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Destination component."
+              },
+              "relation": {
+                "type": "string",
+                "description": "Typed interaction."
+              },
+              "label": {
+                "type": "string",
+                "description": "Readable link label."
+              },
+              "stage": {
+                "type": "string",
+                "description": "Declared subsystem or phase."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Optional strength or volume."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "The relations resolve to fewer than three or more than forty named nodes.",
+            "avoidWhen": "Link magnitude, spatial position, or a large network is the primary evidence.",
+            "preferOver": [
+              "flow/sankey",
+              "network/local"
+            ],
+            "preferWhen": "A bounded set of directed relations explains how components act on one another."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "mechanism/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "links",
+            "fields": [
+              "nodes",
+              "relations"
+            ],
+            "kind": "attend-mechanism-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-mechanism-flowchart-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -5780,8 +8145,7 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "flowchart",
-                "system-schematic"
+                "flowchart"
               ],
               "interaction": [
                 "selection"
@@ -5799,12 +8163,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "system-schematic"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "mechanism/flowchart/fixture-v1"
         },
         {
           "id": "swimlane",
           "name": "Swimlane process",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2 to 6 lanes; up to 40 steps",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "ownership changes between steps",
           "rationale": "Lanes name actors or systems while arrows name handoffs. Time still reads in one direction.",
@@ -5813,14 +8182,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "states",
           "name": "Observed state transitions",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "3 to 12 states",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "a log records changes of state",
           "rationale": "Arrows count transitions that occurred. The figure makes no claim about why they occurred.",
@@ -5829,14 +8207,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "cycle",
           "name": "Evidence-backed cycle",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "3 to 10 states",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the trace records a return to an earlier state",
           "rationale": "A closed path is allowed only when the event log contains the return edge and its frequency.",
@@ -5845,14 +8232,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "fishbone",
           "name": "Fishbone diagram",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected here",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "not without coded causes",
           "rationale": "Possible causes gathered in a workshop are hypotheses, not evidence from the files.",
@@ -5861,14 +8257,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Possible causes gathered in a workshop are hypotheses, not evidence from the files.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "concept",
           "name": "Pyramid or target diagram",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for file evidence",
           "rationale": "Geometric levels and centres add an order or importance relation that the source does not contain.",
@@ -5877,14 +8282,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Geometric levels and centres add an order or importance relation that the source does not contain.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "generic-arrows",
           "name": "Unlabelled causal arrows",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never",
           "rationale": "A generic arrow can mean caused, sent, transformed, followed, resembled, or merely sat beside.",
@@ -5893,9 +8307,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "A generic arrow can mean caused, sent, transformed, followed, resembled, or merely sat beside.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -5907,7 +8328,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "What connects to what, and which paths pass between them?",
       "oneLine": "Recorded links among named items, shown locally when sparse and as a matrix when dense.",
       "summary": "Inspect explicit many-to-many connections between entities.",
-      "executableMemberId": "local",
+      "executableMemberIds": [
+        "local"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-network",
@@ -6320,7 +8743,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "local",
           "name": "Focused node-link graph",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5 to 100 nodes; sparse edges",
+          "executableQuantityBand": [],
           "status": "executable",
           "when": "the default",
           "rationale": "One named focus, its neighbours, and links among those neighbours. Position is deterministic and labels stay horizontal.",
@@ -6330,20 +8755,18 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "unavailableReason": null,
           "requirements": [
             {
+              "allowDuplicateEdges": false,
+              "allowSelfEdges": false,
+              "connected": "weak",
               "id": "bounded-sparse-network",
               "kind": "directed-graph",
-              "sourceField": "source",
-              "targetField": "target",
-              "minimumNodes": 5,
+              "maximumEdgesPerNode": 3,
               "maximumNodes": 100,
-              "connected": "weak",
-              "allowSelfEdges": false,
-              "allowDuplicateEdges": false,
-              "maximumEdgesPerNode": 3
+              "minimumNodes": 5,
+              "sourceField": "source",
+              "targetField": "target"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "source",
                 "target",
@@ -6351,16 +8774,95 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "relation",
                 "label"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-network",
-              "rendererVariantId": "node-link",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "node-link"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source",
+              "target"
+            ],
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Edge source node."
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Edge target node."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Edge weight."
+              },
+              "relation": {
+                "type": "string",
+                "description": "Typed relation."
+              },
+              "label": {
+                "type": "string",
+                "description": "Edge label."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "The graph is disconnected, duplicated, self-linked, over-degree, or outside five to one hundred nodes.",
+            "avoidWhen": "Direction encodes staged flow or dense global structure would overwhelm local inspection.",
+            "preferOver": [],
+            "preferWhen": "A small weakly connected sparse network should reveal local neighborhoods and bridges."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "network/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "edges",
+            "fields": [
+              "nodes",
+              "relations"
+            ],
+            "kind": "attend-network-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-network-local-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -6368,8 +8870,7 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "local",
-                "node-link"
+                "local"
               ],
               "interaction": [
                 "selection"
@@ -6387,12 +8888,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "node-link"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "network/local/fixture-v1"
         },
         {
           "id": "arc",
           "name": "Arc diagram",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5 to 100 nodes",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "nodes already have a meaningful order",
           "rationale": "Nodes stay on the order axis while arcs reveal short and long crossings.",
@@ -6401,14 +8907,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "citation",
           "name": "Citation neighbourhood",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "5 to 80 works",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "edges are directed references",
           "rationale": "Older and newer works occupy dated columns; arrows point to the cited work.",
@@ -6417,14 +8932,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "coattendance",
           "name": "Co-attendance network",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "5 to 60 people",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "edges mean repeated shared events",
           "rationale": "Line weight counts shared events and the edge opens every event. It does not claim friendship.",
@@ -6433,14 +8957,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "hairball",
           "name": "Global force graph",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never as an overview",
           "rationale": "Crossings, unlabeled nodes, and unstable positions hide the relations the view was meant to expose.",
@@ -6449,14 +8982,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Crossings, unlabeled nodes, and unstable positions hide the relations the view was meant to expose.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "mind-map",
           "name": "Mind map",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for evidence",
           "rationale": "Freehand proximity and branch style carry opinions that do not exist in the source records.",
@@ -6465,14 +9007,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Freehand proximity and branch style carry opinions that do not exist in the source records.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "hive",
           "name": "Hive plot",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "not without a domain axis rule",
           "rationale": "Axis assignment can dominate the result and demands expert decoding before a path can be read.",
@@ -6481,9 +9032,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Axis assignment can dominate the result and demands expert decoding before a path can be read.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -6495,7 +9053,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "What changed between these texts, and where exactly did it change?",
       "oneLine": "Readable passages aligned on a shared anchor, with source locators intact.",
       "summary": "Align readable excerpts, versions, or claims while preserving source position.",
-      "executableMemberId": "parallel-text",
+      "executableMemberIds": [
+        "parallel-text"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-passage-comparison",
@@ -6882,7 +9442,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "split-diff",
           "name": "Aligned split diff",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2 versions, up to about 2,000 changed lines",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "two line-addressable versions",
           "rationale": "Old and new lines sit side by side with insertions and removals named in the gutter. Unchanged context remains readable.",
@@ -6891,14 +9453,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "unified-diff",
           "name": "Unified diff",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2 versions, any readable file",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "reading flow matters",
           "rationale": "One interleaved column preserves context and works at narrow widths. Prefixes and words label change in addition to colour.",
@@ -6907,14 +9478,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "synopsis",
           "name": "Aligned synopsis",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2-4 witnesses",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "short passages share sections",
           "rationale": "Two to four witnesses align by heading, verse, timestamp, or field. Missing passages remain explicit blank cells.",
@@ -6923,14 +9503,31 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "parallel-text",
           "name": "Parallel text",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2 witnesses, 1 reading column each",
+          "executableQuantityBand": [
+            {
+              "field": "version",
+              "id": "exactly-two-versions",
+              "kind": "distinct-count",
+              "maximum": 2,
+              "minimum": 2
+            }
+          ],
           "status": "executable",
           "when": "source and rendering differ by medium",
           "rationale": "Scan and OCR, audio and transcript, or original and translation stay adjacent with shared locators.",
@@ -6940,31 +9537,90 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "unavailableReason": null,
           "requirements": [
             {
+              "field": "version",
               "id": "exactly-two-versions",
               "kind": "distinct-count",
-              "field": "version",
-              "minimum": 2,
-              "maximum": 2
+              "maximum": 2,
+              "minimum": 2
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "passage",
                 "version",
                 "label",
                 "order"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-passage-comparison",
-              "rendererVariantId": "aligned-passages",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "aligned-passages"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "passage",
+              "version"
+            ],
+            "properties": {
+              "passage": {
+                "type": "string",
+                "description": "Bounded readable passage."
+              },
+              "version": {
+                "type": "string",
+                "description": "Version, source, or comparison column."
+              },
+              "label": {
+                "type": "string",
+                "description": "Passage label or aligned section."
+              },
+              "order": {
+                "type": "number",
+                "description": "Stable passage order."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "The records do not resolve to exactly two source-backed versions.",
+            "avoidWhen": "There are more than two witnesses or alignment units cannot be kept legible.",
+            "preferOver": [],
+            "preferWhen": "Exactly two evidenced text versions should be read side by side as aligned passages."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "passage-comparison/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "passages",
+            "fields": [
+              "labels",
+              "versions"
+            ],
+            "kind": "attend-passage-comparison-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-passage-comparison-parallel-text-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -6972,7 +9628,6 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "aligned-passages",
                 "parallel-text"
               ],
               "interaction": [
@@ -6991,12 +9646,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "aligned-passages"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "passage-comparison/parallel-text/fixture-v1"
         },
         {
           "id": "layered-edition",
           "name": "Layered edition",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "5-20 versions",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "more than four versions",
           "rationale": "One readable base text carries compact marks for revision events. Selecting a mark opens every version at that locus.",
@@ -7005,14 +9665,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "change-fingerprint",
           "name": "Change fingerprint",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "100-100,000 blocks",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the document is too long for an overview",
           "rationale": "One thin cell per block locates change density in reading order. It is always paired with the passage view.",
@@ -7021,14 +9690,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "text-cloud",
           "name": "Word cloud comparison",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never",
           "rationale": "Font area hides exact counts, long words look important, and no mark preserves the sentence where a difference occurred.",
@@ -7037,9 +9715,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Font area hides exact counts, long words look important, and no mark preserves the sentence where a difference occurred.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -7051,7 +9736,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "Where are the observations, and where do they gather?",
       "oneLine": "Exact coordinates at detail; counted clusters or density previews only when points collide.",
       "summary": "Locate discrete observations at exact geographic coordinates.",
-      "executableMemberId": "exact-points",
+      "executableMemberIds": [
+        "exact-points"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-point-map",
@@ -7521,7 +10208,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "exact-points",
           "name": "Exact point map",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "1–2,000 visible points; ≥4 px hit target through an invisible halo",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 2000,
+              "minimum": 1
+            }
+          ],
           "status": "executable",
           "when": "coordinates remain separable",
           "rationale": "One small mark per observation at its recorded coordinate. Points stay selectable and the quiet land layer supplies orientation.",
@@ -7533,20 +10229,18 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "record-count",
               "kind": "record-count",
-              "minimum": 1,
-              "maximum": 2000
+              "maximum": 2000,
+              "minimum": 1
             },
             {
-              "id": "unique-coordinates",
-              "kind": "unique-tuple",
               "fields": [
                 "latitude",
                 "longitude"
-              ]
+              ],
+              "id": "unique-coordinates",
+              "kind": "unique-tuple"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "latitude",
                 "longitude",
@@ -7554,16 +10248,81 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "value",
                 "group"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-point-map",
-              "rendererVariantId": "dot-map",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "dot-map"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "latitude",
+              "longitude"
+            ],
+            "properties": {
+              "latitude": {
+                "type": "number",
+                "description": "Latitude in decimal degrees."
+              },
+              "longitude": {
+                "type": "number",
+                "description": "Longitude in decimal degrees."
+              },
+              "label": {
+                "type": "string",
+                "description": "Point label."
+              },
+              "value": {
+                "type": "number",
+                "description": "Optional point magnitude."
+              },
+              "group": {
+                "type": "string",
+                "description": "Declared point group."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Coordinates are invalid, duplicated, or outside the executable point band.",
+            "avoidWhen": "Only regional aggregation is defensible or point precision would disclose inappropriate detail.",
+            "preferOver": [],
+            "preferWhen": "One to two thousand evidenced latitude-longitude observations require exact geographic position."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "point-map/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "points",
+            "fields": [
+              "extent",
+              "groups"
+            ],
+            "kind": "attend-point-map-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-point-map-exact-points-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -7571,11 +10330,9 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "dot-map",
                 "exact-points"
               ],
               "interaction": [
-                "pan-zoom",
                 "selection"
               ],
               "motion": [
@@ -7591,12 +10348,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "dot-map"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "point-map/exact-points/fixture-v1"
         },
         {
           "id": "proportional-points",
           "name": "Proportional point symbols",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5–80 locations; roughly 4:1 radius range",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "a total belongs to a named location",
           "rationale": "Circle area carries count or total; the printed value prevents area judgment from doing all the work. Large symbols draw first so small centers remain reachable.",
@@ -7605,14 +10367,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "clusters",
           "name": "Counted clusters",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "100–100,000 points; cluster radius and projection declared",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "points overlap at the current extent",
           "rationale": "Nearby points merge into a circle with an exact count. Opening it reveals all members; at a closer extent the cluster must resolve.",
@@ -7621,14 +10392,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "dot-density",
           "name": "Dot-density preview",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "500–50,000 points at overview scale",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the overview asks where records concentrate",
           "rationale": "Every dot remains an observation, drawn with low opacity and a stated total. It is a record-density preview, never a population rate.",
@@ -7637,14 +10417,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "point-multiples",
           "name": "Shared-extent point multiples",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2–12 panels; 20–2,000 points per panel",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "location repeats by period or group",
           "rationale": "The same projection, extent, and point size repeat across panels. The reader sees the points move, appear, or vanish without a changing frame.",
@@ -7653,14 +10442,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "pins",
           "name": "Map pins",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for analytical quantity",
           "rationale": "A large pictogram covers nearby observations, points at an ambiguous pixel, and encourages one-by-one browsing. Use small exact dots with direct labels for the few important places.",
@@ -7669,14 +10467,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "A large pictogram covers nearby observations, points at an ambiguous pixel, and encourages one-by-one browsing. Use small exact dots with direct labels for the few important places.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "jittered",
           "name": "Jittered location map",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never without an uncertainty model",
           "rationale": "Moving a point to make it visible changes the location claim. Aggregate, disclose coarsening, or use an inset rather than fabricate coordinates.",
@@ -7685,14 +10492,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Moving a point to make it visible changes the location claim. Aggregate, disclose coarsening, or use an inset rather than fabricate coordinates.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "heat-blob",
           "name": "Uncalibrated heat blob",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never as the final answer",
           "rationale": "A smooth glow hides individual records and depends strongly on bandwidth. If density is needed, route to a calibrated field with samples and units visible.",
@@ -7701,9 +10517,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "A smooth glow hides individual records and depends strongly on bandwidth. If density is needed, route to a calibrated field with samples and units visible.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -7715,7 +10538,10 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "How does each item differ across several independent measures?",
       "oneLine": "One row per item, one honest scale per measure, no composite score.",
       "summary": "Compare entities across the same ordered set of dimensions.",
-      "executableMemberId": "parallel",
+      "executableMemberIds": [
+        "profile-table",
+        "parallel"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-profile",
@@ -8066,23 +10892,173 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "profile-table",
           "name": "Profile table",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "3-60 items, 2-8 measures",
+          "executableQuantityBand": [
+            {
+              "field": "entity",
+              "id": "entity-count",
+              "kind": "distinct-count",
+              "maximum": 60,
+              "minimum": 3
+            },
+            {
+              "field": "dimension",
+              "id": "dimension-count",
+              "kind": "distinct-count",
+              "maximum": 8,
+              "minimum": 2
+            }
+          ],
+          "status": "executable",
           "when": "the default",
           "rationale": "Exact values stay in aligned columns; a tiny bar or dot gives each measure a visual cadence. Rows remain readable and sortable.",
           "band": "3-60 items, 2-8 measures",
           "lineage": "Statistical table; Tufte's patient-status display, 1994",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "field": "entity",
+              "id": "entity-count",
+              "kind": "distinct-count",
+              "maximum": 60,
+              "minimum": 3
+            },
+            {
+              "field": "dimension",
+              "id": "dimension-count",
+              "kind": "distinct-count",
+              "maximum": 8,
+              "minimum": 2
+            },
+            {
+              "fields": [
+                "entity",
+                "dimension"
+              ],
+              "id": "unique-entity-dimensions",
+              "kind": "unique-tuple"
+            },
+            {
+              "fields": [
+                "entity",
+                "dimension",
+                "value",
+                "baseline"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-profile",
+              "rendererVariantId": "profile-table"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "entity",
+              "dimension",
+              "value"
+            ],
+            "properties": {
+              "entity": {
+                "type": "string",
+                "description": "Compared entity."
+              },
+              "dimension": {
+                "type": "string",
+                "description": "Shared comparison dimension."
+              },
+              "value": {
+                "type": "number",
+                "description": "Dimension value."
+              },
+              "baseline": {
+                "type": "number",
+                "description": "Dimension-specific baseline."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "There are fewer than 3 entities or more than 8 dimensions.",
+            "avoidWhen": "The overall shape of a few complete profiles is primary.",
+            "preferOver": [
+              "profile/parallel"
+            ],
+            "preferWhen": "Lookup or many entities across a small dimension set matters."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-profile-profile-table-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "measurements",
+            "fields": [
+              "dimensions",
+              "entities",
+              "missingCellCount",
+              "rows"
+            ],
+            "kind": "attend-profile-profile-table-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-profile-profile-table-target-resolver-v1",
+            "targetKinds": []
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "profile-table"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "cartesian"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-profile",
+            "version": 1,
+            "variantId": "profile-table"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "profile/profile-table/fixture-v1"
         },
         {
           "id": "dot-strips",
           "name": "Aligned dot strips",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "3-30 items, 2-6 measures",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "position matters more than exact lookup",
           "rationale": "Each measure gets a separate horizontal scale. Dots align by item across columns, with names repeated at the row.",
@@ -8091,14 +11067,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "small-multiples",
           "name": "Measure small multiples",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "1-8 items, 2-8 measures",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "each measure has a short history",
           "rationale": "One panel per measure, one line per named item, and direct end labels. Units never share an axis.",
@@ -8107,14 +11092,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "reference-band",
           "name": "Reference-band profile",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "1-30 items, 2-12 measures",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "a valid normal range exists",
           "rationale": "Each value is placed against a declared reference interval. The band is source data, not a generic average.",
@@ -8123,14 +11117,38 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "parallel",
           "name": "Parallel coordinates",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2-12 items, 3-8 measures",
+          "executableQuantityBand": [
+            {
+              "field": "entity",
+              "id": "entity-count",
+              "kind": "distinct-count",
+              "maximum": 12,
+              "minimum": 2
+            },
+            {
+              "field": "dimension",
+              "id": "dimension-count",
+              "kind": "distinct-count",
+              "maximum": 8,
+              "minimum": 3
+            }
+          ],
           "status": "executable",
           "when": "few items, several measures",
           "rationale": "A line connects independently scaled axes. Direct labels and highlighting are mandatory because crossings accumulate quickly.",
@@ -8140,54 +11158,117 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "unavailableReason": null,
           "requirements": [
             {
+              "field": "entity",
               "id": "entity-count",
               "kind": "distinct-count",
-              "field": "entity",
-              "minimum": 2,
-              "maximum": 12
+              "maximum": 12,
+              "minimum": 2
             },
             {
+              "field": "dimension",
               "id": "dimension-count",
               "kind": "distinct-count",
-              "field": "dimension",
-              "minimum": 3,
-              "maximum": 8
+              "maximum": 8,
+              "minimum": 3
             },
             {
+              "fields": [
+                "entity",
+                "dimension"
+              ],
               "id": "unique-entity-dimensions",
-              "kind": "unique-tuple",
+              "kind": "unique-tuple"
+            },
+            {
               "fields": [
                 "entity",
                 "dimension"
-              ]
-            },
-            {
+              ],
               "id": "complete-entity-dimension-grid",
-              "kind": "complete-cartesian",
-              "fields": [
-                "entity",
-                "dimension"
-              ]
+              "kind": "complete-cartesian"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "entity",
                 "dimension",
                 "value",
                 "baseline"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-profile",
-              "rendererVariantId": "parallel-profile",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "parallel-profile"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "entity",
+              "dimension",
+              "value"
+            ],
+            "properties": {
+              "entity": {
+                "type": "string",
+                "description": "Compared entity."
+              },
+              "dimension": {
+                "type": "string",
+                "description": "Shared comparison dimension."
+              },
+              "value": {
+                "type": "number",
+                "description": "Dimension value."
+              },
+              "baseline": {
+                "type": "number",
+                "description": "Dimension-specific baseline."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "The entity-dimension grid is incomplete, duplicated, or outside the executable dimensions.",
+            "avoidWhen": "Lookup, missing cells, or many entities matter more than profile shape.",
+            "preferOver": [
+              "profile/profile-table"
+            ],
+            "preferWhen": "The shape of a few complete multivariate profiles matters across three to eight shared dimensions."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "profile/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "measurements",
+            "fields": [
+              "dimensions",
+              "entities",
+              "missingCellCount"
+            ],
+            "kind": "attend-profile-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-profile-parallel-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -8195,8 +11276,7 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "parallel",
-                "parallel-profile"
+                "parallel"
               ],
               "interaction": [
                 "selection"
@@ -8214,12 +11294,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "parallel-profile"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "profile/parallel/fixture-v1"
         },
         {
           "id": "glyph-row",
           "name": "Profile glyph row",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "6-80 items, 3-6 measures",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the values already have familiar directions",
           "rationale": "A row of tiny signed bars can compare compact profiles, but each bar still needs its measure heading and scale.",
@@ -8228,14 +11313,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "radar",
           "name": "Radar chart or face glyph",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never as a quantitative comparison",
           "rationale": "Axis order changes the shape, polygon area has no stable meaning, and faces invite categorical readings of continuous values.",
@@ -8244,9 +11338,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Axis order changes the shape, polygon area has no stable meaning, and faces invite categorical readings of continuous values.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -8258,7 +11359,11 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "Which of these is largest, which smallest, and by how much?",
       "oneLine": "Named things sorted by one comparable measure, exact values at the marks.",
       "summary": "Order named items by one comparable measure.",
-      "executableMemberId": "bar-list",
+      "executableMemberIds": [
+        "bar-list",
+        "dot-plot",
+        "slopegraph"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-rank",
@@ -8822,7 +11927,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "bar-list",
           "name": "Sorted bar list",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "3–40 rows",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 40,
+              "minimum": 3
+            }
+          ],
           "status": "executable",
           "when": "the default",
           "rationale": "Length from a shared zero is the perceptual task people do best (Cleveland & McGill 1984). Labels on the left, exact values at the bar ends, no axis needed.",
@@ -8834,35 +11948,97 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "record-count",
               "kind": "record-count",
-              "minimum": 3,
-              "maximum": 40
+              "maximum": 40,
+              "minimum": 3
             },
             {
-              "id": "unique-labels",
-              "kind": "unique-tuple",
               "fields": [
                 "label"
-              ]
+              ],
+              "id": "unique-labels",
+              "kind": "unique-tuple"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "label",
                 "value",
                 "group",
                 "baseline"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-rank",
-              "rendererVariantId": "bar-list",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "bar-list"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "label",
+              "value"
+            ],
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Name of the ranked item."
+              },
+              "value": {
+                "type": "number",
+                "description": "Comparable numeric measure."
+              },
+              "group": {
+                "type": "string",
+                "description": "Bounded facet or peer group."
+              },
+              "baseline": {
+                "type": "number",
+                "description": "Explicit comparison baseline."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Labels are duplicated or the list falls outside the executable row band.",
+            "avoidWhen": "The domain is meaningfully non-zero or the labels would make a long bar list unwieldy.",
+            "preferOver": [
+              "rank/dot-plot"
+            ],
+            "preferWhen": "Three to forty named values should be compared as lengths from an honest zero baseline."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "rank/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "items",
+            "fields": [
+              "groups",
+              "order",
+              "valueExtent"
+            ],
+            "kind": "attend-rank-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-rank-bar-list-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -8888,44 +12064,372 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "bar-list"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "rank/bar-list/fixture-v1"
         },
         {
           "id": "dot-plot",
           "name": "Dot plot",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "20–300 rows",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 300,
+              "minimum": 20
+            }
+          ],
+          "status": "executable",
           "when": "many rows, or a non-zero origin",
           "rationale": "A dot on a hairline carries position without ink; forty to a few hundred rows stay readable, and a scale that need not start at zero is honest here because nothing is measured by length.",
           "band": "20–300 rows",
           "lineage": "Cleveland, Elements of Graphing Data, 1985",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 300,
+              "minimum": 20
+            },
+            {
+              "fields": [
+                "label"
+              ],
+              "id": "unique-labels",
+              "kind": "unique-tuple"
+            },
+            {
+              "fields": [
+                "label",
+                "value",
+                "group",
+                "baseline"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-rank",
+              "rendererVariantId": "dot-plot"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "label",
+              "value"
+            ],
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Name of the ranked item."
+              },
+              "value": {
+                "type": "number",
+                "description": "Comparable numeric measure."
+              },
+              "group": {
+                "type": "string",
+                "description": "Bounded facet or peer group."
+              },
+              "baseline": {
+                "type": "number",
+                "description": "Explicit comparison baseline."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Names are not unique or there are fewer than 20 or more than 300 rows.",
+            "avoidWhen": "Values must be judged as lengths from zero.",
+            "preferOver": [
+              "rank/bar-list"
+            ],
+            "preferWhen": "Many named rows or a meaningful non-zero domain."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-rank-dot-plot-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "items",
+            "fields": [
+              "groups",
+              "order",
+              "valueExtent"
+            ],
+            "kind": "attend-rank-dot-plot-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-rank-dot-plot-target-resolver-v1",
+            "targetKinds": []
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "dot-plot"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "cartesian"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-rank",
+            "version": 1,
+            "variantId": "dot-plot"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "rank/dot-plot/fixture-v1"
         },
         {
           "id": "slopegraph",
           "name": "Slopegraph",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5–40 items, 2–4 states",
+          "executableQuantityBand": [
+            {
+              "field": "label",
+              "id": "item-count",
+              "kind": "distinct-count",
+              "maximum": 40,
+              "minimum": 5
+            },
+            {
+              "field": "state",
+              "id": "exactly-two-states",
+              "kind": "distinct-count",
+              "maximum": 2,
+              "minimum": 2
+            },
+            {
+              "field": "stateOrder",
+              "id": "exactly-two-state-orders",
+              "kind": "distinct-count",
+              "maximum": 2,
+              "minimum": 2
+            }
+          ],
+          "status": "executable",
           "when": "two states of the ranking",
           "rationale": "Names and values on both sides, a line between. Rises and falls read as slopes; the order on each side is the rank. Beats paired bars at every count.",
           "band": "5–40 items, 2–4 states",
           "lineage": "Tufte, VDQI, p. 158, 1983",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "field": "label",
+              "id": "item-count",
+              "kind": "distinct-count",
+              "maximum": 40,
+              "minimum": 5
+            },
+            {
+              "field": "state",
+              "id": "exactly-two-states",
+              "kind": "distinct-count",
+              "maximum": 2,
+              "minimum": 2
+            },
+            {
+              "field": "stateOrder",
+              "id": "exactly-two-state-orders",
+              "kind": "distinct-count",
+              "maximum": 2,
+              "minimum": 2
+            },
+            {
+              "field": "stateOrder",
+              "id": "finite-state-order",
+              "kind": "numeric-range"
+            },
+            {
+              "id": "evidenced-state-order",
+              "kind": "one-to-one-mapping",
+              "leftField": "state",
+              "rightField": "stateOrder"
+            },
+            {
+              "fields": [
+                "label",
+                "state"
+              ],
+              "id": "unique-item-states",
+              "kind": "unique-tuple"
+            },
+            {
+              "fields": [
+                "label",
+                "state"
+              ],
+              "id": "complete-item-state-grid",
+              "kind": "complete-cartesian"
+            },
+            {
+              "fields": [
+                "label",
+                "state",
+                "stateOrder",
+                "value",
+                "group",
+                "baseline"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-rank",
+              "rendererVariantId": "slopegraph"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "label",
+              "state",
+              "stateOrder",
+              "value"
+            ],
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Name of the ranked item."
+              },
+              "state": {
+                "type": "string",
+                "description": "One of the two complete ordered states."
+              },
+              "stateOrder": {
+                "type": "number",
+                "description": "Source-backed order shared by every observation in one state."
+              },
+              "value": {
+                "type": "number",
+                "description": "Comparable numeric measure."
+              },
+              "group": {
+                "type": "string",
+                "description": "Bounded facet or peer group."
+              },
+              "baseline": {
+                "type": "number",
+                "description": "Explicit comparison baseline."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "The two-state item grid is incomplete.",
+            "avoidWhen": "There are more than two states or item membership changes.",
+            "preferOver": [
+              "rank/bar-list",
+              "rank/dot-plot"
+            ],
+            "preferWhen": "Movement of the same ranked items across exactly two complete states matters."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-rank-slopegraph-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "items",
+            "fields": [
+              "segments",
+              "states",
+              "visualTargets"
+            ],
+            "kind": "attend-rank-slopegraph-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct-and-aggregate",
+            "resolver": "attend-rank-slopegraph-target-resolver-v1",
+            "targetKinds": [
+              "slope-segment"
+            ]
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "slopegraph"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "cartesian"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-rank",
+            "version": 1,
+            "variantId": "slopegraph"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "rank/slopegraph/fixture-v1"
         },
         {
           "id": "ranked-table",
           "name": "Ranked table with sparklines",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5–60 rows",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "rank plus history",
           "rationale": "Tufte's supertable: words, numbers, and word-sized graphics in one aligned reading surface. The sort gives standing; each row's sparkline gives the path to it.",
@@ -8934,14 +12438,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "bump",
           "name": "Bump chart",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "≤12 items, 3–12 states",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "rank across many states, order only",
           "rationale": "Position over several periods when only the order matters and magnitudes would clutter. Lines cross; labels at both ends.",
@@ -8950,14 +12463,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "dumbbell",
           "name": "Dumbbell",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "5–40 rows",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "two values per item with a range between",
           "rationale": "Two dots joined by a line: before and after, low and high, mine and the group's. Sort by either end or by the gap.",
@@ -8966,14 +12488,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "pareto",
           "name": "Pareto",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "8–60 rows",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the question is how few account for how much",
           "rationale": "Sorted bars with a cumulative share line; reads ‘the top six merchants are 70% of spending.’ The line must share the bars' order.",
@@ -8982,14 +12513,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "isotype",
           "name": "Unit chart (Isotype)",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "values ≤ 60 units",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the count is small and countable",
           "rationale": "Each symbol is one unit; rows of them are a bar that can be counted. Never scale a symbol's area to a quantity.",
@@ -8998,14 +12538,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "pie",
           "name": "Pie chart",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "—",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for rank",
           "rationale": "Angle and area are the channels people judge worst; a sorted bar list carries the same data with exact values. “The only worse design than a pie chart is several of them.”",
@@ -9014,14 +12563,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Angle and area are the channels people judge worst; a sorted bar list carries the same data with exact values. “The only worse design than a pie chart is several of them.”",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "word-cloud",
           "name": "Word cloud",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "—",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never",
           "rationale": "Size of type is read as importance but cannot be compared; position means nothing; long words look bigger. A ranked table of the same phrases shows the counts.",
@@ -9030,9 +12588,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Size of type is read as importance but cannot be compared; position means nothing; long words look bigger. A ranked table of the same phrases shows the counts.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -9044,7 +12609,10 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "How does a rate or category vary across bounded places?",
       "oneLine": "Bounded areas carrying normalized values, declared categories, or missingness.",
       "summary": "Compare values attached to known geographic areas.",
-      "executableMemberId": "choropleth",
+      "executableMemberIds": [
+        "choropleth",
+        "region-symbols"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-region-map",
@@ -9429,7 +12997,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "choropleth",
           "name": "Rate choropleth",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5–300 regions; 3–7 declared classes",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 56,
+              "minimum": 5
+            }
+          ],
           "status": "executable",
           "when": "one normalized value per region",
           "rationale": "A light-to-dark ordered ramp carries a share or rate. The denominator, boundary vintage, and observed-region range are printed beside the map.",
@@ -9441,68 +13018,124 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "record-count",
               "kind": "record-count",
-              "minimum": 5,
-              "maximum": 56
+              "maximum": 56,
+              "minimum": 5
             },
             {
-              "id": "unique-regions",
-              "kind": "unique-tuple",
+              "canonical": "us-state-fips",
               "fields": [
                 "region"
               ],
-              "canonical": "us-state-fips"
+              "id": "unique-regions",
+              "kind": "unique-tuple"
             },
             {
-              "id": "declared-denominator",
-              "kind": "required-fields",
               "fields": [
                 "baseline"
-              ]
+              ],
+              "id": "declared-denominator",
+              "kind": "required-fields"
             },
             {
-              "id": "positive-denominator",
-              "kind": "numeric-range",
+              "exclusiveMinimum": 0,
               "field": "baseline",
-              "exclusiveMinimum": 0
+              "id": "positive-denominator",
+              "kind": "numeric-range"
             },
             {
+              "field": "value",
               "id": "normalized-value",
               "kind": "numeric-range",
-              "field": "value",
-              "minimum": 0,
-              "maximum": 1
+              "maximum": 1,
+              "minimum": 0
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "region",
                 "value",
                 "label",
                 "baseline"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
-            },
-            {
-              "id": "fixed-geography",
-              "kind": "geography-binding",
-              "geography": {
-                "id": "us-atlas/states-10m",
-                "version": "3.0.1",
-                "object": "states",
-                "identifierScheme": "US Census two-digit state or territory FIPS"
-              },
-              "field": "region",
-              "policy": "Every region id must resolve to the bundled US state and territory geometry before a package can be persisted or rendered."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-region-map",
-              "rendererVariantId": "choropleth",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "choropleth"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "region",
+              "value"
+            ],
+            "properties": {
+              "region": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Stable geographic feature id."
+              },
+              "value": {
+                "type": "number",
+                "description": "Region measure."
+              },
+              "label": {
+                "type": "string",
+                "description": "Region label."
+              },
+              "baseline": {
+                "type": "number",
+                "description": "Comparison baseline or denominator."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "A region is unknown, a denominator is absent or non-positive, or a value is outside zero to one.",
+            "avoidWhen": "Values are totals whose region area would distort comparison.",
+            "preferOver": [
+              "region-map/region-symbols"
+            ],
+            "preferWhen": "Comparable rates or normalized shares should be read across five to fifty-six bundled US regions."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "region-map/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "regions",
+            "fields": [
+              "regionIds",
+              "valueExtent"
+            ],
+            "kind": "attend-region-map-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-region-map-choropleth-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -9528,12 +13161,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "choropleth"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "region-map/choropleth/fixture-v1"
         },
         {
           "id": "categorical",
           "name": "Categorical region map",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "3–8 categories; 5–150 regions",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the region's class is the finding",
           "rationale": "A small set of named categories may fill regions, but every observed region is also directly labelled. Hue identifies; it never pretends to order.",
@@ -9542,30 +13180,187 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "region-symbols",
           "name": "Region symbols",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5–80 regions; symbol centers must remain separable",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 56,
+              "minimum": 5
+            }
+          ],
+          "status": "executable",
           "when": "the value is a total",
           "rationale": "A circle centered on each observed region carries count by area while the region stays a quiet locator. This is the honest alternative to shading raw counts.",
           "band": "5–80 regions; symbol centers must remain separable",
           "lineage": "Harness, 1838; Flannery, 1956",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 56,
+              "minimum": 5
+            },
+            {
+              "canonical": "us-state-fips",
+              "fields": [
+                "region"
+              ],
+              "id": "unique-regions",
+              "kind": "unique-tuple"
+            },
+            {
+              "field": "value",
+              "id": "nonnegative-totals",
+              "kind": "numeric-range",
+              "minimum": 0
+            },
+            {
+              "field": "region",
+              "geography": "us-atlas/states-10m",
+              "id": "bundled-us-centers",
+              "kind": "geography-binding"
+            },
+            {
+              "fields": [
+                "region",
+                "value",
+                "label",
+                "baseline"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-region-map",
+              "rendererVariantId": "region-symbols"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "region",
+              "value"
+            ],
+            "properties": {
+              "region": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Stable geographic feature id."
+              },
+              "value": {
+                "type": "number",
+                "description": "Region measure."
+              },
+              "label": {
+                "type": "string",
+                "description": "Region label."
+              },
+              "baseline": {
+                "type": "number",
+                "description": "Comparison baseline or denominator."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Regions are outside bundled US geography or projected centers are inseparable.",
+            "avoidWhen": "The values are rates with meaningful region fill.",
+            "preferOver": [
+              "region-map/choropleth"
+            ],
+            "preferWhen": "Non-negative regional totals, not rates, must be compared."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-region-map-region-symbols-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "regions",
+            "fields": [
+              "regionIds",
+              "valueExtent"
+            ],
+            "kind": "attend-region-map-region-symbols-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-region-map-region-symbols-target-resolver-v1",
+            "targetKinds": []
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "region-symbols"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "geographic"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-region-map",
+            "version": 1,
+            "variantId": "region-symbols"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "region-map/region-symbols/fixture-v1"
         },
         {
           "id": "map-series",
           "name": "Shared-scale map series",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2–12 panels in one eyespan",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the same measure repeats by period",
           "rationale": "Projection, extent, ramp, and breakpoints stay fixed. Only the observations change, so geographic change can be seen without relearning the frame.",
@@ -9574,14 +13369,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "raw-count-fill",
           "name": "Raw-count choropleth",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never across unequal regions",
           "rationale": "Land area receives visual weight unrelated to the count or population. Put totals in proportional symbols or calculate a rate with a real denominator.",
@@ -9590,14 +13394,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Land area receives visual weight unrelated to the count or population. Put totals in proportional symbols or calculate a rate with a real denominator.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "bivariate",
           "name": "Bivariate choropleth",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected here; 3×3 is an exceptional ceiling",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "not as a default",
           "rationale": "A 3×3 scheme already asks the reader to decode nine mixtures; a 4×4 scheme becomes a verbal lookup exercise. Prefer paired small maps with shared regions.",
@@ -9606,14 +13419,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "A 3×3 scheme already asks the reader to decode nine mixtures; a 4×4 scheme becomes a verbal lookup exercise. Prefer paired small maps with shared regions.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "extruded",
           "name": "Extruded region map",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never on a reading surface",
           "rationale": "Perspective hides regions and makes height, top area, and footprint compete for one value. A labelled map beside a ranked table is both denser and more exact.",
@@ -9622,9 +13444,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Perspective hides regions and makes height, top area, and footprint compete for one value. A labelled map beside a ranked table is both denser and more exact.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -9636,7 +13465,10 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "How do two measured quantities vary together?",
       "oneLine": "One item per point, two measured quantities, with marginals and evidence close by.",
       "summary": "Inspect how two quantitative variables vary together.",
-      "executableMemberId": "scatter",
+      "executableMemberIds": [
+        "scatter",
+        "marginals"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-relationship",
@@ -10008,7 +13840,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "scatter",
           "name": "Scatterplot",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "10 to about 5,000 points",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 5000,
+              "minimum": 10
+            }
+          ],
           "status": "executable",
           "when": "the default",
           "rationale": "Position on common scales carries both values. Direct labels identify the few points that merit attention.",
@@ -10020,12 +13861,10 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "record-count",
               "kind": "record-count",
-              "minimum": 10,
-              "maximum": 5000
+              "maximum": 5000,
+              "minimum": 10
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "x",
                 "y",
@@ -10033,16 +13872,83 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "group",
                 "size"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-relationship",
-              "rendererVariantId": "scatter",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "scatter"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "x",
+              "y"
+            ],
+            "properties": {
+              "x": {
+                "type": "number",
+                "description": "Horizontal measure."
+              },
+              "y": {
+                "type": "number",
+                "description": "Vertical measure."
+              },
+              "label": {
+                "type": "string",
+                "description": "Point label."
+              },
+              "group": {
+                "type": "string",
+                "description": "Declared group."
+              },
+              "size": {
+                "type": "number",
+                "description": "Optional third magnitude."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "The finite x/y pairs fall outside the executable observation band.",
+            "avoidWhen": "The marginal distributions are as important as the joint pattern.",
+            "preferOver": [
+              "relationship/marginals"
+            ],
+            "preferWhen": "Ten to five thousand finite paired observations should reveal association, clusters, and outliers."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "relationship/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "points",
+            "fields": [
+              "domains",
+              "groups"
+            ],
+            "kind": "attend-relationship-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-relationship-scatter-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -10068,12 +13974,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "scatter"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "relationship/scatter/fixture-v1"
         },
         {
           "id": "annotated",
           "name": "Annotated scatterplot",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "10 to 500 points; up to 12 labels",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "a few exceptions matter",
           "rationale": "The same plot, with names written beside selected points and every point still present.",
@@ -10082,30 +13993,166 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "marginals",
           "name": "Dot-dash plot",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "10 to 2,000 points",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 2000,
+              "minimum": 10
+            }
+          ],
+          "status": "executable",
           "when": "joint and marginal shape both matter",
           "rationale": "Ticks along the two range frames show each one-dimensional distribution without a second figure.",
           "band": "10 to 2,000 points",
           "lineage": "Tufte, VDQI, p. 133",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 2000,
+              "minimum": 10
+            },
+            {
+              "fields": [
+                "x",
+                "y",
+                "label",
+                "group",
+                "size"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-relationship",
+              "rendererVariantId": "marginals"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "x",
+              "y"
+            ],
+            "properties": {
+              "x": {
+                "type": "number",
+                "description": "Horizontal measure."
+              },
+              "y": {
+                "type": "number",
+                "description": "Vertical measure."
+              },
+              "label": {
+                "type": "string",
+                "description": "Point label."
+              },
+              "group": {
+                "type": "string",
+                "description": "Declared group."
+              },
+              "size": {
+                "type": "number",
+                "description": "Optional third magnitude."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "There are fewer than 10 finite pairs.",
+            "avoidWhen": "The scatter alone answers the question.",
+            "preferOver": [
+              "relationship/scatter"
+            ],
+            "preferWhen": "Both joint association and each marginal shape matter."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-relationship-marginals-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "points",
+            "fields": [
+              "domains",
+              "xBins",
+              "yBins"
+            ],
+            "kind": "attend-relationship-marginals-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-relationship-marginals-target-resolver-v1",
+            "targetKinds": []
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "marginals"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "cartesian"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-relationship",
+            "version": 1,
+            "variantId": "marginals"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "relationship/marginals/fixture-v1"
         },
         {
           "id": "connected",
           "name": "Connected scatterplot",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "4 to 40 points, no more than 3 paths",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "one path has a meaningful order",
           "rationale": "A thin path joins dated points. Start, finish, and turns are labelled so time is not hidden.",
@@ -10114,14 +14161,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "sized",
           "name": "Sized-point scatterplot",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "10 to 200 points",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "one secondary quantity is essential",
           "rationale": "Area carries a coarse third quantity; the exact value appears on selection because area is judged poorly.",
@@ -10130,14 +14186,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "binned",
           "name": "Binned relationship",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "5,000 to 10 million points",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "points overprint",
           "rationale": "Fixed rectangular bins count observations. The evidence drawer keeps every row in a selected bin.",
@@ -10146,14 +14211,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "dual-axis",
           "name": "Dual-axis correlation",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never",
           "rationale": "Two independent scales can be tuned to make unrelated series appear to agree.",
@@ -10162,14 +14236,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Two independent scales can be tuned to make unrelated series appear to agree.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "scatter-3d",
           "name": "3-D scatterplot",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never on a reading page",
           "rationale": "Perspective hides points and changes positions as the view turns.",
@@ -10178,9 +14261,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Perspective hides points and changes positions as the view turns.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -10192,7 +14282,10 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "In what order did the steps, states, or frames occur?",
       "oneLine": "Ordered records laid out step by step, without inventing elapsed time.",
       "summary": "Compare ordered states, frames, steps, or versions where order matters more than elapsed time.",
-      "executableMemberId": "step-strip",
+      "executableMemberIds": [
+        "step-strip",
+        "state-ribbon"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-sequence",
@@ -10752,7 +14845,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "step-strip",
           "name": "Step strip",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "3-80 steps",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 24,
+              "minimum": 3
+            }
+          ],
           "status": "executable",
           "when": "states are categorical",
           "rationale": "Equal step spacing makes succession explicit. Repeated states keep their labels instead of merging into one block.",
@@ -10764,35 +14866,95 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "record-count",
               "kind": "record-count",
-              "minimum": 3,
-              "maximum": 24
+              "maximum": 24,
+              "minimum": 3
             },
             {
-              "id": "unique-step-order",
-              "kind": "unique-tuple",
               "fields": [
                 "order"
-              ]
+              ],
+              "id": "unique-step-order",
+              "kind": "unique-tuple"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "order",
                 "label",
                 "stage",
                 "duration"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-sequence",
-              "rendererVariantId": "storyboard",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "storyboard"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "order",
+              "label"
+            ],
+            "properties": {
+              "order": {
+                "type": "number",
+                "description": "Stable step order."
+              },
+              "label": {
+                "type": "string",
+                "description": "Step or state label."
+              },
+              "stage": {
+                "type": "string",
+                "description": "Declared phase."
+              },
+              "duration": {
+                "type": "number",
+                "description": "Duration where known."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Step order is duplicated or the sequence falls outside three to twenty-four steps.",
+            "avoidWhen": "Observed duration should determine width or branching dominates a single sequence.",
+            "preferOver": [
+              "sequence/state-ribbon"
+            ],
+            "preferWhen": "A short evidenced order of discrete steps should be read with equal visual weight."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "sequence/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "steps",
+            "fields": [
+              "stages"
+            ],
+            "kind": "attend-sequence-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-sequence-step-strip-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -10800,8 +14962,7 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "step-strip",
-                "storyboard"
+                "step-strip"
               ],
               "interaction": [
                 "selection"
@@ -10819,12 +14980,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "storyboard"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "sequence/step-strip/fixture-v1"
         },
         {
           "id": "connected-series",
           "name": "Connected sequence",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "3-500 steps",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "each step has one measured value",
           "rationale": "Position shows the value and the connecting line shows order. The horizontal axis says step, not time.",
@@ -10833,14 +14999,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "run-chart",
           "name": "Run chart",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "8-500 steps",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "the sequence has a meaningful reference",
           "rationale": "A connected series plus one labelled reference line reveals runs above, below, rising, or falling.",
@@ -10849,14 +15024,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "storyboard",
           "name": "Storyboard",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "3-24 frames",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "recognition depends on frames",
           "rationale": "Frames sit in order with step or timestamp and a short action label. Text stays beside the image it explains.",
@@ -10865,30 +15049,180 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "state-ribbon",
           "name": "State ribbon",
-          "authoredBand": "variant",
-          "status": "documented",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "3-60 states",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 60,
+              "minimum": 3
+            }
+          ],
+          "status": "executable",
           "when": "durations are known",
           "rationale": "Segment width carries elapsed time and the state name sits inside or directly above it. A thin axis supplies scale.",
           "band": "3-60 states",
           "lineage": "Gantt and machine-state traces",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 60,
+              "minimum": 3
+            },
+            {
+              "fields": [
+                "order"
+              ],
+              "id": "unique-order",
+              "kind": "unique-tuple"
+            },
+            {
+              "fields": [
+                "duration"
+              ],
+              "id": "observed-duration",
+              "kind": "required-fields"
+            },
+            {
+              "exclusiveMinimum": 0,
+              "field": "duration",
+              "id": "positive-duration",
+              "kind": "numeric-range"
+            },
+            {
+              "fields": [
+                "order",
+                "label",
+                "duration",
+                "stage"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-sequence",
+              "rendererVariantId": "state-ribbon"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "order",
+              "label",
+              "duration"
+            ],
+            "properties": {
+              "order": {
+                "type": "number",
+                "description": "Stable step order."
+              },
+              "label": {
+                "type": "string",
+                "description": "Step or state label."
+              },
+              "duration": {
+                "type": "number",
+                "description": "Duration where known."
+              },
+              "stage": {
+                "type": "string",
+                "description": "Declared phase."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Order is duplicated or duration is absent/non-positive.",
+            "avoidWhen": "Duration is estimated or irrelevant.",
+            "preferOver": [
+              "sequence/step-strip"
+            ],
+            "preferWhen": "Observed state duration should determine width."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-sequence-state-ribbon-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "states",
+            "fields": [
+              "totalDuration"
+            ],
+            "kind": "attend-sequence-state-ribbon-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-sequence-state-ribbon-target-resolver-v1",
+            "targetKinds": []
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "state-ribbon"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "cartesian"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-sequence",
+            "version": 1,
+            "variantId": "state-ribbon"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "sequence/state-ribbon/fixture-v1"
         },
         {
           "id": "time-position",
           "name": "Time-position diagram",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2-40 paths, 10-500 observations each",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "a path has measured position and time",
           "rationale": "Slope encodes speed, stops become horizontal segments, and crossings preserve when and where paths meet.",
@@ -10897,14 +15231,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "animation",
           "name": "Animation or Sankey",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never as a sequence substitute",
           "rationale": "Animation hides prior frames in memory; Sankey width answers quantity flow, not exact step order. Use adjacent steps or the flow family.",
@@ -10913,9 +15256,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Animation hides prior frames in memory; Sankey width answers quantity flow, not exact step order. Use adjacent steps or the flow family.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -10927,7 +15277,10 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "What happened when, for how long, and alongside what else?",
       "oneLine": "Events and intervals placed at their actual dates, with overlaps left visible.",
       "summary": "Place discrete events or intervals in chronological context.",
-      "executableMemberId": "interval",
+      "executableMemberIds": [
+        "event-strip",
+        "interval"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-timeline",
@@ -11511,23 +15864,171 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "event-strip",
           "name": "Event strip",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5-500 events",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 500,
+              "minimum": 5
+            }
+          ],
+          "status": "executable",
           "when": "events are brief and one-dimensional",
           "rationale": "Ticks at exact dates reveal bursts and gaps. Only selected or exceptional events receive labels.",
           "band": "5-500 events",
           "lineage": "Chronologies and rug plots",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 500,
+              "minimum": 5
+            },
+            {
+              "fields": [
+                "endTime"
+              ],
+              "id": "instantaneous-events",
+              "kind": "absent-fields"
+            },
+            {
+              "fields": [
+                "lane"
+              ],
+              "id": "one-context",
+              "kind": "absent-fields"
+            },
+            {
+              "fields": [
+                "time",
+                "label",
+                "endTime",
+                "lane",
+                "status"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-timeline",
+              "rendererVariantId": "event-strip"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "time",
+              "label"
+            ],
+            "properties": {
+              "time": {
+                "type": "string",
+                "description": "Event start time."
+              },
+              "label": {
+                "type": "string",
+                "description": "Event label."
+              },
+              "endTime": {
+                "type": "string",
+                "description": "Event end time."
+              },
+              "lane": {
+                "type": "string",
+                "description": "Declared event lane."
+              },
+              "status": {
+                "type": "string",
+                "description": "Event status or certainty."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Any end time or lane split is supplied.",
+            "avoidWhen": "Events have meaningful duration or lanes.",
+            "preferOver": [
+              "timeline/interval"
+            ],
+            "preferWhen": "Instantaneous events in one context need temporal position."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-timeline-event-strip-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "events",
+            "fields": [
+              "timeExtent"
+            ],
+            "kind": "attend-timeline-event-strip-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-timeline-event-strip-target-resolver-v1",
+            "targetKinds": []
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "event-strip"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "cartesian"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-timeline",
+            "version": 1,
+            "variantId": "event-strip"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "timeline/event-strip/fixture-v1"
         },
         {
           "id": "interval",
           "name": "Interval timeline",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "3-60 intervals",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 60,
+              "minimum": 3
+            }
+          ],
           "status": "executable",
           "when": "start and end both matter",
           "rationale": "A horizontal segment represents duration on a zero-distortion time scale. Names sit beside the segment.",
@@ -11539,25 +16040,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "record-count",
               "kind": "record-count",
-              "minimum": 3,
-              "maximum": 60
+              "maximum": 60,
+              "minimum": 3
             },
             {
-              "id": "bounded-intervals",
-              "kind": "required-fields",
               "fields": [
                 "endTime"
-              ]
+              ],
+              "id": "bounded-intervals",
+              "kind": "required-fields"
             },
             {
+              "endField": "endTime",
               "id": "ordered-intervals",
               "kind": "time-order",
-              "startField": "time",
-              "endField": "endTime"
+              "startField": "time"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "time",
                 "label",
@@ -11565,16 +16064,83 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "lane",
                 "status"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-timeline",
-              "rendererVariantId": "lane-timeline",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "lane-timeline"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "time",
+              "label"
+            ],
+            "properties": {
+              "time": {
+                "type": "string",
+                "description": "Event start time."
+              },
+              "label": {
+                "type": "string",
+                "description": "Event label."
+              },
+              "endTime": {
+                "type": "string",
+                "description": "Event end time."
+              },
+              "lane": {
+                "type": "string",
+                "description": "Declared event lane."
+              },
+              "status": {
+                "type": "string",
+                "description": "Event status or certainty."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Any interval is unbounded, reversed, or the timeline exceeds sixty records.",
+            "avoidWhen": "Events are instantaneous or duration is not meaningful.",
+            "preferOver": [
+              "timeline/event-strip"
+            ],
+            "preferWhen": "Events have evidenced start and end times whose durations and overlaps matter."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "timeline/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "events",
+            "fields": [
+              "lanes",
+              "timeExtent"
+            ],
+            "kind": "attend-timeline-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-timeline-interval-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -11582,8 +16148,7 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "interval",
-                "lane-timeline"
+                "interval"
               ],
               "interaction": [
                 "selection"
@@ -11601,12 +16166,17 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "lane-timeline"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "timeline/interval/fixture-v1"
         },
         {
           "id": "swimlane",
           "name": "Swimlane timeline",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "2-12 lanes, up to 500 events",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "events belong to stable categories",
           "rationale": "Parallel lanes reveal concurrency without merging categories. The lane name is a direct label.",
@@ -11615,14 +16185,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "chronicle",
           "name": "Annotated chronicle",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5-30 events",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "a few documented events need explanation",
           "rationale": "Short notes sit at their dates and point to the record. Annotation adds fact, not decoration.",
@@ -11631,14 +16210,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "calendar",
           "name": "Calendar timeline",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "3 months-3 years",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "weekday and week rhythms matter",
           "rationale": "Civil time is explicit: days by weeks, months labelled, missing dates empty. Colour carries magnitude only after the date cell is located.",
@@ -11647,14 +16235,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "revision",
           "name": "Revision bands",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "5-100 versions",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "versions have dated survival",
           "rationale": "Bands show when material enters, persists, and disappears across revisions. Selection opens the actual version records.",
@@ -11663,14 +16260,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "spiral",
           "name": "Spiral timeline",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "never for exact comparison",
           "rationale": "Radius, angle, and arc length compete, labels rotate, and later dates receive more space. Use a line or calendar.",
@@ -11679,9 +16285,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "Radius, angle, and arc length compete, labels rotate, and later dates receive more space. Use a line or calendar.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     },
@@ -11693,7 +16306,10 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
       "question": "How did a measured quantity change through time?",
       "oneLine": "Values on a continuous time axis, with raw records behind every aggregate.",
       "summary": "Show how one or more comparable measures change through time.",
-      "executableMemberId": "line",
+      "executableMemberIds": [
+        "line",
+        "period-bars"
+      ],
       "maturity": "pipeline",
       "renderer": {
         "id": "attend-trend",
@@ -12049,7 +16665,24 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
         {
           "id": "line",
           "name": "Time-series line",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "12-5,000 observations, 1-4 series",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 5000,
+              "minimum": 12
+            },
+            {
+              "field": "series",
+              "id": "series-count",
+              "kind": "distinct-count",
+              "maximum": 4,
+              "minimum": 1,
+              "missingValue": "implicit-series"
+            }
+          ],
           "status": "executable",
           "when": "the default for repeated measures",
           "rationale": "A thin line on proportional time shows direction and local variation. Direct end labels name every series.",
@@ -12061,45 +16694,107 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             {
               "id": "record-count",
               "kind": "record-count",
-              "minimum": 12,
-              "maximum": 5000
+              "maximum": 5000,
+              "minimum": 12
             },
             {
+              "field": "series",
               "id": "series-count",
               "kind": "distinct-count",
-              "field": "series",
-              "minimum": 1,
               "maximum": 4,
+              "minimum": 1,
               "missingValue": "implicit-series"
             },
             {
-              "id": "unique-series-times",
-              "kind": "unique-tuple",
               "fields": [
                 "series",
                 "time"
               ],
+              "id": "unique-series-times",
+              "kind": "unique-tuple",
               "missingValue": "implicit-series"
             },
             {
-              "id": "exact-quote-evidence",
-              "kind": "field-evidence",
               "fields": [
                 "time",
                 "value",
                 "series",
                 "label"
               ],
-              "policy": "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote."
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
             },
             {
               "id": "renderer-binding",
               "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
               "rendererId": "attend-trend",
-              "rendererVariantId": "observed-line",
-              "policy": "The package records the catalog member and bundled renderer; callers never choose a renderer module directly."
+              "rendererVariantId": "observed-line"
             }
           ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "time",
+              "value"
+            ],
+            "properties": {
+              "time": {
+                "type": "string",
+                "description": "Event or observation time."
+              },
+              "value": {
+                "type": "number",
+                "description": "Observed measure."
+              },
+              "series": {
+                "type": "string",
+                "description": "Named series."
+              },
+              "label": {
+                "type": "string",
+                "description": "Observation label."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Times repeat within a series or the series and record limits are exceeded.",
+            "avoidWhen": "Values are discrete period totals or the implied continuity would be misleading.",
+            "preferOver": [
+              "trend/period-bars"
+            ],
+            "preferWhen": "Ordered observations form one to four continuous time series and the trajectory between observations is the question."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "trend/deterministic-v1",
+            "version": 1
+          },
+          "payload": {
+            "collection": "points",
+            "fields": [
+              "series",
+              "timeExtent",
+              "valueExtent"
+            ],
+            "kind": "attend-trend-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-trend-line-target-resolver-v1",
+            "targetKinds": []
+          },
           "representationCapabilities": {
             "version": 1,
             "constraints": {
@@ -12107,8 +16802,7 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
                 "2d"
               ],
               "form": [
-                "line",
-                "observed-line"
+                "line"
               ],
               "interaction": [
                 "selection"
@@ -12126,28 +16820,205 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
             "version": 1,
             "variantId": "observed-line"
           },
-          "mediaPolicy": "text-only"
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "trend/line/fixture-v1"
         },
         {
           "id": "period-bars",
           "name": "Period bars",
-          "authoredBand": "core",
-          "status": "documented",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "6-60 periods",
+          "executableQuantityBand": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 60,
+              "minimum": 6
+            },
+            {
+              "field": "series",
+              "id": "one-series",
+              "kind": "distinct-count",
+              "maximum": 1,
+              "minimum": 1,
+              "missingValue": "implicit-series"
+            },
+            {
+              "field": "calendarGrain",
+              "id": "one-calendar-grain",
+              "kind": "distinct-count",
+              "maximum": 1,
+              "minimum": 1
+            }
+          ],
+          "status": "executable",
           "when": "each value is a discrete total",
           "rationale": "Monthly commits or annual spending start at zero because bar length carries magnitude. Gaps remain empty.",
           "band": "6-60 periods",
           "lineage": "Playfair; statistical annuals",
           "rejectionReason": null,
           "unavailableReason": null,
-          "requirements": [],
-          "representationCapabilities": null,
-          "renderer": null,
-          "mediaPolicy": null
+          "requirements": [
+            {
+              "id": "record-count",
+              "kind": "record-count",
+              "maximum": 60,
+              "minimum": 6
+            },
+            {
+              "field": "series",
+              "id": "one-series",
+              "kind": "distinct-count",
+              "maximum": 1,
+              "minimum": 1,
+              "missingValue": "implicit-series"
+            },
+            {
+              "fields": [
+                "calendarGrain"
+              ],
+              "id": "explicit-calendar-grain",
+              "kind": "required-fields"
+            },
+            {
+              "field": "calendarGrain",
+              "id": "one-calendar-grain",
+              "kind": "distinct-count",
+              "maximum": 1,
+              "minimum": 1
+            },
+            {
+              "fields": [
+                "time"
+              ],
+              "id": "unique-periods",
+              "kind": "unique-tuple"
+            },
+            {
+              "fields": [
+                "time",
+                "value",
+                "calendarGrain",
+                "series",
+                "label"
+              ],
+              "id": "exact-quote-evidence",
+              "kind": "field-evidence",
+              "policy": "Every populated source-backed role retains one or more opaque references to exact verified evidence."
+            },
+            {
+              "id": "renderer-binding",
+              "kind": "renderer-binding",
+              "policy": "The exact catalog receipt fixes the renderer and variant; callers cannot substitute either.",
+              "rendererId": "attend-trend",
+              "rendererVariantId": "period-bars"
+            }
+          ],
+          "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "time",
+              "value",
+              "calendarGrain"
+            ],
+            "properties": {
+              "time": {
+                "type": "string",
+                "description": "Event or observation time."
+              },
+              "value": {
+                "type": "number",
+                "description": "Observed measure."
+              },
+              "calendarGrain": {
+                "type": "string",
+                "description": "Explicit calendar grain shared by every period."
+              },
+              "series": {
+                "type": "string",
+                "description": "Named series."
+              },
+              "label": {
+                "type": "string",
+                "description": "Observation label."
+              }
+            }
+          },
+          "guidance": {
+            "abstainWhen": "Calendar grain is not explicit or periods were silently aggregated.",
+            "avoidWhen": "The values are instantaneous observations or raw events.",
+            "preferOver": [
+              "trend/line"
+            ],
+            "preferWhen": "Discrete evidenced period totals must be compared."
+          },
+          "sourcePolicy": {
+            "adapters": [
+              "evidenced-records-v1"
+            ],
+            "media": [
+              "structured",
+              "text"
+            ]
+          },
+          "projector": {
+            "id": "attend-trend-period-bars-projector",
+            "version": 1
+          },
+          "payload": {
+            "collection": "periods",
+            "fields": [
+              "calendarGrain",
+              "timeExtent",
+              "valueExtent"
+            ],
+            "kind": "attend-trend-period-bars-payload",
+            "schemaVersion": 1
+          },
+          "selectionPolicy": {
+            "policy": "direct",
+            "resolver": "attend-trend-period-bars-target-resolver-v1",
+            "targetKinds": []
+          },
+          "representationCapabilities": {
+            "version": 1,
+            "constraints": {
+              "dimensionality": [
+                "2d"
+              ],
+              "form": [
+                "period-bars"
+              ],
+              "interaction": [
+                "selection"
+              ],
+              "motion": [
+                "static"
+              ],
+              "projection": [
+                "cartesian"
+              ]
+            }
+          },
+          "renderer": {
+            "id": "attend-trend",
+            "version": 1,
+            "variantId": "period-bars"
+          },
+          "mediaPolicy": {
+            "id": "source-backed-records-v1"
+          },
+          "fixtureId": "trend/period-bars/fixture-v1"
         },
         {
           "id": "irregular-dots",
           "name": "Irregular observation plot",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5-2,000 observations",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "sampling intervals vary",
           "rationale": "Dots preserve exact observation times without implying values between them. A line is optional and usually omitted.",
@@ -12156,14 +17027,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "spark-table",
           "name": "Sparkline table",
-          "authoredBand": "core",
+          "authoredStatus": "core",
+          "authoredQuantityBand": "5-100 series, 12-200 periods",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "many named series",
           "rationale": "One word-sized history per row keeps rank, latest value, and trend together. All rows share their measure's scale.",
@@ -12172,14 +17052,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "small-multiples",
           "name": "Trend small multiples",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "2-24 panels",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "series would cross or units differ",
           "rationale": "Repeated panels keep a common time axis and, within a unit, a common vertical scale.",
@@ -12188,14 +17077,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "horizon",
           "name": "Horizon strip",
-          "authoredBand": "variant",
+          "authoredStatus": "variant",
+          "authoredQuantityBand": "20-200 series",
+          "executableQuantityBand": [],
           "status": "documented",
           "when": "vertical space is scarce and readers know the fold",
           "rationale": "Layered bands compact many comparable series, but exact reading requires a nearby value and a documented baseline.",
@@ -12204,14 +17102,23 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": null,
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         },
         {
           "id": "streamgraph",
           "name": "Streamgraph",
-          "authoredBand": "rejected",
+          "authoredStatus": "rejected",
+          "authoredQuantityBand": "rejected for trend",
+          "executableQuantityBand": [],
           "status": "rejected",
           "when": "not for ordinary trend",
           "rationale": "A moving baseline impairs value reading and changing thickness mixes composition with trend. Use only for a bounded composition question.",
@@ -12220,9 +17127,16 @@ export const FAMILY_BROWSER_CATALOG = deepFreeze({
           "rejectionReason": "A moving baseline impairs value reading and changing thickness mixes composition with trend. Use only for a bounded composition question.",
           "unavailableReason": null,
           "requirements": [],
+          "roles": null,
+          "guidance": null,
+          "sourcePolicy": null,
+          "projector": null,
+          "payload": null,
+          "selectionPolicy": null,
           "representationCapabilities": null,
           "renderer": null,
-          "mediaPolicy": null
+          "mediaPolicy": null,
+          "fixtureId": null
         }
       ]
     }

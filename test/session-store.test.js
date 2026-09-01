@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -1893,4 +1895,88 @@ test("session creation refuses a symlinked local-state directory", async (t) => 
     (error) => error.code === "UNSAFE_SYMLINK",
   );
   assert.deepEqual(await readdir(outside), []);
+});
+
+test("repeated loads return equal sessions that callers can mutate in isolation", async (t) => {
+  const root = await fixture(t);
+  const created = await createSession({
+    root,
+    dataPackage: dataPackage(),
+    id: "session_repeat_load",
+  });
+
+  const first = await loadSession({ root, sessionId: created.id });
+  const second = await loadSession({ root, sessionId: created.id });
+  assert.deepEqual(first, second);
+
+  first.updatedAt = "1999-01-01T00:00:00.000Z";
+  first.state.query = "caller scratch";
+  first.conversation.turns.push({ id: "turn_caller_scratch" });
+  first.dataPackage.rows[0].phrase = "caller scratch";
+
+  const third = await loadSession({ root, sessionId: created.id });
+  assert.equal(third.updatedAt, created.updatedAt);
+  assert.equal(third.state.query, "");
+  assert.deepEqual(third.conversation.turns, []);
+  assert.equal(third.dataPackage.rows[0].phrase, "attention map");
+});
+
+test("a session corrupted after a load fails verification on the next load", async (t) => {
+  const root = await fixture(t);
+  const created = await createSession({
+    root,
+    dataPackage: dataPackage(),
+    id: "session_corrupted_after_load",
+  });
+  const path = sessionFilePath({ root, sessionId: created.id });
+  await loadSession({ root, sessionId: created.id });
+  const before = await stat(path);
+
+  const stored = JSON.parse(await readFile(path, "utf8"));
+  stored.dataPackage.sources[1].id = stored.dataPackage.sources[0].id;
+  await writeFile(path, `${JSON.stringify(stored, null, 2)}\n`);
+
+  const after = await stat(path);
+  assert.notEqual(
+    `${after.mtimeMs}:${after.size}:${after.ino}`,
+    `${before.mtimeMs}:${before.size}:${before.ino}`,
+  );
+  await assert.rejects(
+    loadSession({ root, sessionId: created.id }),
+    /source ids must be unique/u,
+  );
+});
+
+test("loads of one session id under two project roots stay separate", async (t) => {
+  const alphaRoot = await fixture(t);
+  const betaRoot = await fixture(t);
+  const sessionId = "session_shared_identifier";
+  await createSession({ root: alphaRoot, id: sessionId, dataPackage: dataPackage() });
+  await createSession({ root: betaRoot, id: sessionId, dataPackage: dataPackage() });
+  await updateSession({
+    root: betaRoot,
+    sessionId,
+    expectedRevision: 0,
+    patch: { query: "beta only" },
+  });
+
+  assert.equal((await loadSession({ root: alphaRoot, sessionId })).state.query, "");
+  assert.equal((await loadSession({ root: betaRoot, sessionId })).state.query, "beta only");
+  assert.equal((await loadSession({ root: alphaRoot, sessionId })).state.query, "");
+  assert.equal((await loadSession({ root: betaRoot, sessionId })).state.query, "beta only");
+});
+
+test("an unchanged session is served without reopening its file", async (t) => {
+  const root = await fixture(t);
+  const created = await createSession({
+    root,
+    dataPackage: dataPackage(),
+    id: "session_unread_on_repeat",
+  });
+  await loadSession({ root, sessionId: created.id });
+  // An unreadable file is the only way to observe that the second load never
+  // opened it; without this the cache could be a no-op and every test still pass.
+  await chmod(sessionFilePath({ root, sessionId: created.id }), 0o000);
+
+  assert.equal((await loadSession({ root, sessionId: created.id })).id, created.id);
 });

@@ -1,4 +1,5 @@
 import { FAMILY_BROWSER_CATALOG } from "./family-catalog.js";
+import { LEGACY_FAMILY_BOOKMARKS } from "./form-registry.js";
 
 const STATE_VERSION = 1;
 const LENSES = Object.freeze(["families", "forms", "constraints"]);
@@ -79,7 +80,7 @@ function memberStatus(member) {
 }
 
 function memberBand(member) {
-  return text(member?.authoredBand ?? member?.bandStatus, memberStatus(member) === "rejected" ? "rejected" : "");
+  return text(member?.authoredStatus ?? member?.authoredBand ?? member?.bandStatus, memberStatus(member) === "rejected" ? "rejected" : "");
 }
 
 function familyMembers(family) {
@@ -159,6 +160,11 @@ export function parseFamilyBrowserState(search, catalog) {
     } else if (matches.length === 1) {
       familyId = matches[0].family.id;
       memberId = suppliedMemberId;
+    }
+  } else if (familyId) {
+    const incumbent = LEGACY_FAMILY_BOOKMARKS[familyId];
+    if (incumbent && memberMatches(catalog, incumbent).some((match) => match.family.id === familyId)) {
+      memberId = incumbent;
     }
   }
 
@@ -283,6 +289,7 @@ export function filterFamilyBrowserMembers(catalog, state) {
 
 function words(value) {
   return text(value)
+    .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
     .replace(/[-_]/gu, " ")
     .replace(/\b\w/gu, (letter) => letter.toUpperCase());
 }
@@ -375,6 +382,59 @@ function statusExplanation(member) {
   return STATUS_PRESENTATION[status]?.consequence ?? "";
 }
 
+function requirementSummary(requirement) {
+  const supplied = text(requirement?.description ?? requirement?.reason ?? requirement?.policy);
+  if (supplied) return supplied;
+  const constraints = Object.entries(requirement ?? {})
+    .filter(([key, value]) => !["id", "kind", "passed"].includes(key) && value !== undefined)
+    .map(([key, value]) => `${words(key)} ${Array.isArray(value) ? value.map(String).join(", ") : String(value)}`);
+  const name = words(requirement?.id ?? requirement?.kind ?? "Requirement");
+  return constraints.length ? `${name}: ${constraints.join("; ")}` : name;
+}
+
+function quantityBand(value, fallback) {
+  if (typeof value === "string" && value) return value;
+  const bands = values(value).map((requirement) => {
+    const minimum = Number(requirement?.minimum);
+    const maximum = Number(requirement?.maximum);
+    const unit = requirement?.kind === "distinct-count"
+      ? `${words(requirement.field)} values`
+      : requirement?.kind === "hierarchy-leaf-count" ? "leaves" : "records";
+    if (Number.isFinite(minimum) && Number.isFinite(maximum)) {
+      return minimum === maximum
+        ? `Exactly ${minimum.toLocaleString()} ${unit}`
+        : `${minimum.toLocaleString()}–${maximum.toLocaleString()} ${unit}`;
+    }
+    if (Number.isFinite(minimum)) return `At least ${minimum.toLocaleString()} ${unit}`;
+    if (Number.isFinite(maximum)) return `At most ${maximum.toLocaleString()} ${unit}`;
+    return requirementSummary(requirement);
+  }).filter(Boolean);
+  return bands.join(" · ") || fallback;
+}
+
+function exactMemberRoleGroups(member) {
+  const schema = member.roles ?? {};
+  if (schema.properties && typeof schema.properties === "object") {
+    const requiredIds = values(schema.required).map(String);
+    const required = new Set(requiredIds);
+    const role = (id) => {
+      const property = schema.properties[id] ?? {};
+      const types = property.type
+        ? [property.type]
+        : values(property.anyOf).map((candidate) => candidate?.type).filter(Boolean);
+      return { id, types, description: property.description };
+    };
+    return [
+      ["Required", requiredIds.map(role)],
+      ["Optional", Object.keys(schema.properties).filter((id) => !required.has(id)).map(role)],
+    ].filter(([, roles]) => roles.length > 0);
+  }
+  return [
+    ["Required", values(schema.required)],
+    ["Optional", values(schema.optional)],
+  ].filter(([, roles]) => roles.length > 0);
+}
+
 function renderRepresentationCapabilities(parent, member) {
   const capabilities = member?.representationCapabilities;
   const constraints = capabilities?.constraints;
@@ -430,10 +490,22 @@ function renderMemberDetail(parent, family, member, actions) {
   appendText(section, "p", "family-browser__status-copy", statusExplanation(member));
 
   const facts = createElement("dl", "family-browser__facts");
+  const guidance = member.selectionGuidance ?? member.guidance ?? {};
+  const quantity = member.quantityBands ?? member.quantity ?? {};
+  const authoredQuantity = member.authoredQuantityBand ?? quantity.authored ?? member.band;
+  const executableQuantity = member.executableQuantityBand ?? member.runtimeBand ?? quantity.executable ?? member.band;
+  const guidanceText = (value, fallback) => {
+    const entries = values(value).map((entry) => text(entry?.description ?? entry?.reason ?? entry)).filter(Boolean);
+    return entries.join(" ") || fallback;
+  };
   const factRows = [
-    ["Authored band", words(memberBand(member))],
-    ["Use when", text(member.when, "No selection guidance is recorded.")],
-    ["Readable band", text(member.band, "No quantity band is recorded.")],
+    ["Atlas status", words(memberBand(member))],
+    ["Authored quantity band", quantityBand(authoredQuantity, "No authored quantity band is recorded.")],
+    ["Executable runtime band", memberStatus(member) === "executable" ? quantityBand(executableQuantity, "No runtime band is recorded.") : "Not executable in this release"],
+    ["Use when", guidanceText(member.preferWhen ?? guidance.preferWhen ?? member.when, "No selection guidance is recorded.")],
+    ["Choose over", guidanceText(member.preferOver ?? guidance.preferOver, "No preferred alternative is recorded.")],
+    ["Avoid when", guidanceText(member.avoidWhen ?? guidance.avoidWhen, "No additional avoidance condition is recorded.")],
+    ["Abstain when", guidanceText(member.abstentionGuidance ?? guidance.abstainWhen ?? member.abstention, "Use the family-level abstention rule.")],
     ["Why it belongs", text(member.rationale, "No rationale is recorded.")],
     ["Lineage", text(member.lineage, "No lineage note is recorded.")],
   ];
@@ -444,14 +516,28 @@ function renderMemberDetail(parent, family, member, actions) {
   section.append(facts);
   renderRepresentationCapabilities(section, member);
 
+  const exactRoleGroups = exactMemberRoleGroups(member);
+  if (exactRoleGroups.length > 0) {
+    appendText(section, "h4", "family-browser__subheading", "Exact data roles");
+    const roleGrid = createElement("div", "family-browser__role-groups family-browser__role-groups--exact");
+    exactRoleGroups.forEach(([label, roles]) => {
+      const group = createElement("section", "family-browser__role-group");
+      appendText(group, "h5", "family-browser__role-kind", label);
+      group.append(createList(roles, "family-browser__role-list", (item, role) => {
+        appendText(item, "strong", "family-browser__role-name", words(role?.id));
+        appendText(item, "span", "family-browser__role-types", values(role?.types).join(" · "));
+        appendText(item, "p", "family-browser__role-description", text(role?.description));
+      }));
+      roleGrid.append(group);
+    });
+    section.append(roleGrid);
+  }
+
   const requirements = values(member.requirements);
   if (requirements.length > 0) {
     appendText(section, "h4", "family-browser__subheading", "Release requirements");
     section.append(createList(requirements, "family-browser__plain-list", (item, requirement) => {
-      item.textContent = text(
-        requirement?.description ?? requirement?.reason,
-        words(requirement?.id ?? requirement?.kind ?? "Requirement"),
-      );
+      item.textContent = requirementSummary(requirement);
     }));
   }
 
@@ -759,6 +845,9 @@ export function mountFamilyBrowser({ root, onOpenRuntime, editorialBaseUrl } = {
 
   function openRuntime(family, member) {
     if (memberStatus(member) !== "executable" || typeof onOpenRuntime !== "function") return;
+    if (state.familyId !== family.id || state.memberId !== member.id) {
+      selectFamily(family, member);
+    }
     try {
       const result = onOpenRuntime({ familyId: family.id, memberId: member.id });
       if (result && typeof result.then === "function") {

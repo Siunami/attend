@@ -33,7 +33,7 @@ const CATALOG = Object.freeze({
       question: "What is larger or smaller?",
       oneLine: "Ordered magnitudes.",
       summary: "Compare observed quantities.",
-      executableMemberId: "bar-list",
+      executableMemberIds: ["bar-list"],
       renderer: { id: "attend-rank", version: 1 },
       roles: {
         required: [{ id: "label", description: "Item label.", types: ["string"] }],
@@ -92,7 +92,7 @@ const CATALOG = Object.freeze({
       question: "How does this system work?",
       oneLine: "Typed components and connections.",
       summary: "Explain a process without decorative arrows.",
-      executableMemberId: "flowchart",
+      executableMemberIds: ["flowchart"],
       renderer: { id: "attend-mechanism", version: 1 },
       roles: { required: [], optional: [], minimumRecords: 1, maximumRecords: 80 },
       grammar: { mark: "node and link", layout: "directed", encodings: ["connection"], invariants: ["typed links"] },
@@ -136,7 +136,7 @@ const CATALOG = Object.freeze({
       question: "What matters on this artifact?",
       oneLine: "Labels anchored to source geometry.",
       summary: "Inspect exact regions of a visible source.",
-      executableMemberId: null,
+      executableMemberIds: [],
       renderer: { id: "attend-annotated-specimen", version: 1 },
       roles: { required: [], optional: [], minimumRecords: 1, maximumRecords: 20 },
       grammar: { mark: "callout", layout: "anchored", encodings: ["position"], invariants: ["visible specimen"] },
@@ -275,8 +275,8 @@ test("the real catalog starts with every governed member and accepts its declare
       members.filter(({ member }) => member.status === status).length,
     ])),
     {
-      executable: 18,
-      documented: 87,
+      executable: 34,
+      documented: 71,
       unavailable: 1,
       rejected: 38,
     },
@@ -419,7 +419,7 @@ test("mountFamilyBrowser renders the governed executable slice and keeps runtime
     assert.equal(byClass(root, "family-browser__ledger-item").length, 4);
     assert.equal(byClass(root, "family-browser__lens").length, 3);
     assert.equal(byClass(root, "family-browser__member-card").length, FAMILY_BROWSER_CATALOG.counts.executable);
-    assert.match(byId(root, "family-browser-result-summary").textContent, /^18 of 144 authored forms match$/u);
+    assert.match(byId(root, "family-browser-result-summary").textContent, /^34 of 144 authored forms match$/u);
     assert.equal(byId(root, "family-browser-dossier").dataset.dossierState, "empty");
     assert.ok(historyCalls.some(([kind, url]) => kind === "replace" && url.includes("v=1")));
 
@@ -427,6 +427,11 @@ test("mountFamilyBrowser renders the governed executable slice and keeps runtime
     firstRuntime.click();
     assert.equal(opened.length, 1);
     assert.deepEqual(Object.keys(opened[0]).sort(), ["familyId", "memberId"]);
+    const runtimeUrl = new URL(globalThis.location.href);
+    assert.equal(runtimeUrl.searchParams.get("family"), opened[0].familyId);
+    assert.equal(runtimeUrl.searchParams.get("member"), opened[0].memberId);
+    assert.equal(byId(root, "family-browser-dossier").dataset.dossierState, "populated");
+    assert.equal(globalThis.document.activeElement, byId(root, "family-browser-dossier"));
 
     const firstMember = byClass(root, "family-browser__member-name")[0];
     firstMember.click();
@@ -437,6 +442,21 @@ test("mountFamilyBrowser renders the governed executable slice and keeps runtime
     assert.equal(byId(root, "family-browser-dossier").dataset.dossierState, "populated");
     assert.equal(globalThis.document.activeElement, byId(root, "family-browser-dossier"));
     assert.match(byId(root, "family-browser-live").textContent, /details opened/u);
+
+    const openMember = (memberId) => {
+      const card = byClass(root, "family-browser__member-card").find((candidate) => candidate.dataset.memberId === memberId);
+      assert.ok(card, `missing ${memberId} card`);
+      byClass(card, "family-browser__member-name")[0].click();
+      return byId(root, "family-browser-dossier").textContent;
+    };
+    const dotPlot = openMember("dot-plot");
+    assert.match(dotPlot, /20–300 rows/u, "the authored quantity band must remain visible");
+    assert.match(dotPlot, /20–300 records/u, "the executable quantity band must format its runtime requirement");
+    assert.doesNotMatch(dotPlot, /No runtime band/u);
+    assert.match(dotPlot, /Exact data roles[\s\S]*Label[\s\S]*Value/u);
+    assert.match(openMember("slopegraph"), /State Order/u);
+    assert.match(openMember("state-ribbon"), /Duration/u);
+    assert.match(openMember("contact-atlas"), /Asset Id[\s\S]*Preview Route[\s\S]*Capture Time/u);
 
     const ledgerItems = byClass(root, "family-browser__ledger-item");
     ledgerItems.find((button) => button.dataset.status === "rejected").click();

@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { attendQuestionPrompt } from "./agent-runner.js";
 
 const MAX_ANSWER_BYTES = 64 * 1024;
+const MAX_ANSWER_TOKENS = 2048;
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
 const DEFAULT_STARTUP_TIMEOUT_MS = 2 * 60 * 1_000;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -34,6 +35,13 @@ export const LOCAL_MODEL = Object.freeze({
   runtime: "llama.cpp",
   contextTokens: 32_768,
 });
+
+export const LOCAL_REASONING_EFFORT = "low";
+
+// A 32k-token window holds roughly 120 KB of text. Capping evidence at 64 KiB
+// leaves room for the prompt scaffold, the 48 KB conversation history, and the
+// answer. Detached routes keep the 1 MiB default.
+export const LOCAL_EVIDENCE_PACKET_BYTES = 64 * 1024;
 
 function modelError(code, message, cause) {
   const error = new Error(message, cause === undefined ? undefined : { cause });
@@ -110,6 +118,7 @@ function serverArguments({ host, port, allowDownload }) {
     "--alias", LOCAL_MODEL.id,
     "--ctx-size", String(LOCAL_MODEL.contextTokens),
     "--parallel", "1",
+    "--cache-reuse", "256",
     "--jinja",
     "--no-webui",
     "--no-mmproj",
@@ -137,27 +146,32 @@ function requestSignal(signal, timeoutMs) {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
-async function jsonResponse(response, code, message) {
-  let value;
-  try {
-    value = await response.json();
-  } catch (cause) {
-    throw modelError(code, message, cause);
+async function* sseData(body) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for await (const chunk of body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const framed = line.trim();
+      if (framed.startsWith("data:")) yield framed.slice(5).trim();
+    }
   }
-  return value;
+  const tail = buffer.trim();
+  if (tail.startsWith("data:")) yield tail.slice(5).trim();
 }
 
-function answerFrom(value) {
-  const answer = value?.choices?.[0]?.message?.content;
+function validateAnswer(text) {
   if (
-    typeof answer !== "string" ||
-    answer.trim().length === 0 ||
-    answer.includes("\0") ||
-    Buffer.byteLength(answer, "utf8") > MAX_ANSWER_BYTES
+    typeof text !== "string" ||
+    text.trim().length === 0 ||
+    text.includes("\0") ||
+    Buffer.byteLength(text, "utf8") > MAX_ANSWER_BYTES
   ) {
     throw modelError("AGENT_RUN_INVALID_OUTPUT", "The local model returned an invalid answer");
   }
-  return answer.trim();
+  return text.trim();
 }
 
 /**
@@ -195,6 +209,10 @@ export function createLlamaCppModelRunner({
   let origin = null;
   let startPromise = null;
   let closing = false;
+  // Runner-scoped rather than module-scoped: the service builds one runner per
+  // process, so the production lifetime is identical, and module state would
+  // leak between tests sharing a file.
+  let templateKwargsSupported = true;
   let diagnostics = "";
   let resolvedExecutable = null;
 
@@ -308,54 +326,104 @@ export function createLlamaCppModelRunner({
   };
 
   const inferOnce = async (request) => {
-    const signal = requestSignal(request.signal, responseTimeoutMs);
-    let response;
-    try {
-      response = await fetchImpl(new URL("v1/chat/completions", origin), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          model: LOCAL_MODEL.id,
-          stream: false,
-          temperature: 1,
-          messages: [{ role: "user", content: attendQuestionPrompt(request) }],
-        }),
-        signal,
-      });
-    } catch (cause) {
-      if (signal.aborted) {
-        throw modelError("AGENT_RUN_TIMEOUT", "The private local answer timed out", cause);
+    const timeout = requestSignal(request.signal, responseTimeoutMs);
+    const controller = new AbortController();
+    const signal = AbortSignal.any([timeout, controller.signal]);
+    const prompt = attendQuestionPrompt(request);
+    const transportError = (cause) => timeout.aborted
+      ? modelError("AGENT_RUN_TIMEOUT", "The private local answer timed out", cause)
+      : modelError("AGENT_RUN_FAILED", "The private local model could not answer", cause);
+    const post = async (withTemplateKwargs) => {
+      try {
+        return await fetchImpl(new URL("v1/chat/completions", origin), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: LOCAL_MODEL.id,
+            stream: true,
+            temperature: 1,
+            max_tokens: MAX_ANSWER_TOKENS,
+            ...(withTemplateKwargs
+              ? { chat_template_kwargs: { reasoning_effort: LOCAL_REASONING_EFFORT } }
+              : {}),
+            messages: [{ role: "user", content: prompt }],
+          }),
+          signal,
+        });
+      } catch (cause) {
+        throw transportError(cause);
       }
-      throw modelError("AGENT_RUN_FAILED", "The private local model could not answer", cause);
+    };
+
+    const withTemplateKwargs = templateKwargsSupported && typeof LOCAL_REASONING_EFFORT === "string";
+    let response = await post(withTemplateKwargs);
+    if (withTemplateKwargs && response.status === 400) {
+      const detail = (await response.text().catch(() => "")).slice(0, MAX_DIAGNOSTIC_BYTES);
+      if (detail.includes("chat_template_kwargs")) {
+        templateKwargsSupported = false;
+        response = await post(false);
+      }
     }
     if (!response.ok) {
       throw modelError("AGENT_RUN_FAILED", `The private local model returned HTTP ${response.status}`);
     }
-    const value = await jsonResponse(
-      response,
-      "AGENT_RUN_INVALID_OUTPUT",
-      "The private local model returned invalid JSON",
-    );
+
+    let answer = "";
+    let answerBytes = 0;
+    let model = null;
+    let overflowed = false;
+    try {
+      for await (const data of sseData(response.body ?? [])) {
+        if (data === "[DONE]") break;
+        let chunk;
+        try {
+          chunk = JSON.parse(data);
+        } catch {
+          continue;
+        }
+        if (model === null && typeof chunk?.model === "string" && chunk.model.length > 0) {
+          model = chunk.model;
+        }
+        const content = chunk?.choices?.[0]?.delta?.content;
+        if (typeof content !== "string" || content.length === 0) continue;
+        answer += content;
+        answerBytes += Buffer.byteLength(content, "utf8");
+        if (answerBytes > MAX_ANSWER_BYTES) {
+          overflowed = true;
+          break;
+        }
+        if (typeof request.onDelta === "function") request.onDelta(content);
+      }
+    } catch (cause) {
+      throw transportError(cause);
+    }
+    if (overflowed) {
+      controller.abort();
+      throw modelError("AGENT_RUN_INVALID_OUTPUT", "The local model returned an invalid answer");
+    }
+
     return Object.freeze({
-      answer: answerFrom(value),
+      answer: validateAnswer(answer),
       adapter: LOCAL_MODEL.id,
-      model: typeof value.model === "string" && value.model.length <= 256
-        ? value.model
-        : LOCAL_MODEL.id,
+      model: typeof model === "string" && model.length <= 256 ? model : LOCAL_MODEL.id,
     });
   };
 
   const infer = async (request) => {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      await start();
-      try {
-        return await inferOnce(request);
-      } catch (error) {
-        if (error?.code === "AGENT_RUN_TIMEOUT" || attempt === 1) throw error;
+    await start();
+    try {
+      return await inferOnce(request);
+    } catch (error) {
+      if (error?.code === "AGENT_RUN_TIMEOUT") throw error;
+      if (!await health()) {
         await stopChild();
+        await start();
       }
+      // A retry replays the stream from its first token and the onDelta contract
+      // carries no reset signal, so re-emitting would duplicate text already in
+      // the subscriber's buffer.
+      return await inferOnce({ ...request, onDelta: undefined });
     }
-    throw modelError("AGENT_RUN_FAILED", "The private local model could not answer");
   };
 
   return Object.freeze({

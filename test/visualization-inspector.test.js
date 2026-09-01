@@ -71,13 +71,23 @@ class MiniDocument {
 }
 
 function field(root, name) {
-  return root.querySelectorAll("[data-inspector-field]")
-    .find((node) => node.getAttribute("data-inspector-field") === name);
+  return root.querySelectorAll("[data-list-field]")
+    .find((node) => node.getAttribute("data-list-field") === name);
 }
 
 function action(root, name) {
-  return root.querySelectorAll("[data-inspector-action]")
-    .find((node) => node.getAttribute("data-inspector-action") === name);
+  return root.querySelectorAll("[data-list-action]")
+    .find((node) => node.getAttribute("data-list-action") === name);
+}
+
+function listRows(root) {
+  return root.querySelectorAll("[data-list-mark-id]");
+}
+
+function rowButton(root, markId) {
+  return listRows(root)
+    .find((row) => row.getAttribute("data-list-mark-id") === markId)
+    ?.children.find((child) => child.tagName === "button");
 }
 
 function target(root, attribute, id) {
@@ -202,94 +212,104 @@ test("inspection index exposes display context without private evidence linkage"
   assert.doesNotMatch(serialized, /evidence_[a-f0-9]+|private-source|private excerpt|private\/(?:file|location)|sourceId|sourceIdentity|sourcePath|filePath|locator|displayPath|citation|location/u);
 });
 
-test("shared ledger previews, restores, pins, closes, traverses, and selects once", async () => {
+test("the data list shows every row, filters on selection, and clears", async () => {
   await withMiniDocument(async () => {
     const root = new MiniElement("div");
     const selected = [];
+    const cleared = [];
     const receipt = await renderFamily({
       root,
       dataset: networkModel(),
-      selectedIds: ["edge-input-check"],
       onSelect: (value) => selected.push(value),
+      onClear: () => cleared.push(true),
     });
-    const ledger = root.querySelectorAll("[data-visualization-inspector]")[0];
+    const panel = root.querySelectorAll("[data-visualization-data-list]")[0];
     const scrollRegion = root.querySelectorAll("[data-visualization-scroll-region]")[0];
     const scrollHint = root.querySelectorAll("[data-visualization-scroll-hint]")[0];
-    const firstMark = target(root, "data-mark-id", "edge-input-check");
-    const secondMark = target(root, "data-mark-id", "edge-check-output");
-    const checkNode = target(root, "data-node-id", "Check");
 
-    assert.equal(root.children.at(-1), ledger, "the ledger follows the rendered visualization in flow");
+    assert.equal(root.children.at(-1), panel, "the data list follows the rendered visualization in flow");
     assert.equal(root.children[0], scrollRegion, "the visualization is the first item in its scroll region");
     assert.equal(scrollRegion.getAttribute("role"), "region");
     assert.equal(scrollRegion.getAttribute("tabindex"), "0");
     assert.match(scrollRegion.getAttribute("aria-label"), /scrollable visualization/iu);
     assert.match(scrollHint.textContent, /swipe horizontally/iu);
-    assert.equal(scrollRegion.children[1].getAttribute("role"), "group");
-    assert.equal(ledger.getAttribute("aria-live"), "off");
-    assert.equal(ledger.getAttribute("data-inspector-state"), "pinned");
-    assert.equal(field(ledger, "label").textContent, "Input feeds Check");
-    assert.equal(firstMark.getAttribute("aria-label"), "Input feeds Check");
-    assert.equal(checkNode.getAttribute("aria-label"), "Check");
-    assert.equal(firstMark.getAttribute("tabindex"), "0");
-    assert.equal(secondMark.getAttribute("tabindex"), "-1");
-    assert.ok(firstMark.children.some((child) => child.getAttribute("class") === "network-link-hit"));
-    assert.deepEqual(receipt.selectableNodeIds, ["Input", "Check", "Output"]);
+    assert.equal(panel.getAttribute("aria-live"), "off");
+    assert.equal(panel.getAttribute("data-list-state"), "all");
+    assert.equal(listRows(root).length, 2, "every mark appears as a data row");
+    assert.match(field(panel, "status").textContent, /2 items/u);
+    assert.equal(action(panel, "clear"), undefined, "nothing to clear before a selection");
     assert.equal(receipt.markCount, 2);
 
-    firstMark.dispatchEvent(interaction("keydown", "ArrowRight"));
-    assert.equal(firstMark.getAttribute("tabindex"), "-1");
-    assert.equal(secondMark.getAttribute("tabindex"), "0");
-    assert.equal(globalThis.document.activeElement, secondMark);
-    secondMark.dispatchEvent(interaction("blur"));
-    globalThis.document.activeElement = null;
+    rowButton(root, "edge-check-output").click();
+    assert.deepEqual(selected, [{ kind: "mark", markId: "edge-check-output" }], "a row click selects its mark");
 
-    secondMark.dispatchEvent(interaction("pointerenter"));
-    assert.equal(ledger.getAttribute("data-inspector-state"), "preview");
-    assert.equal(field(ledger, "label").textContent, "Check emits Output");
-    assert.deepEqual(selected, [], "pointer preview cannot select");
-    secondMark.dispatchEvent(interaction("pointerleave"));
-    assert.equal(ledger.getAttribute("data-inspector-state"), "pinned");
-    assert.equal(field(ledger, "label").textContent, "Input feeds Check");
+    const filteredRoot = new MiniElement("div");
+    await renderFamily({
+      root: filteredRoot,
+      dataset: networkModel(),
+      selectedIds: ["edge-input-check"],
+      onSelect: (value) => selected.push(value),
+      onClear: () => cleared.push(true),
+    });
+    const filteredPanel = filteredRoot.querySelectorAll("[data-visualization-data-list]")[0];
+    assert.equal(filteredPanel.getAttribute("data-list-state"), "filtered");
+    assert.match(field(filteredPanel, "status").textContent, /1 of 2/u);
+    assert.equal(listRows(filteredRoot).length, 1, "the list narrows to the selected rows");
+    const selectedRow = rowButton(filteredRoot, "edge-input-check");
+    assert.equal(selectedRow.getAttribute("aria-pressed"), "true");
+    const detail = field(filteredPanel, "detail");
+    assert.ok(detail, "the selected row expands to its full fields");
+    assert.match(detail.textContent, /A request enters validation\./u);
+    assert.match(detail.textContent, /Input feeds Check/u);
 
-    secondMark.dispatchEvent(interaction("focus"));
-    assert.equal(field(ledger, "label").textContent, "Check emits Output");
-    assert.deepEqual(selected, [], "focus preview cannot select");
-    secondMark.dispatchEvent(interaction("blur"));
-    assert.equal(field(ledger, "label").textContent, "Input feeds Check");
-
-    secondMark.click();
-    assert.deepEqual(selected, ["edge-check-output"]);
-    assert.equal(ledger.getAttribute("data-inspector-state"), "pinned");
-    assert.equal(field(ledger, "label").textContent, "Check emits Output");
-
-    firstMark.dispatchEvent(interaction("keydown", "Enter"));
-    assert.deepEqual(selected, ["edge-check-output", "edge-input-check"]);
-    assert.equal(field(ledger, "label").textContent, "Input feeds Check");
-
-    action(ledger, "close").click();
-    assert.equal(ledger.getAttribute("data-inspector-state"), "rest");
-    assert.match(field(ledger, "rest").textContent, /tap or click to pin/iu);
-    assert.deepEqual(selected, ["edge-check-output", "edge-input-check"]);
-
-    action(ledger, "next").click();
-    assert.equal(ledger.getAttribute("data-inspector-state"), "pinned");
-    assert.equal(field(ledger, "label").textContent, "Input feeds Check");
-    action(ledger, "previous").click();
-    assert.equal(field(ledger, "label").textContent, "Output");
-    assert.deepEqual(selected, ["edge-check-output", "edge-input-check"]);
-
-    checkNode.click();
-    assert.deepEqual(selected, [
-      "edge-check-output",
-      "edge-input-check",
-      { kind: "node", nodeId: "Check" },
-    ]);
-    assert.equal(field(ledger, "label").textContent, "Check");
+    selectedRow.click();
+    assert.equal(cleared.length, 1, "clicking the selected row widens back out");
+    action(filteredPanel, "clear").click();
+    assert.equal(cleared.length, 2, "the clear control widens back out");
   });
 });
 
-test("over-connected nodes remain inspectable without advertising a rejected selection", async () => {
+test("a selected node filters the list to its connected relationship rows", async () => {
+  await withMiniDocument(async () => {
+    const root = new MiniElement("div");
+    await renderFamily({
+      root,
+      dataset: networkModel(),
+      selectedIds: ["edge-input-check", "edge-check-output"],
+      selectedNodeId: "Check",
+    });
+    const panel = root.querySelectorAll("[data-visualization-data-list]")[0];
+    assert.equal(panel.getAttribute("data-list-state"), "node");
+    assert.match(field(panel, "status").textContent, /Check · 2 of 2/u);
+    assert.equal(listRows(root).length, 2, "the node lists every connected relationship row");
+
+    const matrix = new MiniElement("div");
+    await renderFamily({
+      root: matrix,
+      dataset: {
+        familyId: "matrix",
+        title: "Coverage",
+        roles: { row: "row", column: "column", value: "value" },
+        records: [{ id: "opaque-mark-id", markId: "opaque-mark-id", row: "Need", column: "Feature", value: 1 }],
+        links: [],
+        selectableMarkIds: ["opaque-mark-id"],
+        markById: {
+          "opaque-mark-id": {
+            id: "opaque-mark-id",
+            label: "Need by feature",
+            summary: "One observed intersection.",
+            values: { row: "Need", column: "Feature", value: 1 },
+            evidenceRefs: [firstReference],
+          },
+        },
+      },
+      selectableMarkIds: ["opaque-mark-id"],
+    });
+    assert.equal(target(matrix, "data-mark-id", "opaque-mark-id").getAttribute("aria-label"), "Need by feature");
+  });
+});
+
+test("over-connected nodes stay inert instead of advertising a rejected selection", async () => {
   await withMiniDocument(async () => {
     const links = Array.from({ length: 51 }, (_, index) => ({
       id: `edge-${index + 1}`,
@@ -323,57 +343,51 @@ test("over-connected nodes remain inspectable without advertising a rejected sel
       onSelect: (targetValue) => selected.push(targetValue),
     });
     const hub = target(root, "data-inspection-node-id", "Hub");
-    const ledger = root.querySelectorAll("[data-visualization-inspector]")[0];
 
     assert.ok(hub);
     assert.equal(target(root, "data-node-id", "Hub"), undefined);
     assert.ok(!receipt.selectableNodeIds.includes("Hub"));
+    assert.equal(hub.getAttribute("role"), null, "an unselectable node is not presented as a button");
+    assert.equal(hub.getAttribute("tabindex"), null);
+    assert.match(hub.getAttribute("aria-label"), /too many connections/u);
     hub.click();
     assert.deepEqual(selected, []);
-    assert.equal(field(ledger, "label").textContent, "Hub");
+    assert.equal(listRows(root).length, 51, "the data list still shows every relationship row");
   });
 });
 
-test("initial node focus wins over its incident selected marks and mark labels stay semantic", async () => {
+test("trend halos widen dot targets and select their mark", async () => {
   await withMiniDocument(async () => {
-    const network = new MiniElement("div");
+    const root = new MiniElement("div");
+    const selected = [];
     await renderFamily({
-      root: network,
-      dataset: networkModel(),
-      selectedIds: ["edge-input-check", "edge-check-output"],
-      selectedNodeId: "Check",
-    });
-    const ledger = network.querySelectorAll("[data-visualization-inspector]")[0];
-    assert.equal(ledger.getAttribute("data-inspector-state"), "pinned");
-    assert.equal(field(ledger, "label").textContent, "Check");
-
-    const matrix = new MiniElement("div");
-    await renderFamily({
-      root: matrix,
+      root,
       dataset: {
-        familyId: "matrix",
-        title: "Coverage",
-        roles: { row: "row", column: "column", value: "value" },
-        records: [{ id: "opaque-mark-id", markId: "opaque-mark-id", row: "Need", column: "Feature", value: 1 }],
-        links: [],
-        selectableMarkIds: ["opaque-mark-id"],
-        markById: {
-          "opaque-mark-id": {
-            id: "opaque-mark-id",
-            label: "Need by feature",
-            summary: "One observed intersection.",
-            values: { row: "Need", column: "Feature", value: 1 },
-            evidenceRefs: [firstReference],
-          },
-        },
+        familyId: "trend",
+        title: "Daily messages",
+        roles: { x: "time", y: "value", series: "series" },
+        records: [
+          { markId: "day-1", time: "2026-08-01", value: 4, series: "sent" },
+          { markId: "day-2", time: "2026-08-02", value: 6, series: "sent" },
+        ],
       },
-      selectableMarkIds: ["opaque-mark-id"],
+      onSelect: (value) => selected.push(value),
     });
-    assert.equal(target(matrix, "data-mark-id", "opaque-mark-id").getAttribute("aria-label"), "Need by feature");
+    const dot = target(root, "data-mark-id", "day-2");
+    const halo = target(root, "data-mark-hit", "day-2");
+    assert.ok(halo, "every trend dot renders an invisible pointer halo");
+    assert.equal(halo.getAttribute("class"), "mark-hit");
+    assert.ok(Number(halo.getAttribute("r")) > Number(dot.getAttribute("r")));
+    assert.equal(halo.getAttribute("tabindex"), null, "halos never join the focus order");
+
+    halo.click();
+    assert.deepEqual(selected, [{ kind: "mark", markId: "day-2" }]);
+    assert.equal(listRows(root).length, 2, "the unfiltered list shows both observations");
+    assert.match(field(root.querySelectorAll("[data-visualization-data-list]")[0], "status").textContent, /2 items/u);
   });
 });
 
-test("both viewer shells keep previews in a styled, non-live context ledger", async () => {
+test("both viewer shells style the shared data list", async () => {
   const [viewerStyles, labStyles, viewerHtml] = await Promise.all([
     readFile(new URL("../viewer/styles.css", import.meta.url), "utf8"),
     readFile(new URL("../viewer/family-lab.css", import.meta.url), "utf8"),
@@ -381,15 +395,15 @@ test("both viewer shells keep previews in a styled, non-live context ledger", as
   ]);
 
   for (const styles of [viewerStyles, labStyles]) {
-    assert.match(styles, /\.visualization-inspector\s*\{/u);
-    assert.match(styles, /\.visualization-inspector-body\s*\{/u);
-    assert.match(styles, /\[data-inspector-state="preview"\]/u);
-    assert.match(styles, /\[data-inspector-state="pinned"\]/u);
+    assert.match(styles, /\.visualization-data-list\s*\{/u);
+    assert.match(styles, /\.visualization-data-list-rows\s*\{[^}]*overflow-y:\s*auto/su);
+    assert.match(styles, /\.visualization-data-list-row-button\[aria-pressed="true"\]/u);
+    assert.doesNotMatch(styles, /visualization-inspector/u);
   }
   assert.doesNotMatch(viewerHtml, /id="atlas-visual"[^>]*aria-live/u);
 });
 
-test("both viewer shells declare a legible mobile canvas and fixed safe-area context sheet", async () => {
+test("both viewer shells declare a legible mobile canvas", async () => {
   const [viewerStyles, labStyles] = await Promise.all([
     readFile(new URL("../viewer/styles.css", import.meta.url), "utf8"),
     readFile(new URL("../viewer/family-lab.css", import.meta.url), "utf8"),
@@ -399,10 +413,7 @@ test("both viewer shells declare a legible mobile canvas and fixed safe-area con
     assert.match(styles, /--mobile-visualization-min-width:\s*900px/u);
     assert.match(styles, /\.visualization-scroll-region\s*\{[^}]*overflow-x:\s*auto/su);
     assert.match(styles, /\.visualization-scroll-region\s*>\s*svg\s*\{[^}]*min-width:\s*var\(--mobile-visualization-min-width\)/su);
-    assert.match(styles, /\.visualization-inspector\s*\{[^}]*position:\s*fixed[^}]*max-height:\s*min\(48dvh,\s*360px\)[^}]*env\(safe-area-inset-bottom\)/su);
     assert.match(styles, /@media\s*\(max-width:\s*820px\),\s*\(pointer:\s*coarse\)/u);
     assert.match(styles, /button,[\s\S]*?min-height:\s*44px/su);
   }
-  assert.match(labStyles, /body:has\(#gallery-view:not\(\[hidden\]\)\)\s+\.lab-main\s*\{[^}]*padding-bottom:/su);
-  assert.match(viewerStyles, /body:has\(\.atlas-visual\s+\.visualization-inspector\)\s+\.map-pane\s*\{[^}]*padding-bottom:/su);
 });

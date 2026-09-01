@@ -51,30 +51,31 @@ const NODE_VALUE_KEYS = new Set([
   "stage",
 ]);
 
-export const VISUALIZATION_INSPECTOR_CLASSES = Object.freeze({
-  root: "visualization-inspector",
-  header: "visualization-inspector-header",
-  heading: "visualization-inspector-heading",
-  position: "visualization-inspector-position",
-  navigation: "visualization-inspector-navigation",
-  previous: "visualization-inspector-previous",
-  next: "visualization-inspector-next",
-  close: "visualization-inspector-close",
-  body: "visualization-inspector-body",
-  rest: "visualization-inspector-rest",
-  kind: "visualization-inspector-kind",
-  label: "visualization-inspector-label",
-  summary: "visualization-inspector-summary",
-  values: "visualization-inspector-values",
-  value: "visualization-inspector-value",
-  evidence: "visualization-inspector-evidence",
-  relations: "visualization-inspector-relations",
-  relationsHeading: "visualization-inspector-relations-heading",
-  relationsList: "visualization-inspector-relations-list",
-  relation: "visualization-inspector-relation",
+// The panel below a visualization is the underlying data itself: every
+// clickable element filters this list down to the rows it stands for.
+export const VISUALIZATION_DATA_LIST_CLASSES = Object.freeze({
+  root: "visualization-data-list",
+  header: "visualization-data-list-header",
+  heading: "visualization-data-list-heading",
+  status: "visualization-data-list-status",
+  clear: "visualization-data-list-clear",
+  rows: "visualization-data-list-rows",
+  row: "visualization-data-list-row",
+  rowButton: "visualization-data-list-row-button",
+  rowLabel: "visualization-data-list-row-label",
+  rowValues: "visualization-data-list-row-values",
+  rowEvidence: "visualization-data-list-row-evidence",
+  detail: "visualization-data-list-detail",
+  detailValues: "visualization-data-list-detail-values",
+  detailValue: "visualization-data-list-detail-value",
+  relations: "visualization-data-list-relations",
+  note: "visualization-data-list-note",
+  navigation: "visualization-data-list-navigation",
   scrollRegion: "visualization-scroll-region",
   scrollHint: "visualization-scroll-hint",
 });
+
+const ALL_ROWS_LIMIT = 100;
 
 function object(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -158,10 +159,10 @@ function availableMarkIds(dataset, requestedIds) {
   ]);
 }
 
-function markEntry(dataset, markId, labels) {
+function markEntry(dataset, markId, labels, { recordByMarkId, linkByMarkId }) {
   const mark = object(dataset?.markById?.[markId]) ? dataset.markById[markId] : {};
-  const record = list(dataset?.records).find((candidate) => markIdentifier(candidate) === markId);
-  const link = list(dataset?.links).find((candidate) => markIdentifier(candidate) === markId);
+  const record = recordByMarkId.get(markId);
+  const link = linkByMarkId.get(markId);
   const relation = link ? relationFor(dataset, link, mark, labels) : null;
   const label = String(
     mark.label
@@ -216,16 +217,20 @@ export function buildVisualizationInspectionIndex(dataset, { selectableMarkIds }
   const labels = nodeLabels(dataset);
   const markIds = availableMarkIds(dataset, selectableMarkIds);
   const markIdSet = new Set(markIds);
-  const linkedNodeIds = new Set(list(dataset?.links)
+  const records = list(dataset?.records);
+  const links = list(dataset?.links);
+  const recordByMarkId = new Map(records.map((record) => [markIdentifier(record), record]));
+  const linkByMarkId = new Map(links.map((link) => [markIdentifier(link), link]));
+  const linkedNodeIds = new Set(links
     .filter((link) => markIdSet.has(markIdentifier(link)))
     .flatMap((link) => [String(link.source ?? ""), String(link.target ?? "")])
     .filter(Boolean));
   const orderedNodes = unique([
-    ...list(dataset?.records).map(nodeIdentifier).filter((nodeId) => linkedNodeIds.has(nodeId)),
+    ...records.map(nodeIdentifier).filter((nodeId) => linkedNodeIds.has(nodeId)),
     ...linkedNodeIds,
   ]);
   const entries = [
-    ...markIds.map((markId) => markEntry(dataset, markId, labels)),
+    ...markIds.map((markId) => markEntry(dataset, markId, labels, { recordByMarkId, linkByMarkId })),
     ...orderedNodes.map((nodeId) => nodeEntry(dataset, nodeId, labels)),
   ];
   return { entries };
@@ -238,18 +243,12 @@ function html(name, className, text) {
   return element;
 }
 
-function targetLabel(target) {
-  return target.kind === "node" ? "Component" : "Mark";
-}
-
 function formattedValue(value) {
   if (typeof value === "string") return value;
   if (value === null) return "None";
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value);
 }
-
-let inspectorCounter = 0;
 
 function wrapVisualizationCanvas(root, classes) {
   if (root.querySelectorAll("[data-visualization-scroll-region]").length > 0) return;
@@ -268,206 +267,202 @@ function wrapVisualizationCanvas(root, classes) {
   root.replaceChildren(region, ...children.filter((child) => child !== svg));
 }
 
-export function appendVisualizationInspector({
+function inlineValues(values) {
+  return Object.entries(values)
+    .map(([name, value]) => `${name} ${formattedValue(value)}`)
+    .join(" · ");
+}
+
+let dataListCounter = 0;
+
+export function appendVisualizationDataList({
   root,
   dataset,
   index = buildVisualizationInspectionIndex(dataset),
   selectedMarkIds = [],
   selectedNodeId = null,
+  selectedTargetId = null,
+  onSelect,
+  onClear,
+  loadTargetMembers,
 } = {}) {
-  inspectorCounter += 1;
-  const classes = VISUALIZATION_INSPECTOR_CLASSES;
+  dataListCounter += 1;
+  const classes = VISUALIZATION_DATA_LIST_CLASSES;
   wrapVisualizationCanvas(root, classes);
-  const byKey = new Map(index.entries.map((entry) => [inspectionTargetKey(entry.target), entry]));
-  const keys = [...byKey.keys()];
-  const headingId = `visualization-inspector-heading-${inspectorCounter}`;
-  const ledger = html("section", classes.root);
-  ledger.setAttribute("data-visualization-inspector", "");
-  ledger.setAttribute("aria-labelledby", headingId);
-  ledger.setAttribute("aria-live", "off");
+
+  const markEntries = index.entries.filter((entry) => entry.target.kind === "mark");
+  const entryByMarkId = new Map(markEntries.map((entry) => [entry.target.markId, entry]));
+  const totalCount = markEntries.length;
+  const selectedIds = unique(selectedMarkIds).filter((markId) => entryByMarkId.has(markId));
+  const nodeKey = selectedNodeId === null ? null : String(selectedNodeId);
+  const target = selectedTargetId === null
+    ? null
+    : (object(dataset?.targetById?.[String(selectedTargetId)]) ? dataset.targetById[String(selectedTargetId)] : null);
+
+  const headingId = `visualization-data-list-heading-${dataListCounter}`;
+  const panel = html("section", classes.root);
+  panel.setAttribute("data-visualization-data-list", "");
+  panel.setAttribute("aria-labelledby", headingId);
+  panel.setAttribute("aria-live", "off");
 
   const header = html("header", classes.header);
-  const heading = html("h2", classes.heading, "Context ledger");
+  const heading = html("h2", classes.heading, "Data");
   heading.id = headingId;
-  heading.setAttribute("id", headingId);
-  const position = html("span", classes.position);
-  position.setAttribute("data-inspector-field", "position");
-  const navigation = html("nav", classes.navigation);
-  navigation.setAttribute("aria-label", "Browse visualization targets");
-  const previous = html("button", classes.previous, "Previous");
-  previous.type = "button";
-  previous.setAttribute("data-inspector-action", "previous");
-  const next = html("button", classes.next, "Next");
-  next.type = "button";
-  next.setAttribute("data-inspector-action", "next");
-  const close = html("button", classes.close, "Close");
-  close.type = "button";
-  close.setAttribute("data-inspector-action", "close");
-  close.setAttribute("aria-label", "Close context pin");
-  navigation.append(previous, next, close);
-  header.append(heading, position, navigation);
-  const body = html("div", classes.body);
-  ledger.append(header, body);
-
-  const selectedNodeKey = selectedNodeId === null
-    ? null
-    : inspectionTargetKey({ kind: "node", nodeId: String(selectedNodeId) });
-  const selectedMarkKey = list(selectedMarkIds)
-    .map((markId) => inspectionTargetKey({ kind: "mark", markId: String(markId) }))
-    .find((key) => byKey.has(key)) ?? null;
-  let pinnedKey = byKey.has(selectedNodeKey) ? selectedNodeKey : selectedMarkKey;
-  let pointerKey = null;
-  let focusKey = null;
-
-  function setControlState(state) {
-    const traversable = keys.length > 1;
-    previous.disabled = !traversable;
-    next.disabled = !traversable;
-    previous.setAttribute("aria-disabled", String(!traversable));
-    next.setAttribute("aria-disabled", String(!traversable));
-    close.disabled = state === "rest";
-    close.setAttribute("aria-disabled", String(state === "rest"));
+  const status = html("p", classes.status);
+  status.setAttribute("data-list-field", "status");
+  header.append(heading, status);
+  const filtered = Boolean(selectedIds.length || nodeKey || target);
+  if (filtered) {
+    const clear = html("button", classes.clear, "Show all");
+    clear.type = "button";
+    clear.setAttribute("data-list-action", "clear");
+    clear.addEventListener("click", () => onClear?.());
+    header.append(clear);
   }
+  const rows = html("ol", classes.rows);
+  rows.setAttribute("data-list-field", "rows");
+  panel.append(header, rows);
 
-  function renderRest() {
-    ledger.setAttribute("data-inspector-state", "rest");
-    position.textContent = `${keys.length} target${keys.length === 1 ? "" : "s"}`;
-    const message = html(
-      "p",
-      classes.rest,
-      "Hover or focus a target to preview its context. Tap or click to pin it here.",
-    );
-    message.setAttribute("data-inspector-field", "rest");
-    body.replaceChildren(message);
-    setControlState("rest");
-  }
-
-  function renderEntry(key, state) {
-    const entry = byKey.get(key);
-    if (!entry) {
-      renderRest();
-      return;
-    }
-    ledger.setAttribute("data-inspector-state", state);
-    const entryIndex = keys.indexOf(key);
-    position.textContent = `${entryIndex + 1} of ${keys.length}`;
-    const kind = html("p", classes.kind, targetLabel(entry.target));
-    kind.setAttribute("data-inspector-field", "kind");
-    const label = html("h3", classes.label, entry.label);
-    label.setAttribute("data-inspector-field", "label");
-    const content = [kind, label];
-    if (entry.summary) {
-      const summary = html("p", classes.summary, entry.summary);
-      summary.setAttribute("data-inspector-field", "summary");
-      content.push(summary);
-    }
-    const valueEntries = Object.entries(entry.values);
-    if (valueEntries.length) {
-      const values = html("dl", classes.values);
-      valueEntries.forEach(([name, value]) => {
-        const row = html("div", classes.value);
-        row.append(html("dt", undefined, name), html("dd", undefined, formattedValue(value)));
-        values.append(row);
-      });
-      content.push(values);
-    }
-    const evidence = html(
-      "p",
-      classes.evidence,
+  function rowFor(entry, { expanded = false } = {}) {
+    const item = html("li", classes.row);
+    const markId = entry.target.markId;
+    item.setAttribute("data-list-mark-id", markId);
+    const button = html("button", classes.rowButton);
+    button.type = "button";
+    const selected = selectedIds.includes(markId);
+    button.setAttribute("aria-pressed", String(selected));
+    const line = html("span", classes.rowLabel, entry.label);
+    button.append(line);
+    // The expanded detail grid already lists every value.
+    const values = expanded ? "" : inlineValues(entry.values);
+    if (values) button.append(html("span", classes.rowValues, values));
+    button.append(html(
+      "span",
+      classes.rowEvidence,
       `${entry.evidenceCount} evidence reference${entry.evidenceCount === 1 ? "" : "s"}`,
-    );
-    evidence.setAttribute("data-inspector-field", "evidence");
-    content.push(evidence);
-    if (entry.relations.length) {
-      const relations = html("section", classes.relations);
-      const relationsHeading = html("h4", classes.relationsHeading, "Relationships");
-      const relationsList = html("ol", classes.relationsList);
-      entry.relations.forEach((relation) => {
-        relationsList.append(html(
-          "li",
-          classes.relation,
-          `${relation.label} · ${relation.evidenceCount} evidence reference${relation.evidenceCount === 1 ? "" : "s"}`,
-        ));
-      });
-      relations.append(relationsHeading, relationsList);
-      content.push(relations);
+    ));
+    // Clicking the selected row again widens back out; anything else narrows.
+    button.addEventListener("click", () => {
+      if (selected && selectedIds.length === 1 && !nodeKey && !target) onClear?.();
+      else onSelect?.({ kind: "mark", markId });
+    });
+    item.append(button);
+    if (expanded) {
+      const detail = html("div", classes.detail);
+      detail.setAttribute("data-list-field", "detail");
+      if (entry.summary) detail.append(html("p", undefined, entry.summary));
+      const valueEntries = Object.entries(entry.values);
+      if (valueEntries.length) {
+        const definitions = html("dl", classes.detailValues);
+        valueEntries.forEach(([name, value]) => {
+          const pair = html("div", classes.detailValue);
+          pair.append(html("dt", undefined, name), html("dd", undefined, formattedValue(value)));
+          definitions.append(pair);
+        });
+        detail.append(definitions);
+      }
+      if (entry.relations.length) {
+        const relations = html("ul", classes.relations);
+        entry.relations.forEach((relation) => {
+          relations.append(html(
+            "li",
+            undefined,
+            `${relation.label} · ${relation.evidenceCount} evidence reference${relation.evidenceCount === 1 ? "" : "s"}`,
+          ));
+        });
+        detail.append(relations);
+      }
+      item.append(detail);
     }
-    body.replaceChildren(...content);
-    setControlState(state);
+    return item;
   }
 
-  function refresh() {
-    const previewKey = focusKey ?? pointerKey;
-    if (previewKey) renderEntry(previewKey, "preview");
-    else if (pinnedKey) renderEntry(pinnedKey, "pinned");
-    else renderRest();
+  function renderEntries(entries, { expanded = false, note = null } = {}) {
+    rows.replaceChildren(...entries.map((entry) => rowFor(entry, { expanded })));
+    if (note) {
+      const notice = html("p", classes.note, note);
+      notice.setAttribute("data-list-field", "note");
+      rows.after(notice);
+    }
   }
 
-  function pin(key) {
-    if (!byKey.has(key)) return;
-    pinnedKey = key;
-    pointerKey = null;
-    focusKey = null;
-    refresh();
-  }
-
-  function bind(element, key) {
-    if (!byKey.has(key)) return;
-    element.addEventListener("pointerenter", () => {
-      pointerKey = key;
-      refresh();
+  if (target) {
+    const targetLabel = String(target.label ?? target.id);
+    const memberCount = Number.isInteger(target.count) ? target.count : 0;
+    panel.setAttribute("data-list-state", "target");
+    status.textContent = `${targetLabel} · ${memberCount} member${memberCount === 1 ? "" : "s"} of ${totalCount}`;
+    if (typeof loadTargetMembers === "function") {
+      let revision = 0;
+      const renderMemberPage = async (offset) => {
+        const requested = ++revision;
+        rows.replaceChildren(html("li", classes.note, "Resolving members…"));
+        try {
+          const page = await loadTargetMembers({ targetId: String(target.id), offset });
+          if (requested !== revision || !panel.isConnected) return;
+          const entries = list(page?.markIds)
+            .map((markId) => entryByMarkId.get(String(markId)))
+            .filter(Boolean);
+          rows.replaceChildren(...entries.map((entry) => rowFor(entry)));
+          const navigation = panel.querySelector(`.${classes.navigation}`);
+          navigation?.remove();
+          const shownFrom = entries.length ? offset + 1 : 0;
+          const shownTo = offset + entries.length;
+          const nav = html("nav", classes.navigation);
+          nav.setAttribute("aria-label", "Aggregate member pages");
+          nav.append(html("span", classes.note, `Showing ${shownFrom}–${shownTo} of ${memberCount}`));
+          const pageSize = Number.isSafeInteger(page?.limit) && page.limit > 0
+            ? page.limit
+            : Math.max(entries.length, 1);
+          const previous = html("button", undefined, "Previous");
+          previous.type = "button";
+          previous.disabled = offset === 0;
+          previous.addEventListener("click", () => renderMemberPage(Math.max(0, offset - pageSize)));
+          const nextOffset = Number.isSafeInteger(page?.nextOffset) ? page.nextOffset : null;
+          const next = html("button", undefined, "Next");
+          next.type = "button";
+          next.disabled = nextOffset === null;
+          next.addEventListener("click", () => {
+            if (nextOffset !== null) renderMemberPage(nextOffset);
+          });
+          nav.append(previous, next);
+          panel.append(nav);
+        } catch {
+          if (requested !== revision || !panel.isConnected) return;
+          rows.replaceChildren(html("li", classes.note, "The member list could not be loaded."));
+        }
+      };
+      renderMemberPage(0);
+    } else {
+      renderEntries([], { note: "Members resolve in the session viewer." });
+    }
+  } else if (nodeKey) {
+    const links = list(dataset?.links).filter((link) => (
+      String(link.source ?? "") === nodeKey || String(link.target ?? "") === nodeKey
+    ));
+    const connectedIds = unique(links.map(markIdentifier)).filter((markId) => entryByMarkId.has(markId));
+    const entries = connectedIds.map((markId) => entryByMarkId.get(markId));
+    const labels = nodeLabels(dataset);
+    panel.setAttribute("data-list-state", "node");
+    status.textContent = `${labels.get(nodeKey) ?? nodeKey} · ${entries.length} of ${totalCount}`;
+    renderEntries(entries);
+  } else if (selectedIds.length) {
+    const entries = selectedIds.map((markId) => entryByMarkId.get(markId));
+    panel.setAttribute("data-list-state", "filtered");
+    status.textContent = selectedIds.length === 1
+      ? `1 of ${totalCount}`
+      : `${selectedIds.length} of ${totalCount}`;
+    renderEntries(entries, { expanded: true });
+  } else {
+    const entries = markEntries.slice(0, ALL_ROWS_LIMIT);
+    panel.setAttribute("data-list-state", "all");
+    status.textContent = `${totalCount} item${totalCount === 1 ? "" : "s"} · click a point or a row to filter`;
+    renderEntries(entries, {
+      note: totalCount > ALL_ROWS_LIMIT
+        ? `Showing the first ${ALL_ROWS_LIMIT} of ${totalCount}. Click any element in the visualization to filter.`
+        : null,
     });
-    element.addEventListener("pointerleave", () => {
-      if (pointerKey === key) pointerKey = null;
-      refresh();
-    });
-    element.addEventListener("focus", () => {
-      focusKey = key;
-      refresh();
-    });
-    element.addEventListener("blur", () => {
-      if (focusKey === key) focusKey = null;
-      refresh();
-    });
-    element.addEventListener("click", () => pin(key));
-    element.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") pin(key);
-    });
   }
 
-  for (const mark of root.querySelectorAll("[data-mark-id]")) {
-    bind(mark, inspectionTargetKey({ kind: "mark", markId: String(mark.getAttribute("data-mark-id") ?? "") }));
-  }
-  for (const node of root.querySelectorAll("[data-node-id]")) {
-    bind(node, inspectionTargetKey({ kind: "node", nodeId: String(node.getAttribute("data-node-id") ?? "") }));
-  }
-  for (const node of root.querySelectorAll("[data-inspection-node-id]")) {
-    bind(node, inspectionTargetKey({
-      kind: "node",
-      nodeId: String(node.getAttribute("data-inspection-node-id") ?? ""),
-    }));
-  }
-
-  function traverse(offset) {
-    if (!keys.length) return;
-    const currentKey = focusKey ?? pointerKey ?? pinnedKey;
-    const currentIndex = keys.indexOf(currentKey);
-    const nextIndex = currentIndex === -1
-      ? offset > 0 ? 0 : keys.length - 1
-      : (currentIndex + offset + keys.length) % keys.length;
-    pin(keys[nextIndex]);
-  }
-
-  previous.addEventListener("click", () => traverse(-1));
-  next.addEventListener("click", () => traverse(1));
-  close.addEventListener("click", () => {
-    pinnedKey = null;
-    pointerKey = null;
-    focusKey = null;
-    refresh();
-  });
-
-  refresh();
-  root.append(ledger);
-  return { element: ledger, index };
+  root.append(panel);
+  return { element: panel, index };
 }

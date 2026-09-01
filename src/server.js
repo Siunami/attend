@@ -1,7 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { watch } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import {
   artifactAdapterFor,
@@ -9,6 +10,7 @@ import {
   libraryMetadataForArtifact,
   publicArtifactForBrowser,
   renderModelForArtifact,
+  resolveArtifactVisualTarget,
   selectableIdsForArtifact,
   validateArtifactPackage,
 } from "./artifacts/index.js";
@@ -21,6 +23,7 @@ import {
   retryThreadQuestion,
 } from "./chat-thread-service.js";
 import {
+  chatThreadFilePath,
   createChatThread,
   validateChatThreadId,
 } from "./chat-thread-store.js";
@@ -41,12 +44,33 @@ import {
   publicExploration,
 } from "./exploration-store.js";
 import { PACKAGE_VERSION } from "./constants.js";
+import { GENERATED_FORM_RUNTIME } from "./catalog/generated-form-runtime.js";
+import { readSessionAsset } from "./media/session-assets.js";
 
 const MAX_JSON_BYTES = 64 * 1024;
 const MAX_CHAT_CHARS = 4_000;
 const MAX_QUERY_CHARS = 500;
 const MAX_SELECTIONS = 50;
 const WORKSPACE_MUTATION_ID = /^mutation_[A-Za-z0-9._-]{8,80}$/u;
+
+function generatedViewerAssetEntries() {
+  return GENERATED_FORM_RUNTIME.staticAssets.map((relativePath) => {
+    const file = relativePath.slice(2);
+    const type = file.endsWith(".json")
+      ? "application/json; charset=utf-8"
+      : file.endsWith(".css")
+        ? "text/css; charset=utf-8"
+        : "text/javascript; charset=utf-8";
+    return [file, { file, type }];
+  });
+}
+
+function generatedFamilyLabCoreAssetEntries() {
+  return GENERATED_FORM_RUNTIME.familyLabCoreAssets.map(({ route, file }) => [
+    route,
+    { file, type: "text/javascript; charset=utf-8" },
+  ]);
+}
 
 const VIEWER_STATIC_ASSETS = new Map([
   ["", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -65,6 +89,7 @@ const VIEWER_STATIC_ASSETS = new Map([
   ["vendor/us-states.json", { file: "vendor/us-states.json", type: "application/json; charset=utf-8" }],
   ["vendor/us-counties.json", { file: "vendor/us-counties.json", type: "application/json; charset=utf-8" }],
   ["vendor/world-countries.json", { file: "vendor/world-countries.json", type: "application/json; charset=utf-8" }],
+  ...generatedViewerAssetEntries(),
 ]);
 
 const LIBRARY_STATIC_ASSETS = new Map([
@@ -94,17 +119,13 @@ const FAMILY_LAB_STATIC_ASSETS = new Map([
   ["package-renderer.js", { file: "package-renderer.js", type: "text/javascript; charset=utf-8" }],
   ["family-renderers.js", { file: "family-renderers.js", type: "text/javascript; charset=utf-8" }],
   ["visualization-inspector.js", { file: "visualization-inspector.js", type: "text/javascript; charset=utf-8" }],
-  ["core/map-families/registry.js", { file: "../src/map-families/registry.js", type: "text/javascript; charset=utf-8" }],
-  ["core/map-families/index.js", { file: "../src/map-families/index.js", type: "text/javascript; charset=utf-8" }],
-  ["core/geography.js", { file: "../src/geography.js", type: "text/javascript; charset=utf-8" }],
-  ["core/pipeline/data-package.js", { file: "../src/pipeline/data-package.js", type: "text/javascript; charset=utf-8" }],
-  ["core/pipeline/compile.js", { file: "../src/pipeline/compile.js", type: "text/javascript; charset=utf-8" }],
-  ["core/pipeline/index.js", { file: "../src/pipeline/index.js", type: "text/javascript; charset=utf-8" }],
+  ...generatedFamilyLabCoreAssetEntries(),
   ["vendor/d3.min.js", { file: "vendor/d3.min.js", type: "text/javascript; charset=utf-8" }],
   ["vendor/topojson-client.min.js", { file: "vendor/topojson-client.min.js", type: "text/javascript; charset=utf-8" }],
   ["vendor/us-states.json", { file: "vendor/us-states.json", type: "application/json; charset=utf-8" }],
   ["vendor/us-counties.json", { file: "vendor/us-counties.json", type: "application/json; charset=utf-8" }],
   ["vendor/world-countries.json", { file: "vendor/world-countries.json", type: "application/json; charset=utf-8" }],
+  ...generatedViewerAssetEntries(),
 ]);
 
 export const PACKAGED_ATLAS_ASSET_FILES = Object.freeze(
@@ -130,7 +151,9 @@ const SECURITY_HEADERS = Object.freeze({
     "connect-src 'self'",
     "font-src 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    // 'self', not 'none': the exploration workspace embeds finished artifacts
+    // as same-origin gallery previews. Foreign origins stay blocked.
+    "frame-ancestors 'self'",
     "img-src 'self' data:",
     "object-src 'none'",
     "script-src 'self'",
@@ -141,7 +164,7 @@ const SECURITY_HEADERS = Object.freeze({
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "DENY",
+  "X-Frame-Options": "SAMEORIGIN",
 });
 
 class HttpError extends Error {
@@ -180,6 +203,15 @@ function setHeaders(response, extra = {}) {
   }
 }
 
+const SSE_HEARTBEAT_MS = 15_000;
+const SSE_STATE_DEBOUNCE_MS = 100;
+const SSE_OPEN_PREAMBLE = "retry: 2000\n\n: open\n\n";
+const SSE_KEEPALIVE_FRAME = ": ping\n\n";
+
+function sseFrame(event, data) {
+  return `event: ${event}\ndata: ${data}\n\n`;
+}
+
 function sendJson(response, status, value, extraHeaders) {
   const body = JSON.stringify(value);
   response.statusCode = status;
@@ -205,6 +237,25 @@ async function sendAsset(response, requestMethod, assetRoot, asset) {
     "Content-Length": contents.length,
   });
   response.end(requestMethod === "HEAD" ? undefined : contents);
+}
+
+async function sendSessionImageAsset(response, requestMethod, root, session, assetId) {
+  let asset;
+  try {
+    asset = await readSessionAsset({ root, session, assetId });
+  } catch (error) {
+    if (typeof error?.code === "string" && error.code.startsWith("ASSET_")) {
+      throw new HttpError(404, "not_found", "not found");
+    }
+    throw error;
+  }
+  response.statusCode = 200;
+  setHeaders(response, {
+    "Content-Type": asset.mimeType,
+    "Content-Length": asset.byteLength,
+    "Content-Disposition": `inline; filename="${asset.assetId}.jpg"`,
+  });
+  response.end(requestMethod === "HEAD" ? undefined : asset.bytes);
 }
 
 function errorBody(code, message, details) {
@@ -428,7 +479,7 @@ function publicConversationTurn(turn) {
   };
 }
 
-function validateSelection(body, dataPackage, sessionId) {
+async function validateSelection(body, dataPackage, sessionId) {
   const adapter = artifactAdapterFor(dataPackage);
   if (adapter.artifactKind === "phrase-v1") {
     assertOnlyKeys(body, new Set(["expectedRevision", "selectedIds"]));
@@ -447,15 +498,31 @@ function validateSelection(body, dataPackage, sessionId) {
     return { revision, patch: { selectedIds } };
   }
 
-  assertOnlyKeys(body, new Set(["sessionId", "revision", "markId", "nodeId"]));
+  assertOnlyKeys(body, new Set(["sessionId", "revision", "markId", "markIds", "nodeId", "targetId"]));
   if (body.sessionId !== sessionId) {
     throw new HttpError(400, "invalid_selection", "Atlas selection sessionId does not match the routed session");
   }
   const revision = expectedRevision(body.revision);
   const hasMarkId = Object.hasOwn(body, "markId");
+  const hasMarkIds = Object.hasOwn(body, "markIds");
   const hasNodeId = Object.hasOwn(body, "nodeId");
-  if (hasMarkId === hasNodeId) {
-    throw new HttpError(400, "invalid_selection", "Atlas selection requires exactly one markId or nodeId");
+  const hasTargetId = Object.hasOwn(body, "targetId");
+  if ([hasMarkId, hasMarkIds, hasNodeId, hasTargetId].filter(Boolean).length !== 1) {
+    throw new HttpError(400, "invalid_selection", "Atlas selection requires exactly one markId, markIds, nodeId, or targetId");
+  }
+  if (hasTargetId) {
+    if (typeof body.targetId !== "string" || !/^target_[a-f0-9]{16}$/u.test(body.targetId)) {
+      throw new HttpError(400, "invalid_selection", "targetId must be a governed aggregate target id");
+    }
+    try {
+      await resolveArtifactVisualTarget(dataPackage, body.targetId, { offset: 0, limit: 1 });
+    } catch {
+      throw new HttpError(400, "invalid_selection", `unknown or invalid Atlas target id: ${body.targetId}`);
+    }
+    return {
+      revision,
+      patch: { markIds: [], focus: null, targetId: body.targetId },
+    };
   }
   if (hasNodeId) {
     if (typeof body.nodeId !== "string" || body.nodeId.length === 0) {
@@ -478,6 +545,32 @@ function validateSelection(body, dataPackage, sessionId) {
       patch: { markIds, focus: { kind: "node", id: body.nodeId } },
     };
   }
+  if (hasMarkIds) {
+    if (!Array.isArray(body.markIds) || body.markIds.some((id) => typeof id !== "string" || id.length === 0)) {
+      throw new HttpError(400, "invalid_selection", "markIds must be an array of selectable mark ids");
+    }
+    const seen = new Set();
+    const markIds = [];
+    for (const id of body.markIds) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        markIds.push(id);
+      }
+    }
+    if (markIds.length === 0 || markIds.length > MAX_SELECTIONS) {
+      throw new HttpError(400, "invalid_selection", `markIds must select between 1 and ${MAX_SELECTIONS} marks`);
+    }
+    const knownIds = new Set(selectableIdsForArtifact(dataPackage));
+    for (const id of markIds) {
+      if (!knownIds.has(id)) {
+        throw new HttpError(400, "invalid_selection", `unknown Atlas mark id: ${id}`);
+      }
+    }
+    return {
+      revision,
+      patch: { markIds, focus: null, targetId: null },
+    };
+  }
   if (body.markId !== null && (typeof body.markId !== "string" || body.markId.length === 0)) {
     throw new HttpError(400, "invalid_selection", "markId must be a selectable mark id or null");
   }
@@ -486,7 +579,11 @@ function validateSelection(body, dataPackage, sessionId) {
   }
   return {
     revision,
-    patch: { markIds: body.markId === null ? [] : [body.markId], focus: null },
+    patch: {
+      markIds: body.markId === null ? [] : [body.markId],
+      focus: null,
+      targetId: null,
+    },
   };
 }
 
@@ -680,6 +777,32 @@ function chatThreadIdFromRequestTarget(target) {
     throw new HttpError(400, "invalid_chat_thread_id", "state accepts one threadId");
   }
   return chatThreadId(values[0]);
+}
+
+function targetPageFromRequestTarget(target) {
+  const queryIndex = String(target ?? "").indexOf("?");
+  const params = new URLSearchParams(queryIndex < 0 ? "" : String(target).slice(queryIndex + 1));
+  const targetIds = params.getAll("targetId");
+  if (targetIds.length !== 1 || !/^target_[a-f0-9]{16}$/u.test(targetIds[0])) {
+    throw new HttpError(400, "invalid_visual_target", "targetId must identify one governed visual target");
+  }
+  const integer = (name, fallback, minimum, maximum) => {
+    const values = params.getAll(name);
+    if (values.length === 0) return fallback;
+    if (values.length !== 1 || !/^\d+$/u.test(values[0])) {
+      throw new HttpError(400, "invalid_visual_target", `${name} must be one integer`);
+    }
+    const value = Number(values[0]);
+    if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+      throw new HttpError(400, "invalid_visual_target", `${name} is outside its allowed range`);
+    }
+    return value;
+  };
+  return {
+    targetId: targetIds[0],
+    offset: integer("offset", 0, 0, Number.MAX_SAFE_INTEGER),
+    limit: integer("limit", 50, 1, 100),
+  };
 }
 
 function hostRouteFromRequestTarget(target) {
@@ -930,6 +1053,7 @@ export async function createViewerServer({
   instanceId: suppliedInstanceId,
   enqueueQuestion,
   resolveQuestionRoute,
+  questionStream,
   chatCapability,
   serviceChat,
 }) {
@@ -945,6 +1069,9 @@ export async function createViewerServer({
   }
   if (resolveQuestionRoute !== undefined && typeof resolveQuestionRoute !== "function") {
     throw new TypeError("resolveQuestionRoute must be a function when supplied");
+  }
+  if (questionStream !== undefined && typeof questionStream?.subscribe !== "function") {
+    throw new TypeError("questionStream must expose a subscribe function when supplied");
   }
   if (chatCapability !== undefined && typeof chatCapability !== "function") {
     throw new TypeError("chatCapability must be a function when supplied");
@@ -992,6 +1119,67 @@ export async function createViewerServer({
       await projectChatCapability(session, hostRoute),
       thread,
     );
+  };
+
+  const openStreams = new Set();
+  const stateWatchers = new Map();
+  const watchedDirectories = [
+    resolve(root, sessionPaths.directory),
+    // chat-thread-store exports no directory accessor, so read it back off the
+    // path a syntactically valid thread id would be written to.
+    dirname(chatThreadFilePath({ root, threadId: `thread_${"0".repeat(24)}` })),
+  ];
+  let stateBroadcastTimer = null;
+
+  const broadcastState = () => {
+    stateBroadcastTimer = null;
+    const frame = sseFrame("state", "{}");
+    for (const stream of openStreams) stream.response.write(frame);
+  };
+  const scheduleStateBroadcast = () => {
+    if (stateBroadcastTimer) return;
+    stateBroadcastTimer = setTimeout(broadcastState, SSE_STATE_DEBOUNCE_MS);
+    stateBroadcastTimer.unref();
+  };
+  const attachStateWatchers = () => {
+    for (const directory of watchedDirectories) {
+      if (stateWatchers.has(directory)) continue;
+      let watcher;
+      try {
+        watcher = watch(directory, { persistent: false }, scheduleStateBroadcast);
+      } catch {
+        continue;
+      }
+      watcher.on("error", () => {
+        watcher.close();
+        if (stateWatchers.get(directory) === watcher) stateWatchers.delete(directory);
+      });
+      stateWatchers.set(directory, watcher);
+    }
+  };
+
+  const releaseStream = (stream) => {
+    if (!openStreams.delete(stream)) return false;
+    clearInterval(stream.heartbeat);
+    stream.unsubscribe();
+    return true;
+  };
+  const openEventStream = (response, sessionId) => {
+    attachStateWatchers();
+    response.flushHeaders?.();
+    response.write(SSE_OPEN_PREAMBLE);
+    const heartbeat = setInterval(() => response.write(SSE_KEEPALIVE_FRAME), SSE_HEARTBEAT_MS);
+    heartbeat.unref();
+    const stream = { response, heartbeat, unsubscribe: () => {} };
+    openStreams.add(stream);
+    response.once("close", () => releaseStream(stream));
+    if (questionStream) {
+      stream.unsubscribe = questionStream.subscribe(sessionId, (event) => {
+        // JSON encoding is what keeps newline-bearing delta text from ending
+        // the SSE frame early.
+        response.write(sseFrame("question", JSON.stringify(event)));
+      });
+    }
   };
 
   // Fail before opening a socket if a backwards-compatible default session was
@@ -1073,6 +1261,17 @@ export async function createViewerServer({
         // Resolve the session before serving even a bundled asset, so a guessed
         // or stale session id never becomes a valid viewer surface.
         const session = await loadSession(root, routedSessionId);
+        const imageAsset = /^assets\/(asset_[a-f0-9]{32})$/u.exec(sessionRoute.route);
+        if (imageAsset) {
+          await sendSessionImageAsset(
+            response,
+            request.method,
+            root,
+            session,
+            imageAsset[1],
+          );
+          return;
+        }
         const viewerAsset = VIEWER_STATIC_ASSETS.get(sessionRoute.route);
         if (viewerAsset) {
           await sendAsset(response, request.method, assetRoot, viewerAsset);
@@ -1098,6 +1297,36 @@ export async function createViewerServer({
           sendJson(response, 200, renderModelForArtifact(dataPackageFor(session)));
           return;
         }
+        if (sessionRoute.route === "api/target-members") {
+          const { targetId, offset, limit } = targetPageFromRequestTarget(rawTarget);
+          try {
+            sendJson(
+              response,
+              200,
+              await resolveArtifactVisualTarget(
+                dataPackageFor(session),
+                targetId,
+                { offset, limit },
+              ),
+            );
+          } catch (error) {
+            if (
+              error?.code === "UNKNOWN_VISUAL_TARGET" ||
+              error?.code === "VISUAL_TARGET_MISMATCH" ||
+              error?.code === "UNSUPPORTED_VISUAL_TARGET" ||
+              error instanceof TypeError ||
+              error instanceof RangeError
+            ) {
+              throw new HttpError(
+                400,
+                "invalid_visual_target",
+                "targetId does not resolve through the package's exact form",
+              );
+            }
+            throw error;
+          }
+          return;
+        }
         if (sessionRoute.route === "api/chat/threads") {
           sendJson(response, 200, {
             schemaVersion: 1,
@@ -1112,6 +1341,16 @@ export async function createViewerServer({
             200,
             await publicProjectSession(session, requestHostRoute, threadId),
           );
+          return;
+        }
+        if (sessionRoute.route === "api/events") {
+          response.statusCode = 200;
+          setHeaders(response, { "Content-Type": "text/event-stream" });
+          if (request.method === "HEAD") {
+            response.end();
+            return;
+          }
+          openEventStream(response, routedSessionId);
           return;
         }
         throw new HttpError(404, "not_found", "not found");
@@ -1222,7 +1461,7 @@ export async function createViewerServer({
           return;
         }
         if (sessionRoute.route === "api/selection") {
-          const { revision, patch } = validateSelection(body, dataPackage, routedSessionId);
+          const { revision, patch } = await validateSelection(body, dataPackage, routedSessionId);
           try {
             const updated = await patchSession(root, routedSessionId, revision, patch);
             sendJson(response, 200, await publicProjectSession(updated, requestHostRoute));
@@ -1488,6 +1727,13 @@ export async function createViewerServer({
   let closing;
   const close = () => {
     closing ??= new Promise((resolveClose, rejectClose) => {
+      for (const stream of [...openStreams]) {
+        if (releaseStream(stream)) stream.response.end();
+      }
+      for (const [directory, watcher] of stateWatchers) {
+        watcher.close();
+        stateWatchers.delete(directory);
+      }
       if (!server.listening) {
         resolveClose();
         return;

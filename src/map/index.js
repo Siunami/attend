@@ -7,12 +7,21 @@ import {
   requireCatalogMember,
   requireExecutableCatalogMember,
 } from "../catalog/index.js";
-import { requireMapFamily } from "../map-families/registry.js";
 import {
   assertRepresentationIntentSupported,
   normalizeRepresentationIntent,
 } from "../representation-intent.js";
+import {
+  evaluateFormEligibility,
+  isLegacyExecutableForm,
+  requireExecutableForm,
+} from "../forms/index.js";
 import { compileMapWithEvidence } from "../pipeline/compile.js";
+import {
+  buildImageEvidenceStore,
+  LocalImageSetError,
+  loadLocalImageSet,
+} from "../media/index.js";
 import {
   loadSources,
   sha256 as sourceSha256,
@@ -20,7 +29,7 @@ import {
 } from "../sources.js";
 import { posix, win32 } from "node:path";
 
-const REQUEST_SCHEMA_VERSIONS = new Set([1, 2]);
+const REQUEST_SCHEMA_VERSIONS = new Set([1, 2, 3]);
 const SAFE_FIELD = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const REQUEST_KEYS = new Set([
   "version",
@@ -28,14 +37,36 @@ const REQUEST_KEYS = new Set([
   "family",
   "member",
   "representationIntent",
+  "input",
   "sources",
   "records",
   "evidence",
   "options",
 ]);
+const EVIDENCED_INPUT_KEYS = new Set(["adapter", "sources", "records", "evidence"]);
+const IMAGE_SET_INPUT_KEYS = new Set(["adapter", "directory"]);
 const SOURCE_REF_KEYS = new Set(["path", "textProjection"]);
 const EVIDENCE_KEYS = new Set(["source", "quote", "occurrence", "recordKey", "field"]);
-const OPTIONS_KEYS = new Set(["title"]);
+const OPTIONS_KEYS = new Set(["categoryOrder", "title"]);
+const LEGACY_FACETED_ATLAS_RECORD_SCHEMA = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  required: ["label", "cluster"],
+  properties: {
+    label: { type: "string" },
+    cluster: { type: "string" },
+    order: { type: "number" },
+  },
+});
+const LEGACY_FACETED_ATLAS_REQUIREMENTS = Object.freeze([Object.freeze({
+  id: "bounded-clusters",
+  kind: "group-size",
+  field: "cluster",
+  minimumGroups: 2,
+  maximumGroups: 12,
+  minimumItems: 5,
+  maximumItems: 200,
+})]);
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -52,6 +83,16 @@ function fail(code, message, path = "request") {
   error.code = code;
   error.path = path;
   throw error;
+}
+
+function ineligibleRequestedForm({ familyId, memberId, message, failedRequirements, cause }) {
+  const error = new Error(`request.member: ${message}`, cause === undefined ? undefined : { cause });
+  error.code = "INELIGIBLE_REQUESTED_FORM";
+  error.path = "request.member";
+  error.familyId = familyId;
+  error.memberId = memberId;
+  error.failedRequirements = failedRequirements;
+  return error;
 }
 
 function rejectUnknownKeys(value, allowed, path, code = "UNKNOWN_REQUEST_KEY") {
@@ -83,14 +124,62 @@ function normalizeRequest(request) {
   if (!isPlainObject(request)) fail("INVALID_REQUEST", "must be an object");
   rejectUnknownKeys(request, REQUEST_KEYS, "request");
   if (!REQUEST_SCHEMA_VERSIONS.has(request.version)) {
-    fail("INVALID_REQUEST", "version must be 1 or 2", "request.version");
+    fail("INVALID_REQUEST", "version must be 1, 2, or 3", "request.version");
   }
   const question = normalizeString(request.question, "request.question", { maximum: 4_000 });
   const family = normalizeString(request.family, "request.family", { maximum: 128 });
   const member = normalizeString(request.member, "request.member", { maximum: 128 });
-  if (!Array.isArray(request.sources) || request.sources.length === 0) fail("INVALID_REQUEST", "sources must be a non-empty array", "request.sources");
-  if (!Array.isArray(request.records) || request.records.length === 0) fail("INVALID_REQUEST", "records must be a non-empty array", "request.records");
-  if (!Array.isArray(request.evidence) || request.evidence.length === 0) fail("INVALID_REQUEST", "evidence must be a non-empty array", "request.evidence");
+  let input;
+  if (request.version === 3) {
+    if (request.sources !== undefined || request.records !== undefined || request.evidence !== undefined) {
+      fail(
+        "INVALID_REQUEST",
+        "version 3 places sources, records, and evidence inside input",
+        "request.input",
+      );
+    }
+    if (!isPlainObject(request.input)) fail("INVALID_INPUT_ADAPTER", "must be an object", "request.input");
+    const adapter = normalizeString(request.input.adapter, "request.input.adapter", { maximum: 128 });
+    if (adapter === "evidenced-records-v1") {
+      rejectUnknownKeys(request.input, EVIDENCED_INPUT_KEYS, "request.input", "UNKNOWN_INPUT_KEY");
+      if (!Array.isArray(request.input.sources) || request.input.sources.length === 0) {
+        fail("INVALID_REQUEST", "sources must be a non-empty array", "request.input.sources");
+      }
+      if (!Array.isArray(request.input.records) || request.input.records.length === 0) {
+        fail("INVALID_REQUEST", "records must be a non-empty array", "request.input.records");
+      }
+      if (!Array.isArray(request.input.evidence) || request.input.evidence.length === 0) {
+        fail("INVALID_REQUEST", "evidence must be a non-empty array", "request.input.evidence");
+      }
+      input = {
+        adapter,
+        sources: request.input.sources,
+        records: request.input.records,
+        evidence: request.input.evidence,
+      };
+    } else if (adapter === "local-image-set-v1") {
+      rejectUnknownKeys(request.input, IMAGE_SET_INPUT_KEYS, "request.input", "UNKNOWN_INPUT_KEY");
+      input = {
+        adapter,
+        directory: normalizeRelativeSourcePath(request.input.directory, "request.input.directory"),
+      };
+    } else {
+      fail("UNKNOWN_INPUT_ADAPTER", `unknown input adapter ${adapter}`, "request.input.adapter");
+    }
+  } else {
+    if (request.input !== undefined) {
+      fail("INVALID_REQUEST", "input is available only in version 3", "request.input");
+    }
+    if (!Array.isArray(request.sources) || request.sources.length === 0) fail("INVALID_REQUEST", "sources must be a non-empty array", "request.sources");
+    if (!Array.isArray(request.records) || request.records.length === 0) fail("INVALID_REQUEST", "records must be a non-empty array", "request.records");
+    if (!Array.isArray(request.evidence) || request.evidence.length === 0) fail("INVALID_REQUEST", "evidence must be a non-empty array", "request.evidence");
+    input = {
+      adapter: "evidenced-records-v1",
+      sources: request.sources,
+      records: request.records,
+      evidence: request.evidence,
+    };
+  }
   if (request.options !== undefined && !isPlainObject(request.options)) fail("INVALID_OPTIONS", "must be an object", "request.options");
   return {
     version: request.version,
@@ -99,11 +188,9 @@ function normalizeRequest(request) {
     member,
     representationIntent: normalizeRepresentationIntent(request.representationIntent, {
       path: "request.representationIntent",
-      required: request.version === 2,
+      required: request.version >= 2,
     }),
-    sources: request.sources,
-    records: request.records,
-    evidence: request.evidence,
+    input,
     options: request.options ?? {},
   };
 }
@@ -140,8 +227,8 @@ function normalizeRelativeSourcePath(value, path) {
   return normalized;
 }
 
-function normalizeEvidenceClaim(value, index) {
-  const path = `request.evidence[${index}]`;
+function normalizeEvidenceClaim(value, index, basePath = "request.evidence") {
+  const path = `${basePath}[${index}]`;
   if (!isPlainObject(value)) fail("INVALID_EVIDENCE", "must be an object", path);
   rejectUnknownKeys(value, EVIDENCE_KEYS, path, "UNKNOWN_EVIDENCE_KEY");
   const field = normalizeString(value.field, `${path}.field`, { maximum: 128 });
@@ -207,11 +294,34 @@ function projectSource(source, declaration) {
   };
 }
 
-function normalizeOptions(value) {
+function normalizeCategoryOrder(value, member) {
+  if (!isPlainObject(value)) fail("INVALID_OPTIONS", "must be an object mapping a role to its category order", "request.options.categoryOrder");
+  const declaredRoles = new Set(Object.keys(member.roleSchema?.properties ?? {}));
+  const normalized = {};
+  for (const [role, categories] of Object.entries(value)) {
+    const path = `request.options.categoryOrder.${role}`;
+    if (!SAFE_FIELD.test(role)) fail("INVALID_OPTIONS", "must be a role name", path);
+    if (declaredRoles.size > 0 && !declaredRoles.has(role)) fail("INVALID_OPTIONS", `${member.id} declares no role ${role}`, path);
+    if (!Array.isArray(categories) || categories.length === 0) fail("INVALID_OPTIONS", "must be a non-empty array of category strings", path);
+    const seen = new Set();
+    categories.forEach((category, index) => {
+      if (typeof category !== "string" || category.trim().length === 0) fail("INVALID_OPTIONS", "must be a non-empty string", `${path}[${index}]`);
+      if (seen.has(category)) fail("INVALID_OPTIONS", `duplicate category ${category}`, `${path}[${index}]`);
+      seen.add(category);
+    });
+    normalized[role] = [...categories];
+  }
+  return normalized;
+}
+
+function normalizeOptions(value, member) {
   rejectUnknownKeys(value, OPTIONS_KEYS, "request.options", "UNKNOWN_OPTIONS_KEY");
   return {
     ...(value.title === undefined ? {} : {
       title: normalizeString(value.title, "request.options.title", { maximum: 512 }),
+    }),
+    ...(value.categoryOrder === undefined ? {} : {
+      categoryOrder: normalizeCategoryOrder(value.categoryOrder, member),
     }),
   };
 }
@@ -309,9 +419,15 @@ function deriveCollectionAtlasFields(records) {
   });
 }
 
-function deriveCompiledFields(familyId, records) {
-  if (familyId === "collection-atlas") return deriveCollectionAtlasFields(records);
+function deriveCompiledFields(records, { legacyFacetedAtlasAdapter = false } = {}) {
+  if (legacyFacetedAtlasAdapter) return deriveCollectionAtlasFields(records);
   return records.map((record) => ({ ...record }));
+}
+
+function usesLegacyFacetedAtlasAdapter(normalized, family, member) {
+  return normalized.version < 3
+    && family.id === "collection-atlas"
+    && member.id === "faceted-atlas";
 }
 
 function constraintValueKey(value, requirement = {}) {
@@ -710,6 +826,50 @@ function assertMemberRequirements(member, records) {
   }
 }
 
+const LEGACY_REQUIREMENT_KIND_BY_ERROR = Object.freeze({
+  DISTINCT_COUNT_OUT_OF_RANGE: "distinct-count",
+  DUPLICATE_CONSTRAINT_TUPLE: "unique-tuple",
+  FLOW_STAGE_COUNT_OUT_OF_RANGE: "directed-flow",
+  GRAPH_NODE_COUNT_OUT_OF_RANGE: "graph-node-count",
+  GROUP_COUNT_OUT_OF_RANGE: "group-size",
+  GROUP_SIZE_OUT_OF_RANGE: "group-size",
+  INCOMPLETE_CARTESIAN: "complete-cartesian",
+  INVALID_CONSTRAINT_TIME_ORDER: "time-order",
+  INVALID_DIRECTED_FLOW: "directed-flow",
+  INVALID_DIRECTED_GRAPH: "directed-graph",
+  INVALID_HIERARCHY: "hierarchy-tree",
+  MISSING_CONSTRAINT_FIELD: "required-fields",
+  NUMERIC_AGGREGATE_VIOLATION: "numeric-aggregate",
+  NUMERIC_CONSTRAINT_VIOLATION: "numeric-range",
+  RECORD_COUNT_OUT_OF_RANGE: "record-count",
+  UNAVAILABLE_MEMBER_CAPABILITY: "capability-blocker",
+});
+
+function exactLegacyIneligibility(familyId, member, rawRecords, cause) {
+  const form = requireExecutableForm(familyId, member.id);
+  const evaluated = evaluateFormEligibility(
+    form,
+    rawRecords.map((record) => ({ roles: record.value })),
+    { adapter: { id: "evidenced-records-v1", version: 1 }, medium: "text" },
+  );
+  const expectedKind = LEGACY_REQUIREMENT_KIND_BY_ERROR[cause.code];
+  const failedRequirements = evaluated.failedRequirements.length > 0
+    ? evaluated.failedRequirements
+    : member.requirements.filter((requirement) => requirement.kind === expectedKind);
+  const error = new Error(
+    `request.member: ${familyId}/${member.id} is incompatible with the verified records`,
+    { cause },
+  );
+  error.code = "INELIGIBLE_REQUESTED_FORM";
+  error.path = "request.member";
+  error.familyId = familyId;
+  error.memberId = member.id;
+  error.failedRequirements = failedRequirements.length > 0
+    ? failedRequirements
+    : [{ id: cause.code, kind: "frozen-form-requirement" }];
+  return error;
+}
+
 function scalarLiteral(value) {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
@@ -747,38 +907,20 @@ function assertRegionIdentifiers(familyId, records) {
   });
 }
 
-function compileVariantForMember(familyId, member) {
-  const manifest = requireMapFamily(familyId);
-  if (manifest.variants.some((variant) => variant.id === member.rendererVariantId)) {
-    return member.rendererVariantId;
-  }
-  fail(
-    "INVALID_CATALOG_MEMBER",
-    `${familyId}/${member.id} does not map to a declared family variant`,
-    "request.member",
-  );
-}
-
-function compileOptionsForMember(familyId, member) {
+function compileOptionsForMember(familyId, member, options) {
   return {
     availableWidth: 1_200,
-    variant: compileVariantForMember(familyId, member),
     ...(member.mediaPolicy === "normalized-text" ? { mediaType: "text" } : {}),
+    ...(options.categoryOrder === undefined ? {} : { categoryOrder: options.categoryOrder }),
   };
 }
 
-function roleMappingForPackage(family, compiledRecords) {
-  if (family.id === "collection-atlas") {
-    return {
-      x: "x",
-      y: "y",
-      label: "label",
-      ...(compiledRecords.some((record) => record.cluster !== undefined) ? { cluster: "cluster" } : {}),
-      ...(compiledRecords.some((record) => record.order !== undefined) ? { order: "order" } : {}),
-    };
-  }
+function roleMappingForPackage(member, compiledRecords) {
+  const required = new Set(member.roleSchema?.required ?? []);
   return Object.fromEntries(
-    family.requiredRoles.concat(family.optionalRoles).map((role) => [role.id, role.id]),
+    Object.keys(member.roleSchema?.properties ?? {})
+      .filter((role) => required.has(role) || compiledRecords.some((record) => record[role] !== undefined))
+      .map((role) => [role, role]),
   );
 }
 
@@ -791,6 +933,24 @@ export async function compileCatalogMapRequest({ root, request }) {
   const family = requireCatalogFamily(normalized.family);
   const requestedMember = requireCatalogMember(normalized.family, normalized.member);
   if (normalized.representationIntent.mode === "exact" && requestedMember.status !== "executable") {
+    if (normalized.version === 3) {
+      throw ineligibleRequestedForm({
+        familyId: normalized.family,
+        memberId: normalized.member,
+        message: `${normalized.family}/${normalized.member} is ${requestedMember.status}, not executable in this release`,
+        failedRequirements: [{
+          id: "executable-status",
+          kind: "catalog-status",
+          expected: "executable",
+          actual: requestedMember.status,
+          ...(requestedMember.unavailableReason
+            ? { reason: requestedMember.unavailableReason }
+            : requestedMember.rejectionReason
+              ? { reason: requestedMember.rejectionReason }
+              : {}),
+        }],
+      });
+    }
     fail(
       "UNSUPPORTED_REQUESTED_REPRESENTATION",
       `${normalized.family}/${normalized.member} is not executable in this release`,
@@ -798,15 +958,110 @@ export async function compileCatalogMapRequest({ root, request }) {
     );
   }
   const member = requireExecutableCatalogMember(normalized.family, normalized.member);
-  assertRepresentationIntentSupported(normalized.representationIntent, {
-    family: normalized.family,
-    member,
-    path: "request.representationIntent",
-  });
-  const options = normalizeOptions(normalized.options);
-  const recordSchema = member.recordSchema;
-  const sourceRefs = uniqueSourceRefs(normalized.sources.map((source, index) =>
-    normalizeSourceRef(source, `request.sources[${index}]`)));
+  try {
+    assertRepresentationIntentSupported(normalized.representationIntent, {
+      family: normalized.family,
+      member,
+      path: "request.representationIntent",
+    });
+  } catch (error) {
+    if (normalized.version !== 3 || error?.code !== "UNSUPPORTED_REQUESTED_REPRESENTATION") throw error;
+    const constraintIndex = Number(error.path?.match(/constraints\[([0-9]+)\]/u)?.[1]);
+    const constraint = normalized.representationIntent.constraints[constraintIndex];
+    throw ineligibleRequestedForm({
+      familyId: normalized.family,
+      memberId: normalized.member,
+      message: error.message,
+      cause: error,
+      failedRequirements: [{
+        id: constraint ? `representation-${constraint.kind}` : "representation-capability",
+        kind: "representation-capability",
+        ...(constraint ? {
+          constraintKind: constraint.kind,
+          expected: member.representationCapabilities?.constraints?.[constraint.kind] ?? [],
+          actual: constraint.value,
+        } : {}),
+      }],
+    });
+  }
+  const options = normalizeOptions(normalized.options, member);
+  if (normalized.input.adapter === "local-image-set-v1") {
+    if (family.id !== "collection-atlas" || member.id !== "contact-atlas") {
+      const error = new Error(
+        `request.member: ${family.id}/${member.id} does not accept local-image-set-v1 input`,
+      );
+      error.code = "INELIGIBLE_REQUESTED_FORM";
+      error.path = "request.member";
+      error.familyId = family.id;
+      error.memberId = member.id;
+      error.failedRequirements = [{
+        id: "input-adapter",
+        kind: "adapter-policy",
+        expected: "evidenced-records-v1",
+        actual: "local-image-set-v1",
+      }];
+      throw error;
+    }
+    let imageSet;
+    try {
+      imageSet = await loadLocalImageSet({
+        root,
+        directory: normalized.input.directory,
+      });
+    } catch (error) {
+      if (normalized.representationIntent.mode !== "exact" || !(error instanceof LocalImageSetError)) throw error;
+      throw ineligibleRequestedForm({
+        familyId: family.id,
+        memberId: member.id,
+        message: error.message,
+        cause: error,
+        failedRequirements: error.failedRequirements.map(({ requirement, message, ...details }) => ({
+          id: requirement,
+          kind: "media-eligibility",
+          message,
+          ...details,
+        })),
+      });
+    }
+    const compiledFields = imageSet.canonicalSourceBundle.records.map((record) => record.fields);
+    const { dataPackage, evidenceReferences } = await compileMapWithEvidence({
+      familyId: family.id,
+      catalog: catalogReceiptForMember(family.id, member.id),
+      question: {
+        text: normalized.question,
+        target: options.title ?? family.title,
+        analyticJob: `${family.id}:${member.id}`,
+      },
+      sourceBundle: imageSet.canonicalSourceBundle,
+      roleMapping: roleMappingForPackage(member, compiledFields),
+      options: compileOptionsForMember(family.id, member, options),
+    });
+    const evidenceStore = buildImageEvidenceStore({
+      dataPackage,
+      sources: imageSet.canonicalSourceBundle.sources,
+      evidenceReferences,
+      sourceBundleSha256: imageSet.stagingManifest.sourceBundleSha256,
+    });
+    return {
+      catalogVersion: CATALOG_VERSION,
+      representationIntent: normalized.representationIntent,
+      dataPackage,
+      evidenceStore,
+      family,
+      member,
+      imageSet,
+      loadedSources: imageSet.canonicalSourceBundle.sources,
+      knownOmissions: imageSet.canonicalSourceBundle.knownOmissions,
+      disclosures: imageSet.disclosures,
+    };
+  }
+  const evidencedInput = normalized.input;
+  const legacyFacetedAtlasAdapter = usesLegacyFacetedAtlasAdapter(normalized, family, member);
+  const recordSchema = legacyFacetedAtlasAdapter
+    ? LEGACY_FACETED_ATLAS_RECORD_SCHEMA
+    : member.recordSchema;
+  const sourceRefs = uniqueSourceRefs(evidencedInput.sources.map((source, index) =>
+    normalizeSourceRef(source, `request${normalized.version === 3 ? ".input" : ""}.sources[${index}]`)));
   const requestedInputs = [...new Set(sourceRefs.map((source) => source.path))].sort(compareText);
   const rawLoaded = await loadSources({ root, inputPaths: requestedInputs });
   const loaded = {
@@ -817,9 +1072,11 @@ export async function compileCatalogMapRequest({ root, request }) {
     )),
   };
   const sourceByPath = new Map(loaded.sources.map((source) => [source.displayPath, source]));
-  const evidenceClaims = normalized.evidence.map(normalizeEvidenceClaim);
+  const evidenceBasePath = normalized.version === 3 ? "request.input.evidence" : "request.evidence";
+  const evidenceClaims = evidencedInput.evidence.map((claim, index) =>
+    normalizeEvidenceClaim(claim, index, evidenceBasePath));
 
-  const rawRecords = normalized.records.map((record, index) => {
+  const rawRecords = evidencedInput.records.map((record, index) => {
     const recordKey = normalizeString(record.key ?? record.id ?? `record-${index + 1}`, `request.records[${index}].key`, { maximum: 256 });
     const { key: _key, ...fields } = record;
     validateAgainstSchema(fields, recordSchema, `request.records[${index}]`);
@@ -829,7 +1086,19 @@ export async function compileCatalogMapRequest({ root, request }) {
     };
   });
   assertRegionIdentifiers(family.id, rawRecords);
-  assertMemberRequirements(member, rawRecords);
+  // Preserve the frozen map-request errors for the original 18 forms. New
+  // exact forms are governed by their FormDefinition so callers receive one
+  // structured eligibility failure instead of a family-era constraint error.
+  if (legacyFacetedAtlasAdapter) {
+    assertMemberRequirements({ requirements: LEGACY_FACETED_ATLAS_REQUIREMENTS }, rawRecords);
+  } else if (isLegacyExecutableForm({ familyId: family.id, memberId: member.id })) {
+    try {
+      assertMemberRequirements(member, rawRecords);
+    } catch (error) {
+      if (normalized.version !== 3 || normalized.representationIntent.mode !== "exact") throw error;
+      throw exactLegacyIneligibility(family.id, member, rawRecords, error);
+    }
+  }
   const recordByKey = new Map();
   rawRecords.forEach((record, index) => {
     if (recordByKey.has(record.key)) fail("DUPLICATE_RECORD_KEY", `duplicate record key ${record.key}`, `request.records[${index}].key`);
@@ -878,7 +1147,10 @@ export async function compileCatalogMapRequest({ root, request }) {
     }
   });
 
-  const compiledFields = deriveCompiledFields(family.id, rawRecords.map((record) => record.value));
+  const compiledFields = deriveCompiledFields(
+    rawRecords.map((record) => record.value),
+    { legacyFacetedAtlasAdapter },
+  );
   const compiledRecords = rawRecords.map((record, index) => {
     const evidenceRefs = [...(evidenceRefsByRecord.get(record.key) ?? [])].sort((left, right) =>
       compareText(left.sourceId, right.sourceId) || compareText(JSON.stringify(left.locator), JSON.stringify(right.locator)));
@@ -904,7 +1176,10 @@ export async function compileCatalogMapRequest({ root, request }) {
     sourceBundle: {
       kind: "attend-normalized-source-bundle",
       schemaVersion: 1,
-      adapter: { id: "catalog_map_request", version: 1 },
+      adapter: {
+        id: "evidenced-records-v1",
+        version: 1,
+      },
       medium: "text",
       requestedInputs,
       knownOmissions: loaded.omissions.map((omission) => omission.reason ?? omission.id),
@@ -921,8 +1196,8 @@ export async function compileCatalogMapRequest({ root, request }) {
       })),
       records: compiledRecords,
     },
-    roleMapping: roleMappingForPackage(family, compiledFields),
-    options: compileOptionsForMember(family.id, member),
+    roleMapping: roleMappingForPackage(member, compiledFields),
+    options: compileOptionsForMember(family.id, member, options),
   });
 
   const evidenceStore = buildEvidenceStore({

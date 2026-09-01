@@ -1,8 +1,21 @@
 import {
+  CANONICAL_INPUT_MEDIA,
   REPEAT_LAYOUT_PROFILES,
   getMapFamily,
   requireMapFamily,
 } from "../map-families/registry.js";
+import {
+  canonicalObservationsFromPackage,
+  evaluateFormEligibility,
+  evaluateFormSourcePolicy,
+  getExecutableForm,
+  projectFormPayload,
+} from "../forms/index.js";
+import {
+  CATALOG_VERSION,
+  resolveCatalogReceipt,
+} from "../catalog/index.js";
+import { historicalPackageContractForMember } from "./historical-package-contracts.js";
 
 export const DATA_PACKAGE_SCHEMA_VERSION = 2;
 export const DATA_PACKAGE_KIND = "attend-data-package";
@@ -10,6 +23,17 @@ export const DATA_PACKAGE_KIND = "attend-data-package";
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_ID = /^[a-z][a-z0-9_-]{1,127}$/u;
 const OPAQUE_EVIDENCE_REF = /^evidence_[a-f0-9]{16}$/u;
+const CONTACT_ASSET_ID = /^asset_[a-f0-9]{32}$/u;
+const CONTACT_CAPTURE_TIME_DISCLOSURE_FIELDS = new Set([
+  "basis",
+  "tieBreak",
+  "tieStatement",
+  "tiedItemCount",
+  "tiedTimestampGroupCount",
+  "timezoneStatement",
+  "timezoneStatus",
+  "unknownTimezoneCount",
+]);
 const DATA_PACKAGE_FIELDS = new Set([
   "catalog",
   "execution",
@@ -162,6 +186,30 @@ const PAYLOAD_EXTRA_FIELDS = Object.freeze({
   "annotated-specimen": ["layers", "specimenIds"],
   "collection-atlas": ["clusters", "domains"],
 });
+const PAYLOAD_DERIVED_ITEM_FIELDS = Object.freeze({
+  "collection-atlas/faceted-atlas": ["x", "y"],
+  "composition/part-list": ["share"],
+  "hierarchy/icicle": ["depth", "leaf", "targetId", "total"],
+  "hierarchy/outline": ["depth", "leaf", "path", "targetId", "total"],
+  "hierarchy/treemap": ["depth", "leaf", "targetId", "total"],
+  "sequence/state-ribbon": ["endShare", "share", "startShare"],
+});
+const VISUAL_TARGET_FIELDS = new Set([
+  "count",
+  "id",
+  "includeUpper",
+  "index",
+  "item",
+  "kind",
+  "label",
+  "lower",
+  "membershipHash",
+  "nodeId",
+  "operator",
+  "states",
+  "threshold",
+  "upper",
+]);
 const FORBIDDEN_SOURCE_CONTENT_FIELDS = new Set([
   "body",
   "bytes",
@@ -194,6 +242,60 @@ export class DataPackageContractError extends TypeError {
 
 function fail(code, message, path) {
   throw new DataPackageContractError(code, message, path);
+}
+
+function currentPackageContract(form, manifest) {
+  return {
+    ...form,
+    payload: {
+      ...form.payload,
+      itemFields: PAYLOAD_DERIVED_ITEM_FIELDS[form.key] ?? [],
+    },
+    family: {
+      id: manifest.id,
+      version: manifest.version,
+      group: manifest.group,
+      dataSchemaVersion: manifest.transformation.payload.schemaVersion,
+      minimumMarks: manifest.data.minimumRecords,
+      maximumMarks: manifest.data.maximumRecords,
+      maximumEnrichments: manifest.enrichment.maximumPatches,
+    },
+    presentation: {
+      renderer: form.renderer,
+      multiples: {
+        policy: manifest.multiples.policy,
+        supportedProfiles: manifest.multiples.supportedMedia,
+        adaptationDecisions: Object.fromEntries(manifest.multiples.supportedMedia.map((profile) => [
+          profile,
+          REPEAT_LAYOUT_PROFILES[profile]?.adaptationDecision,
+        ])),
+      },
+      geography: manifest.renderer.geography ?? null,
+    },
+  };
+}
+
+function packageFormContract(familyId, memberId, catalogVersion, manifest) {
+  if (catalogVersion === CATALOG_VERSION) {
+    const form = getExecutableForm(familyId, memberId);
+    if (!form) {
+      fail(
+        "INVALID_CATALOG",
+        `catalog member ${String(familyId)}/${String(memberId)} has no executable form contract`,
+        "dataPackage.catalog.member",
+      );
+    }
+    return currentPackageContract(form, manifest);
+  }
+  try {
+    return historicalPackageContractForMember(catalogVersion, familyId, memberId);
+  } catch {
+    fail(
+      "INVALID_CATALOG",
+      `catalog version ${String(catalogVersion)} has no frozen package contract for ${String(familyId)}/${String(memberId)}`,
+      "dataPackage.catalog",
+    );
+  }
 }
 
 function rejectUnknownFields(value, allowed, path) {
@@ -313,6 +415,8 @@ function validateScope(scope, path) {
   rejectUnknownFields(scope.adapter, ADAPTER_FIELDS, `${path}.adapter`);
   safeIdentifier(scope.adapter?.id, `${path}.adapter.id`);
   if (!Number.isSafeInteger(scope.adapter?.version) || scope.adapter.version < 1) fail("INVALID_SCOPE", "adapter version must be a positive integer", `${path}.adapter.version`);
+  if (!CANONICAL_INPUT_MEDIA.includes(scope.inputMedium)) fail("INVALID_SCOPE", "inputMedium must be canonical", `${path}.inputMedium`);
+  requiredString(scope.mediaAdapterDecision, `${path}.mediaAdapterDecision`, 128);
   if (!Array.isArray(scope.requestedInputs)) fail("INVALID_SCOPE", "requestedInputs must be an array", `${path}.requestedInputs`);
   scope.requestedInputs.forEach((value, index) => safeDisplayPath(value, `${path}.requestedInputs[${index}]`));
   if (!Number.isSafeInteger(scope.recordCount) || scope.recordCount < 0) fail("INVALID_SCOPE", "recordCount must be a non-negative integer", `${path}.recordCount`);
@@ -385,25 +489,117 @@ function validateMedia(media, path) {
   }
 }
 
-function validateMarks(marks, manifest, path) {
+function validateContactAssetFields(value, path) {
+  if (!CONTACT_ASSET_ID.test(value?.assetId ?? "")) {
+    fail(
+      "INVALID_CONTACT_ASSET",
+      "assetId must be an opaque 32-hex staged asset id",
+      `${path}.assetId`,
+    );
+  }
+  const expectedRoute = `assets/${value.assetId}`;
+  if (value.previewRoute !== expectedRoute) {
+    fail(
+      "INVALID_CONTACT_ASSET",
+      "previewRoute must be the relative route derived from assetId",
+      `${path}.previewRoute`,
+    );
+  }
+  return expectedRoute;
+}
+
+function validateContactCaptureTimeDisclosure(value, itemCount, path) {
+  if (!isPlainObject(value)) fail("INVALID_CONTACT_DISCLOSURE", "must be an object", path);
+  rejectUnknownFields(value, CONTACT_CAPTURE_TIME_DISCLOSURE_FIELDS, path);
+  if (value.basis !== "camera-local DateTimeOriginal") {
+    fail("INVALID_CONTACT_DISCLOSURE", "basis must identify camera-local DateTimeOriginal", `${path}.basis`);
+  }
+  if (value.tieBreak !== "verified source order; normalized relative-path values are not published") {
+    fail("INVALID_CONTACT_DISCLOSURE", "tieBreak must state the fixed private tie-break policy", `${path}.tieBreak`);
+  }
+  if (!["unknown", "partial", "declared"].includes(value.timezoneStatus)) {
+    fail("INVALID_CONTACT_DISCLOSURE", "timezoneStatus must be unknown, partial, or declared", `${path}.timezoneStatus`);
+  }
+  for (const field of ["unknownTimezoneCount", "tiedTimestampGroupCount", "tiedItemCount"]) {
+    if (!Number.isSafeInteger(value[field]) || value[field] < 0 || value[field] > itemCount) {
+      fail("INVALID_CONTACT_DISCLOSURE", `${field} must be a bounded non-negative count`, `${path}.${field}`);
+    }
+  }
+  if ((value.timezoneStatus === "unknown" && value.unknownTimezoneCount !== itemCount)
+    || (value.timezoneStatus === "declared" && value.unknownTimezoneCount !== 0)
+    || (value.timezoneStatus === "partial" && (value.unknownTimezoneCount === 0 || value.unknownTimezoneCount === itemCount))) {
+    fail("INVALID_CONTACT_DISCLOSURE", "timezoneStatus does not match unknownTimezoneCount", `${path}.timezoneStatus`);
+  }
+  if ((value.tiedTimestampGroupCount === 0) !== (value.tiedItemCount === 0)
+    || value.tiedTimestampGroupCount > Math.floor(value.tiedItemCount / 2)) {
+    fail("INVALID_CONTACT_DISCLOSURE", "tie counts are inconsistent", `${path}.tiedTimestampGroupCount`);
+  }
+  requiredString(value.timezoneStatement, `${path}.timezoneStatement`, 512);
+  requiredString(value.tieStatement, `${path}.tieStatement`, 512);
+}
+
+function roleValueMatches(value, type) {
+  if (type === "string") return typeof value === "string" && value.trim().length > 0 && value.length <= 16_384;
+  if (type === "number") return typeof value === "number" && Number.isFinite(value);
+  if (type === "time") {
+    if (typeof value === "number") return Number.isFinite(value);
+    return typeof value === "string" && value.trim().length > 0 && value.length <= 16_384 && Number.isFinite(Date.parse(value));
+  }
+  if (type === "identifier") {
+    return (typeof value === "string" && value.trim().length > 0 && value.length <= 1_024)
+      || (typeof value === "number" && Number.isFinite(value));
+  }
+  if (type === "latitude") return typeof value === "number" && Number.isFinite(value) && value >= -90 && value <= 90;
+  if (type === "longitude") return typeof value === "number" && Number.isFinite(value) && value >= -180 && value <= 180;
+  if (type === "ratio") return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+  if (type === "media") return isPlainObject(value) || (typeof value === "string" && value.trim().length > 0 && value.length <= 16_384);
+  return false;
+}
+
+function validateMarks(marks, manifest, form, path) {
   if (!Array.isArray(marks)) fail("INVALID_MARKS", "must be an array", path);
-  const ids = new Set();
+  const rolesById = new Map(
+    [...form.roles.required, ...form.roles.optional]
+      .map((role) => [role.id, role]),
+  );
+  const marksById = new Map();
   for (let index = 0; index < marks.length; index += 1) {
     const mark = marks[index];
     const itemPath = `${path}[${index}]`;
     if (!isPlainObject(mark)) fail("INVALID_MARK", "must be an object", itemPath);
     rejectUnknownFields(mark, MARK_FIELDS, itemPath);
     safeIdentifier(mark.id, `${itemPath}.id`);
-    if (ids.has(mark.id)) fail("DUPLICATE_MARK", `duplicate mark id ${mark.id}`, `${itemPath}.id`);
-    ids.add(mark.id);
+    if (marksById.has(mark.id)) fail("DUPLICATE_MARK", `duplicate mark id ${mark.id}`, `${itemPath}.id`);
+    marksById.set(mark.id, mark);
     requiredString(mark.kind, `${itemPath}.kind`, 128);
     requiredString(mark.label, `${itemPath}.label`, 1_000);
     if (typeof mark.summary !== "string" || mark.summary.length > 4_000) fail("INVALID_MARK", "summary must be a bounded string", `${itemPath}.summary`);
     if (!isPlainObject(mark.values)) fail("INVALID_MARK", "values must be an object", `${itemPath}.values`);
     rejectUnknownFields(mark.values, new Set([
-      ...manifest.data.requiredRoles.map((role) => role.id),
-      ...manifest.data.optionalRoles.map((role) => role.id),
+      ...form.roles.required.map((role) => role.id),
+      ...form.roles.optional.map((role) => role.id),
     ]), `${itemPath}.values`);
+    for (const role of form.roles.required) {
+      if (!Object.hasOwn(mark.values, role.id)) {
+        fail(
+          "MISSING_REQUIRED_ROLE_VALUE",
+          `mark is missing required role ${role.id}`,
+          `${itemPath}.values.${role.id}`,
+        );
+      }
+    }
+    for (const [roleId, value] of Object.entries(mark.values)) {
+      const role = rolesById.get(roleId);
+      if (!Array.isArray(role?.types)
+        || role.types.length === 0
+        || !role.types.some((type) => roleValueMatches(value, type))) {
+        fail(
+          "INVALID_ROLE_VALUE",
+          `mark role ${roleId} does not match ${role?.types?.join(" or ") ?? "its frozen type"}`,
+          `${itemPath}.values.${roleId}`,
+        );
+      }
+    }
     assertJson(mark.values, `${itemPath}.values`);
     if (!Array.isArray(mark.evidenceRefs) || mark.evidenceRefs.length === 0) fail("INVALID_MARK", "at least one evidence reference is required", `${itemPath}.evidenceRefs`);
     const evidenceRefs = new Set();
@@ -417,35 +613,101 @@ function validateMarks(marks, manifest, path) {
       evidenceRefs.add(reference);
     });
     if (mark.media !== undefined) validateMedia(mark.media, `${itemPath}.media`);
+    if (form.key === "collection-atlas/contact-atlas") {
+      const expectedRoute = validateContactAssetFields(mark.values, `${itemPath}.values`);
+      if (mark.media?.preview?.src !== expectedRoute) {
+        fail(
+          "INVALID_CONTACT_ASSET",
+          "media.preview.src must match the mark's staged asset route",
+          `${itemPath}.media.preview.src`,
+        );
+      }
+    }
     assertNoPrivateFields(mark, itemPath, PUBLIC_EVIDENCE_LINK_FIELDS);
   }
-  return ids;
+  return marksById;
 }
 
-function validatePayload(payload, manifest, markIds, path) {
-  if (!isPlainObject(payload) || payload.schemaVersion !== manifest.transformation.payload.schemaVersion || payload.kind !== manifest.transformation.payload.kind) fail("INVALID_PAYLOAD", "kind or schemaVersion does not match the family manifest", path);
+function validatePayload(payload, manifest, form, marksById, path) {
+  if (!isPlainObject(payload) || payload.schemaVersion !== form.payload.schemaVersion || payload.kind !== form.payload.kind) fail("INVALID_PAYLOAD", "kind or schemaVersion does not match the exact form receipt", path);
   assertNoPrivateFields(payload, path, PUBLIC_EVIDENCE_LINK_FIELDS);
-  const collection = manifest.transformation.payload.collection;
-  rejectUnknownFields(payload, new Set([
-    "kind",
-    "schemaVersion",
-    collection,
-    ...(PAYLOAD_EXTRA_FIELDS[manifest.id] ?? []),
-  ]), path);
+  const collection = form.payload.collection;
+  const payloadFields = form.payload.fields ?? [];
+  rejectUnknownFields(payload, new Set(["kind", "schemaVersion", collection, ...payloadFields]), path);
+  for (const field of payloadFields) {
+    if (!Object.hasOwn(payload, field)) fail("INVALID_PAYLOAD", `exact form payload is missing ${field}`, `${path}.${field}`);
+  }
   if (!Array.isArray(payload[collection])) fail("INVALID_PAYLOAD", `must contain array ${collection}`, `${path}.${collection}`);
+  const declaredRoles = [...form.roles.required, ...form.roles.optional];
   const referenced = new Set();
   for (let index = 0; index < payload[collection].length; index += 1) {
     const item = payload[collection][index];
-    if (!isPlainObject(item) || !markIds.has(item.markId)) fail("DANGLING_PAYLOAD_MARK", "payload item references an unknown mark", `${path}.${collection}[${index}].markId`);
+    if (!isPlainObject(item) || !marksById.has(item.markId)) fail("DANGLING_PAYLOAD_MARK", "payload item references an unknown mark", `${path}.${collection}[${index}].markId`);
     rejectUnknownFields(item, new Set([
       "markId",
-      ...manifest.data.requiredRoles.map((role) => role.id),
-      ...manifest.data.optionalRoles.map((role) => role.id),
+      ...form.roles.required.map((role) => role.id),
+      ...form.roles.optional.map((role) => role.id),
+      ...(form.payload.itemFields ?? []),
     ]), `${path}.${collection}[${index}]`);
+    const mark = marksById.get(item.markId);
     if (referenced.has(item.markId)) fail("DUPLICATE_PAYLOAD_MARK", `mark ${item.markId} appears more than once`, `${path}.${collection}[${index}].markId`);
     referenced.add(item.markId);
+    if (form.key === "collection-atlas/contact-atlas") {
+      validateContactAssetFields(item, `${path}.${collection}[${index}]`);
+      const markValues = mark.values;
+      if (item.assetId !== markValues.assetId || item.previewRoute !== markValues.previewRoute) {
+        fail(
+          "INVALID_CONTACT_ASSET",
+          "payload asset identity must match its source-backed mark",
+          `${path}.${collection}[${index}]`,
+        );
+      }
+    }
+    for (const role of declaredRoles) {
+      const markHasRole = Object.hasOwn(mark.values, role.id);
+      const payloadHasRole = Object.hasOwn(item, role.id);
+      if (markHasRole !== payloadHasRole
+        || (markHasRole && canonicalJson(item[role.id]) !== canonicalJson(mark.values[role.id]))) {
+        fail(
+          "PAYLOAD_ROLE_MISMATCH",
+          `payload item does not exactly preserve mark role ${role.id}`,
+          `${path}.${collection}[${index}].${role.id}`,
+        );
+      }
+    }
   }
-  if (referenced.size !== markIds.size) fail("INCOMPLETE_PAYLOAD_MARKS", "payload must reference every mark exactly once", path);
+  if (referenced.size !== marksById.size) fail("INCOMPLETE_PAYLOAD_MARKS", "payload must reference every mark exactly once", path);
+  if (form.key === "collection-atlas/contact-atlas") {
+    validateContactCaptureTimeDisclosure(
+      payload.captureTimeDisclosure,
+      marksById.size,
+      `${path}.captureTimeDisclosure`,
+    );
+  }
+  if (payload.visualTargets !== undefined) {
+    if (!Array.isArray(payload.visualTargets)) fail("INVALID_VISUAL_TARGET", "visualTargets must be an array", `${path}.visualTargets`);
+    const targetIds = new Set();
+    payload.visualTargets.forEach((target, index) => {
+      const targetPath = `${path}.visualTargets[${index}]`;
+      if (!isPlainObject(target)) fail("INVALID_VISUAL_TARGET", "must be an object", targetPath);
+      rejectUnknownFields(target, VISUAL_TARGET_FIELDS, targetPath);
+      if (!/^target_[a-f0-9]{16}$/u.test(target.id ?? "") || targetIds.has(target.id)) fail("INVALID_VISUAL_TARGET", "id must be a unique derived target id", `${targetPath}.id`);
+      targetIds.add(target.id);
+      requiredString(target.kind, `${targetPath}.kind`, 128);
+      if (!form.selection.targetKinds.includes(target.kind)) {
+        fail("INVALID_VISUAL_TARGET", `${target.kind} is not allowed for ${form.key}`, `${targetPath}.kind`);
+      }
+      requiredString(target.label, `${targetPath}.label`, 1_000);
+      if (!Number.isSafeInteger(target.count) || target.count < 1 || target.count > 1_000_000) fail("INVALID_VISUAL_TARGET", "count must be a bounded positive membership count", `${targetPath}.count`);
+      if (!SHA256.test(target.membershipHash ?? "")) fail("INVALID_VISUAL_TARGET", "membershipHash must be SHA-256", `${targetPath}.membershipHash`);
+    });
+    for (const field of ["bins", "steps", "segments", "levels", collection]) {
+      if (!Array.isArray(payload[field])) continue;
+      payload[field].forEach((item, index) => {
+        if (item?.targetId !== undefined && !targetIds.has(item.targetId)) fail("INVALID_VISUAL_TARGET", `unknown targetId ${String(item.targetId)}`, `${path}.${field}[${index}].targetId`);
+      });
+    }
+  }
   if (manifest.id === "composition" && Array.isArray(payload.totals)) {
     payload.totals.forEach((total, index) => {
       if (!isPlainObject(total)) fail("INVALID_PAYLOAD", "composition totals must be objects", `${path}.totals[${index}]`);
@@ -459,26 +721,32 @@ function validatePayload(payload, manifest, markIds, path) {
     "collection-atlas": { domains: ["x", "y"] },
   }[manifest.id];
   for (const [field, keys] of Object.entries(boundedObjectFields ?? {})) {
+    if (payload[field] === undefined) continue;
     if (!isPlainObject(payload[field])) fail("INVALID_PAYLOAD", `${field} must be an object`, `${path}.${field}`);
     rejectUnknownFields(payload[field], new Set(keys), `${path}.${field}`);
   }
   assertJson(payload, path);
 }
 
-function validateRoleMapping(mapping, manifest, path) {
+function validateRoleMapping(mapping, form, path) {
   if (!isPlainObject(mapping)) fail("INVALID_ROLE_MAPPING", "must be an object", path);
   const allowed = new Set([
-    ...manifest.data.requiredRoles.map((role) => role.id),
-    ...manifest.data.optionalRoles.map((role) => role.id),
+    ...form.roles.required.map((role) => role.id),
+    ...form.roles.optional.map((role) => role.id),
   ]);
-  for (const role of manifest.data.requiredRoles) requiredString(mapping[role.id], `${path}.${role.id}`, 256);
+  for (const role of form.roles.required) requiredString(mapping[role.id], `${path}.${role.id}`, 256);
   for (const [key, value] of Object.entries(mapping)) {
     if (!allowed.has(key)) fail("INVALID_ROLE_MAPPING", `unknown role ${key}`, `${path}.${key}`);
     requiredString(value, `${path}.${key}`, 256);
   }
 }
 
-function validateProvenance(provenance, manifest, path) {
+function validateProvenance(provenance, form, {
+  marks,
+  roleMapping,
+  scope,
+  sources,
+}, path) {
   if (!isPlainObject(provenance)) fail("INVALID_PROVENANCE", "must be an object", path);
   rejectUnknownFields(provenance, PROVENANCE_FIELDS, path);
   if (!isPlainObject(provenance.pipeline)) fail("INVALID_PROVENANCE", "pipeline must be an object", `${path}.pipeline`);
@@ -489,13 +757,50 @@ function validateProvenance(provenance, manifest, path) {
   rejectUnknownFields(provenance.inputs, PROVENANCE_INPUT_FIELDS, `${path}.inputs`);
   if (!isPlainObject(provenance.inputs.adapter)) fail("INVALID_PROVENANCE", "input adapter must be an object", `${path}.inputs.adapter`);
   rejectUnknownFields(provenance.inputs.adapter, ADAPTER_FIELDS, `${path}.inputs.adapter`);
-  if (!Array.isArray(provenance.transformations) || provenance.transformations.length === 0 || provenance.transformations[0]?.id !== manifest.transformation.id) fail("INVALID_PROVENANCE", "family transformation receipt is missing", `${path}.transformations`);
-  if (!Array.isArray(provenance.enrichments) || provenance.enrichments.length > manifest.enrichment.maximumPatches) fail("INVALID_PROVENANCE", "enrichments exceed the family bound", `${path}.enrichments`);
+  safeIdentifier(provenance.inputs.adapter.id, `${path}.inputs.adapter.id`);
+  if (!Number.isSafeInteger(provenance.inputs.adapter.version) || provenance.inputs.adapter.version < 1) {
+    fail("INVALID_PROVENANCE", "input adapter version must be positive", `${path}.inputs.adapter.version`);
+  }
+  if (canonicalJson(provenance.inputs.adapter) !== canonicalJson(scope.adapter)) {
+    fail("INVALID_PROVENANCE", "input adapter must match the package scope", `${path}.inputs.adapter`);
+  }
+  if (provenance.inputs.medium !== scope.inputMedium) {
+    fail("INVALID_PROVENANCE", "input medium must match the package scope", `${path}.inputs.medium`);
+  }
+  if (provenance.inputs.mediaAdapterDecision !== scope.mediaAdapterDecision) {
+    fail("INVALID_PROVENANCE", "media adapter decision must match the package scope", `${path}.inputs.mediaAdapterDecision`);
+  }
+  if (provenance.inputs.recordCount !== scope.recordCount) {
+    fail("INVALID_PROVENANCE", "input record count must match the package scope", `${path}.inputs.recordCount`);
+  }
+  const expectedSourceIds = sources.map((source) => source.id);
+  if (canonicalJson(provenance.inputs.sourceIds) !== canonicalJson(expectedSourceIds)) {
+    fail("INVALID_PROVENANCE", "input sourceIds must match the packaged sources", `${path}.inputs.sourceIds`);
+  }
+  if (!Array.isArray(provenance.transformations)
+    || provenance.transformations.length !== 1
+    || provenance.transformations[0]?.id !== form.projector.id
+    || provenance.transformations[0]?.version !== form.projector.version) {
+    fail("INVALID_PROVENANCE", "exact form transformation receipt is missing", `${path}.transformations`);
+  }
+  if (!Array.isArray(provenance.enrichments) || provenance.enrichments.length > form.family.maximumEnrichments) fail("INVALID_PROVENANCE", "enrichments exceed the family bound", `${path}.enrichments`);
   if (!Array.isArray(provenance.validations) || provenance.validations.length === 0) fail("INVALID_PROVENANCE", "validation receipts are required", `${path}.validations`);
   provenance.transformations.forEach((receipt, index) => {
     if (!isPlainObject(receipt)) fail("INVALID_PROVENANCE", "transformation receipt must be an object", `${path}.transformations[${index}]`);
     rejectUnknownFields(receipt, TRANSFORMATION_FIELDS, `${path}.transformations[${index}]`);
-    validateRoleMapping(receipt.roleMapping, manifest, `${path}.transformations[${index}].roleMapping`);
+    validateRoleMapping(receipt.roleMapping, form, `${path}.transformations[${index}].roleMapping`);
+    if (canonicalJson(receipt.roleMapping) !== canonicalJson(roleMapping)) {
+      fail("INVALID_PROVENANCE", "transformation roleMapping must match the package roleMapping", `${path}.transformations[${index}].roleMapping`);
+    }
+    if (receipt.deterministic !== true) {
+      fail("INVALID_PROVENANCE", "exact form transformation must be deterministic", `${path}.transformations[${index}].deterministic`);
+    }
+    if (!SHA256.test(receipt.optionsHash ?? "")) {
+      fail("INVALID_PROVENANCE", "transformation optionsHash must be SHA-256", `${path}.transformations[${index}].optionsHash`);
+    }
+    if (receipt.outputMarkCount !== marks.length) {
+      fail("INVALID_PROVENANCE", "transformation outputMarkCount must match marks", `${path}.transformations[${index}].outputMarkCount`);
+    }
   });
   provenance.enrichments.forEach((receipt, index) => {
     const itemPath = `${path}.enrichments[${index}]`;
@@ -512,13 +817,13 @@ function validateProvenance(provenance, manifest, path) {
   });
 }
 
-function validateQuality(quality, sources, marks, path) {
+function validateQuality(quality, sources, marks, scope, path) {
   if (!isPlainObject(quality) || quality.status !== "valid") fail("INVALID_QUALITY", "status must be valid", path);
   rejectUnknownFields(quality, QUALITY_FIELDS, path);
   const coverage = quality.coverage;
   if (!isPlainObject(coverage)) fail("INVALID_QUALITY", "coverage is required", `${path}.coverage`);
   rejectUnknownFields(coverage, COVERAGE_FIELDS, `${path}.coverage`);
-  if (coverage.sourceCount !== sources.length || coverage.markCount !== marks.length || coverage.recordsCompiled !== marks.length || !Number.isSafeInteger(coverage.recordsTotal) || coverage.recordsTotal < coverage.recordsCompiled) fail("INVALID_QUALITY", "coverage counts do not match package contents", `${path}.coverage`);
+  if (coverage.sourceCount !== sources.length || coverage.markCount !== marks.length || coverage.recordsCompiled !== marks.length || coverage.recordsTotal !== scope.recordCount || coverage.recordsTotal < coverage.recordsCompiled) fail("INVALID_QUALITY", "coverage counts do not match package contents", `${path}.coverage`);
   const evidenceCount = marks.reduce((total, mark) => total + mark.evidenceRefs.length, 0);
   if (coverage.evidenceRefCount !== evidenceCount) fail("INVALID_QUALITY", "evidenceRefCount does not match marks", `${path}.coverage.evidenceRefCount`);
   if (!Array.isArray(quality.knownOmissions) || !Array.isArray(quality.warnings) || !isPlainObject(quality.media)) fail("INVALID_QUALITY", "omissions, warnings, and media summary are required", path);
@@ -526,7 +831,16 @@ function validateQuality(quality, sources, marks, path) {
   const expectedMedia = {};
   for (const mark of marks) expectedMedia[mark.media?.type] = (expectedMedia[mark.media?.type] ?? 0) + 1;
   const previewCount = marks.filter((mark) => mark.media?.preview).length;
-  if (canonicalJson(quality.media.types) !== canonicalJson(expectedMedia) || quality.media.previewCount !== previewCount || quality.media.missingPreviewCount !== marks.length - previewCount) fail("INVALID_QUALITY", "media summary does not match marks", `${path}.media`);
+  if (canonicalJson(quality.media.types) !== canonicalJson(expectedMedia)
+    || quality.media.previewCount !== previewCount
+    || quality.media.missingPreviewCount !== marks.length - previewCount
+    || quality.media.inputMedium !== scope.inputMedium
+    || quality.media.adapterDecision !== scope.mediaAdapterDecision) {
+    fail("INVALID_QUALITY", "media summary does not match marks or scope", `${path}.media`);
+  }
+  if (canonicalJson(quality.knownOmissions) !== canonicalJson(scope.knownOmissions)) {
+    fail("INVALID_QUALITY", "known omissions must match the package scope", `${path}.knownOmissions`);
+  }
 }
 
 function validateHashes(hashes, path) {
@@ -537,14 +851,21 @@ function validateHashes(hashes, path) {
   }
 }
 
-function validateCatalogReceipt(catalog, manifest, path) {
+function validateCatalogReceipt(catalog, form, path) {
   if (!isPlainObject(catalog)) fail("INVALID_CATALOG", "catalog receipt is required", path);
   rejectUnknownFields(catalog, CATALOG_FIELDS, path);
   if (!requiredString(catalog.version, `${path}.version`, 64)) fail("INVALID_CATALOG", "catalog version is required", `${path}.version`);
-  if (catalog.family !== manifest.id) fail("INVALID_CATALOG", "catalog family must match the package family", `${path}.family`);
+  if (catalog.family !== form.family.id) fail("INVALID_CATALOG", "catalog family must match the package family", `${path}.family`);
   safeIdentifier(catalog.member, `${path}.member`);
-  if (catalog.rendererId !== manifest.renderer.id) fail("INVALID_CATALOG", "catalog rendererId must match the bundled renderer", `${path}.rendererId`);
-  if (catalog.rendererVersion !== undefined && catalog.rendererVersion !== manifest.renderer.version) fail("INVALID_CATALOG", "catalog rendererVersion must match the bundled renderer", `${path}.rendererVersion`);
+  if (catalog.rendererId !== form.renderer.id) fail("INVALID_CATALOG", "catalog rendererId must match the exact form contract", `${path}.rendererId`);
+  if (catalog.rendererVersion !== undefined && catalog.rendererVersion !== form.renderer.version) fail("INVALID_CATALOG", "catalog rendererVersion must match the exact form contract", `${path}.rendererVersion`);
+  let expected;
+  try {
+    expected = resolveCatalogReceipt(catalog);
+  } catch (cause) {
+    fail("INVALID_CATALOG", cause.message, path);
+  }
+  if (canonicalJson(catalog) !== canonicalJson(expected)) fail("INVALID_CATALOG", "catalog receipt fields are cross-wired", path);
 }
 
 export function validateDataPackage(dataPackage) {
@@ -554,16 +875,66 @@ export function validateDataPackage(dataPackage) {
   if (dataPackage.schemaVersion !== DATA_PACKAGE_SCHEMA_VERSION || dataPackage.kind !== DATA_PACKAGE_KIND) fail("INVALID_DATA_PACKAGE", "kind or schemaVersion is unsupported", "dataPackage");
   if (!/^data_[a-f0-9]{16}$/u.test(dataPackage.id ?? "")) fail("INVALID_DATA_PACKAGE_ID", "id must be derived from the package hash", "dataPackage.id");
   const manifest = getMapFamily(dataPackage.family?.id);
-  if (!manifest || dataPackage.family.version !== manifest.version || dataPackage.family.group !== manifest.group || dataPackage.family.dataSchemaVersion !== manifest.transformation.payload.schemaVersion) fail("INVALID_FAMILY", "family identity does not match the registry", "dataPackage.family");
+  if (!manifest) fail("INVALID_FAMILY", "family identity does not match the registry", "dataPackage.family");
+  const form = packageFormContract(
+    manifest.id,
+    dataPackage.catalog?.member,
+    dataPackage.catalog?.version,
+    manifest,
+  );
+  if (dataPackage.family.id !== form.family.id
+    || dataPackage.family.version !== form.family.version
+    || dataPackage.family.group !== form.family.group
+    || dataPackage.family.dataSchemaVersion !== form.family.dataSchemaVersion) {
+    fail("INVALID_FAMILY", "family identity does not match the exact package contract", "dataPackage.family");
+  }
   rejectUnknownFields(dataPackage.family, FAMILY_FIELDS, "dataPackage.family");
   validateQuestion(dataPackage.question, "dataPackage.question");
   validateScope(dataPackage.scope, "dataPackage.scope");
   validateSources(dataPackage.sources, "dataPackage.sources");
-  validateRoleMapping(dataPackage.roleMapping, manifest, "dataPackage.roleMapping");
-  const markIds = validateMarks(dataPackage.marks, manifest, "dataPackage.marks");
-  if (dataPackage.marks.length < manifest.data.minimumRecords || dataPackage.marks.length > manifest.data.maximumRecords) fail("INVALID_MARK_COUNT", "mark count violates family bounds", "dataPackage.marks");
-  validatePayload(dataPackage.payload, manifest, markIds, "dataPackage.payload");
-  if (!isPlainObject(dataPackage.presentation) || dataPackage.presentation.renderer?.id !== manifest.renderer.id || dataPackage.presentation.renderer?.version !== manifest.renderer.version || dataPackage.presentation.variant === undefined || !manifest.variants.some((variant) => variant.id === dataPackage.presentation.variant) || dataPackage.presentation.multiples?.policy?.id !== manifest.multiples.policy.id || !manifest.multiples.supportedMedia.includes(dataPackage.presentation.multiples?.profile) || dataPackage.presentation.multiples?.adaptationDecision !== REPEAT_LAYOUT_PROFILES[dataPackage.presentation.multiples?.profile]?.adaptationDecision) fail("INVALID_PRESENTATION", "presentation does not match the fixed family contract", "dataPackage.presentation");
+  validateRoleMapping(dataPackage.roleMapping, form, "dataPackage.roleMapping");
+  const marksById = validateMarks(dataPackage.marks, manifest, form, "dataPackage.marks");
+  if (dataPackage.catalog.version === CATALOG_VERSION) {
+    const sourceEligibility = evaluateFormSourcePolicy(form, {
+      adapter: dataPackage.scope.adapter,
+      medium: dataPackage.scope.inputMedium,
+    });
+    if (!sourceEligibility.eligible) {
+      fail(
+        "INELIGIBLE_REQUESTED_FORM",
+        `package fails ${sourceEligibility.failedRequirements.map((item) => item.id).join(", ")}`,
+        "dataPackage.scope",
+      );
+    }
+    const packageObservations = dataPackage.marks.map((mark) => ({ markId: mark.id, roles: mark.values, evidenceRefs: mark.evidenceRefs, media: mark.media }));
+    const eligibility = evaluateFormEligibility(form, packageObservations, { adapter: dataPackage.scope.adapter, medium: dataPackage.scope.inputMedium });
+    if (!eligibility.eligible) fail("INELIGIBLE_REQUESTED_FORM", `package fails ${eligibility.failedRequirements.map((item) => item.id).join(", ")}`, "dataPackage.marks");
+  } else if (dataPackage.marks.length < form.family.minimumMarks || dataPackage.marks.length > form.family.maximumMarks) {
+    fail("INVALID_MARK_COUNT", "historical mark count violates its frozen family bounds", "dataPackage.marks");
+  }
+  validatePayload(dataPackage.payload, manifest, form, marksById, "dataPackage.payload");
+  if (dataPackage.catalog.version === CATALOG_VERSION) {
+    const expectedPayload = projectFormPayload(form, canonicalObservationsFromPackage(dataPackage));
+    if (canonicalJson(expectedPayload) !== canonicalJson(dataPackage.payload)) {
+      fail(
+        "INVALID_PAYLOAD",
+        "payload does not match the exact form's deterministic projector",
+        "dataPackage.payload",
+      );
+    }
+  }
+  const presentationContract = form.presentation;
+  const presentationProfile = dataPackage.presentation?.multiples?.profile;
+  if (!isPlainObject(dataPackage.presentation)
+    || dataPackage.presentation.renderer?.id !== presentationContract.renderer.id
+    || dataPackage.presentation.renderer?.version !== presentationContract.renderer.version
+    || dataPackage.presentation.variant !== presentationContract.renderer.variant
+    || dataPackage.presentation.multiples?.policy?.id !== presentationContract.multiples.policy.id
+    || dataPackage.presentation.multiples?.policy?.version !== presentationContract.multiples.policy.version
+    || !presentationContract.multiples.supportedProfiles.includes(presentationProfile)
+    || dataPackage.presentation.multiples?.adaptationDecision !== presentationContract.multiples.adaptationDecisions[presentationProfile]) {
+    fail("INVALID_PRESENTATION", "presentation does not match the exact form contract", "dataPackage.presentation");
+  }
   rejectUnknownFields(dataPackage.presentation, PRESENTATION_FIELDS, "dataPackage.presentation");
   rejectUnknownFields(dataPackage.presentation.renderer, RENDERER_FIELDS, "dataPackage.presentation.renderer");
   rejectUnknownFields(dataPackage.presentation.multiples, MULTIPLES_FIELDS, "dataPackage.presentation.multiples");
@@ -571,14 +942,19 @@ export function validateDataPackage(dataPackage) {
   rejectUnknownFields(dataPackage.presentation.multiples.minimumReadableUnit, MINIMUM_READABLE_UNIT_FIELDS, "dataPackage.presentation.multiples.minimumReadableUnit");
   if (!isPlainObject(dataPackage.presentation.multiples.policy)) fail("INVALID_PRESENTATION", "policy must be an object", "dataPackage.presentation.multiples.policy");
   rejectUnknownFields(dataPackage.presentation.multiples.policy, POLICY_FIELDS, "dataPackage.presentation.multiples.policy");
-  if (manifest.renderer.geography) {
-    if (canonicalJson(dataPackage.presentation.geography) !== canonicalJson(manifest.renderer.geography)) fail("INVALID_PRESENTATION", "geography policy must match the bundled renderer", "dataPackage.presentation.geography");
+  if (presentationContract.geography) {
+    if (canonicalJson(dataPackage.presentation.geography) !== canonicalJson(presentationContract.geography)) fail("INVALID_PRESENTATION", "geography policy must match the bundled renderer", "dataPackage.presentation.geography");
   } else if (dataPackage.presentation.geography !== undefined) {
     fail("INVALID_PRESENTATION", "geography is not declared for this family", "dataPackage.presentation.geography");
   }
-  validateCatalogReceipt(dataPackage.catalog, manifest, "dataPackage.catalog");
-  validateProvenance(dataPackage.provenance, manifest, "dataPackage.provenance");
-  validateQuality(dataPackage.quality, dataPackage.sources, dataPackage.marks, "dataPackage.quality");
+  validateCatalogReceipt(dataPackage.catalog, form, "dataPackage.catalog");
+  validateProvenance(dataPackage.provenance, form, {
+    marks: dataPackage.marks,
+    roleMapping: dataPackage.roleMapping,
+    scope: dataPackage.scope,
+    sources: dataPackage.sources,
+  }, "dataPackage.provenance");
+  validateQuality(dataPackage.quality, dataPackage.sources, dataPackage.marks, dataPackage.scope, "dataPackage.quality");
   if (!isPlainObject(dataPackage.execution) || !Number.isSafeInteger(dataPackage.execution.modelCalls) || dataPackage.execution.modelCalls < 0 || !Number.isSafeInteger(dataPackage.execution.networkCalls) || dataPackage.execution.networkCalls < 0) fail("INVALID_EXECUTION", "modelCalls and networkCalls must be non-negative integers", "dataPackage.execution");
   rejectUnknownFields(dataPackage.execution, EXECUTION_FIELDS, "dataPackage.execution");
   validateHashes(dataPackage.hashes, "dataPackage.hashes");

@@ -44,6 +44,7 @@ import {
 } from "./exploration-store.js";
 import { inspectSources } from "./inspect.js";
 import { compileCatalogMapRequest } from "./map/index.js";
+import { stageLocalImageSet } from "./media/index.js";
 import {
   completeHostQuestion,
   hostBridgeCapability,
@@ -208,8 +209,10 @@ persist its public package and private evidence, create or reuse a session, and
 update current.json last. With --stage, bind the attempt to its pre-result
 experiment record and leave current.json unchanged. If --experiment is omitted,
 the request must match exactly one queued experiment in the exploration.
-Version-2 requests must include representationIntent. Exact intents fail closed
-unless the selected executable member advertises every requested capability.
+Version-3 requests must include representationIntent and a discriminated input
+adapter. Version-2 evidenced text requests remain compatible. Exact form
+requests fail closed when any hard requirement or requested capability fails;
+Attend never substitutes another family member.
 `,
   assess: `Usage: attend assess <experiment-id> <assessment.json> [--root <path>] [--json]
 
@@ -1087,14 +1090,23 @@ function sourceScopeSignature(sources) {
 function mapRequestRepresentationIntent(request) {
   return normalizeRepresentationIntent(request.representationIntent, {
     path: "request.representationIntent",
-    required: request.version === 2,
+    required: request.version >= 2,
   });
+}
+
+function mapRequestSourceScope(request) {
+  if (request?.version !== 3) return request?.sources;
+  if (request.input?.adapter === "evidenced-records-v1") return request.input.sources;
+  if (request.input?.adapter === "local-image-set-v1") {
+    return [{ path: request.input.directory }];
+  }
+  return [];
 }
 
 function experimentMatchesMapScope(experiment, request) {
   return experiment.representation.family === request.family
     && experiment.representation.member === request.member
-    && sourceScopeSignature(experiment.sourceScope) === sourceScopeSignature(request.sources);
+    && sourceScopeSignature(experiment.sourceScope) === sourceScopeSignature(mapRequestSourceScope(request));
 }
 
 function experimentMatchesMapRepresentationIntent(experiment, request) {
@@ -1227,11 +1239,20 @@ async function mapCommand(args, context) {
     let session;
     const sessionId = staged?.id ?? dataPackage.id;
     try {
+      const assetReceipt = compiled.imageSet === undefined
+        ? undefined
+        : (await stageLocalImageSet({
+            root,
+            sessionId,
+            imageSet: compiled.imageSet,
+            dataPackage,
+          })).assetReceipt;
       try {
         session = await createSession({
           root,
           id: sessionId,
           dataPackage,
+          ...(assetReceipt === undefined ? {} : { assetReceipt }),
           ...(staged === null ? {} : {
             exploration: {
               explorationId: staged.explorationId,
@@ -1243,15 +1264,18 @@ async function mapCommand(args, context) {
         if (error?.code !== "SESSION_EXISTS") throw error;
         session = await loadSession({ root, sessionId });
         if (
-          staged
-          && (
+          (assetReceipt === undefined) !== (session.assetReceipt === undefined)
+          || (assetReceipt !== undefined
+            && JSON.stringify(assetReceipt) !== JSON.stringify(session.assetReceipt))
+          || (staged
+            && (
             session.exploration?.explorationId !== staged.explorationId
             || session.exploration?.experimentId !== staged.id
             || session.dataPackage?.hashes?.data !== dataPackage.hashes.data
-          )
+            ))
         ) {
-          const conflict = new Error(`staged session ${sessionId} already exists with different provenance`);
-          conflict.code = "STAGED_SESSION_CONFLICT";
+          const conflict = new Error(`session ${sessionId} already exists with different provenance or assets`);
+          conflict.code = staged ? "STAGED_SESSION_CONFLICT" : "SESSION_PROVENANCE_CONFLICT";
           throw conflict;
         }
       }

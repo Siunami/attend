@@ -2,6 +2,10 @@
 
 Attend gives coding agents a governed way to look for relationships and patterns in evidence you authorize, test them as visual hypotheses, and point out what may deserve your attention. It keeps every attempted experiment in one traceable inbox and renders the results in a private local workspace with selection-aware chat.
 
+**New here? Read [Getting started](docs/getting-started.md) first.** It is written for the person installing Attend rather than for the agent running it, and it covers what Attend is for, what a first week looks like, which questions are worth asking it, and what it will not do yet.
+
+Attend runs entirely on your machine. It reads the files you point it at, never edits them, and uploads nothing. The default chat is a local `gpt-oss-20b` process with no credentials, no project path, and no network access. There is no Attend account and no telemetry.
+
 ## Install with a coding agent
 
 Open the repository where you want Attend to work. Paste this prompt into your coding agent:
@@ -13,7 +17,7 @@ You may install Attend globally, add its setup files to this repository, install
 
 Attend needs macOS or Linux, Node.js 22 or newer, and npm. If anything is missing, stop and tell me. On macOS, if `llama-server` is missing and Homebrew is available, run `brew install llama.cpp`.
 
-Run `npm install --global @siunami/attend@0.5.5`. If npm cannot install globally without sudo, install Attend under my user account instead. Then run `attend bootstrap --yes` and show me the output. You may retry it after an interrupted download. Drive the setup yourself; I'll only step in for a macOS approval.
+Run `npm install --global @siunami/attend@0.6.0`. If npm cannot install globally without sudo, install Attend under my user account instead. Then run `attend bootstrap --yes` and show me the output. You may retry it after an interrupted download. Drive the setup yourself; I'll only step in for a macOS approval.
 
 Keep any existing Attend chat choice. For a new setup, use Attend's private local chat. Do not sign in to Codex or Claude for Attend. If installation or setup fails, show me the actual error. When Attend is ready, show me its welcome and installed version.
 ```
@@ -27,20 +31,20 @@ Attend requires macOS or Linux, Node.js 22 or newer, npm, and llama.cpp's `llama
 Run these commands from the repository where Attend will work:
 
 ```sh
-npm install --global @siunami/attend@0.5.5
+npm install --global @siunami/attend@0.6.0
 attend bootstrap --yes
 ```
 
 If npm cannot write to its global install directory, use a directory owned by your account:
 
 ```sh
-npm install --global --prefix "$HOME/.local" @siunami/attend@0.5.5
+npm install --global --prefix "$HOME/.local" @siunami/attend@0.6.0
 $HOME/.local/bin/attend bootstrap --yes
 ```
 
 Inside an admitted Attend workflow, the host agent does not write chart code. It asks Attend for the installed Family Atlas catalog, selects an executable member for the analytic job, transforms source-backed facts into that member's declared roles, and submits a data-only request. Attend reopens the sources, verifies exact quotes, compiles a canonical package, resolves a fixed bundled renderer, and serves the result on loopback.
 
-This release includes all 19 visualization families. The bundled Family Atlas catalog records every authored form and rejection. Eighteen families have one tested executable member. Annotated specimen is marked `unavailable` because the text-only request contract cannot bind its required visible specimen yet. Other approved designs remain `documented`; rejected designs remain `rejected`. Attend never falls back to an unimplemented member or generates a substitute chart.
+This release includes 34 executable forms across all 19 visualization families. The bundled Family Atlas catalog also retains 71 approved but not yet executable forms, one explicit capability abstention, and all 38 rejected forms. Annotated specimen remains `unavailable` until Attend can validate image-region coordinates and annotation provenance. Attend never falls back to another member or generates a substitute chart.
 
 ## What Attend can make
 
@@ -127,7 +131,8 @@ The family is chosen by the question, not by visual taste:
 - Compare: rank, distribution, composition, profile, passage comparison
 - Time: trend, timeline, sequence
 - Relate: relationship, matrix, hierarchy, network, flow, mechanism
-- Space and inspect: region map, point map, field, annotated specimen, collection atlas
+- Space: region map, point map, field
+- Browse: annotated specimen, collection atlas
 
 Run `attend families --json` for each governed member, required roles, field types, structured requirements, availability, abstention guidance, and the documented and rejected alternatives.
 
@@ -137,7 +142,7 @@ Run `attend families --json` for each governed member, required roles, field typ
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "question": "How do results differ by region?",
   "family": "rank",
   "member": "bar-list",
@@ -146,52 +151,55 @@ Run `attend families --json` for each governed member, required roles, field typ
     "mode": "open",
     "constraints": []
   },
-  "sources": [
-    { "path": "notes/results.md", "textProjection": "utf8" }
-  ],
-  "records": [
-    { "key": "north", "label": "North", "value": 42 },
-    { "key": "south", "label": "South", "value": 31 },
-    { "key": "east", "label": "East", "value": 27 }
-  ],
-  "evidence": [
-    {
-      "source": { "path": "notes/results.md", "textProjection": "utf8" },
-      "quote": "North: 42",
-      "recordKey": "north",
-      "field": "label"
-    },
-    {
-      "source": { "path": "notes/results.md", "textProjection": "utf8" },
-      "quote": "North: 42",
-      "recordKey": "north",
-      "field": "value"
-    },
-    {
-      "source": { "path": "notes/results.md", "textProjection": "utf8" },
-      "quote": "South: 31",
-      "recordKey": "south",
-      "field": "label"
-    },
-    {
-      "source": { "path": "notes/results.md", "textProjection": "utf8" },
-      "quote": "South: 31",
-      "recordKey": "south",
-      "field": "value"
-    },
-    {
-      "source": { "path": "notes/results.md", "textProjection": "utf8" },
-      "quote": "East: 27",
-      "recordKey": "east",
-      "field": "label"
-    },
-    {
-      "source": { "path": "notes/results.md", "textProjection": "utf8" },
-      "quote": "East: 27",
-      "recordKey": "east",
-      "field": "value"
-    }
-  ],
+  "input": {
+    "adapter": "evidenced-records-v1",
+    "sources": [
+      { "path": "notes/results.md", "textProjection": "utf8" }
+    ],
+    "records": [
+      { "key": "north", "label": "North", "value": 42 },
+      { "key": "south", "label": "South", "value": 31 },
+      { "key": "east", "label": "East", "value": 27 }
+    ],
+    "evidence": [
+      {
+        "source": { "path": "notes/results.md", "textProjection": "utf8" },
+        "quote": "North: 42",
+        "recordKey": "north",
+        "field": "label"
+      },
+      {
+        "source": { "path": "notes/results.md", "textProjection": "utf8" },
+        "quote": "North: 42",
+        "recordKey": "north",
+        "field": "value"
+      },
+      {
+        "source": { "path": "notes/results.md", "textProjection": "utf8" },
+        "quote": "South: 31",
+        "recordKey": "south",
+        "field": "label"
+      },
+      {
+        "source": { "path": "notes/results.md", "textProjection": "utf8" },
+        "quote": "South: 31",
+        "recordKey": "south",
+        "field": "value"
+      },
+      {
+        "source": { "path": "notes/results.md", "textProjection": "utf8" },
+        "quote": "East: 27",
+        "recordKey": "east",
+        "field": "label"
+      },
+      {
+        "source": { "path": "notes/results.md", "textProjection": "utf8" },
+        "quote": "East: 27",
+        "recordKey": "east",
+        "field": "value"
+      }
+    ]
+  },
   "options": { "title": "Results by region" }
 }
 ```
@@ -203,11 +211,13 @@ attend map request.json --json
 attend view --open --json
 ```
 
-`question` is required and carries the user's literal question into the compiled artifact. `options.title` is an optional display label; it does not replace or rewrite the question. Managed workflows use version 2, which requires `representationIntent`. `open` means the user did not constrain the form. `exact` carries one finite constraint for each named `form`, `dimensionality`, `interaction`, `motion`, or `projection`; the compiler rejects the request with `UNSUPPORTED_REQUESTED_REPRESENTATION` unless the selected executable member advertises every constraint. Version-1 requests remain a compatibility boundary and normalize to open intent when the field is omitted.
+`question` is required and carries the user's literal question into the compiled artifact. `options.title` is an optional display label; it does not replace or rewrite the question. Version 3 requires `representationIntent` and a discriminated `input.adapter`. `evidenced-records-v1` contains the existing sources, records, and quote evidence. `local-image-set-v1` accepts only `{ "adapter": "local-image-set-v1", "directory": "relative/path" }` and is valid only for `collection-atlas/contact-atlas`. Version 2 text requests remain supported without the `input` wrapper; version 1 remains the open-intent compatibility boundary.
 
-The invocation determines the project root. A request cannot supply or enlarge it. Source paths must resolve inside that root. Attend supports explicit UTF-8 text and normalized-text projections in this release; it abstains from raw binary or remote URL input.
+`open` means the user did not constrain the visual form. The host chooses among forms whose hard requirements pass by reading each form's `preferWhen`, `preferOver`, `avoidWhen`, and abstention guidance. `exact` carries one finite constraint for each named `form`, `dimensionality`, `interaction`, `motion`, or `projection`. An incompatible version-3 exact request fails with `INELIGIBLE_REQUESTED_FORM`; Attend does not substitute another form. Version 2 retains its historical error codes while still failing without substitution.
 
-Every required field in every record needs at least one exact source quote. If a quote occurs more than once, the claim must include its one-based `occurrence`. Attend derives file hashes, stable source and record identifiers, text locators, mark IDs, package hashes, and the catalog renderer receipt. Requests cannot provide renderer modules, asset URLs, hashes, locators, source bodies, or executable code.
+The invocation determines the project root. A request cannot supply or enlarge it. Source paths must resolve inside that root. Text forms support explicit UTF-8 and normalized-text projections. Contact atlas accepts one directory containing 12–200 verified JPEG files with camera `DateTimeOriginal`; it rejects symlinks, path traversal, malformed or changed files, missing capture times, unsupported media, oversized images, and overlarge sets.
+
+For `evidenced-records-v1`, every required field in every record needs at least one exact source quote. If a quote occurs more than once, the claim must include its one-based `occurrence`. Contact-atlas roles instead derive from verified JPEG metadata and whole-file evidence. Attend derives file hashes, stable source and record identifiers, locators, mark IDs, package hashes, and the catalog renderer receipt. Requests cannot provide renderer modules, asset URLs, hashes, locators, source bodies, or executable code.
 
 The compiler rejects unknown families, unavailable or non-executable members, missing roles, invalid types, unsupported media, ambiguous or absent quotes, geographic values outside valid bounds, malformed graph shapes, incomplete grids, hierarchy errors, and family-specific size violations. It validates and stages the public package and private evidence store before updating `current.json`, so a failed request leaves the prior current artifact intact.
 
@@ -217,9 +227,11 @@ The canonical package stored on the local machine includes source-integrity rece
 
 `attend view` starts or reuses a detached loopback-only service, starts and health-checks `gpt-oss-20b`, starts the page server, prints the project `libraryUrl` and current `viewerUrl`, then exits. The library URL remains stable across new artifacts and stop/start cycles. Each saved artifact has its own session URL. The model endpoint is also loopback-only and is not exposed to the browser; the Attend service is its only client.
 
-The production viewer consumes a closed projection of the canonical package emitted by `attend map`. It resolves that package through the installed catalog and the fixed renderer assigned to its executable member. The package and browser cannot choose a module or remote asset. Every interactive visual mark uses the canonical package mark ID.
+The production viewer consumes a closed projection of the canonical package emitted by `attend map`. It resolves that package through the installed catalog and the fixed renderer assigned to its executable member. The package and browser cannot choose a module or remote asset. Direct observations use canonical package mark IDs; visible aggregates use form-governed target IDs whose membership the server recomputes.
 
-Selecting a mark updates server-owned, revisioned state. The server re-derives the selection and implicated evidence rather than accepting evidence from the browser. A selected mark can be attached to the next sidebar question; later messages inherit the latest relevant attachment until the user selects a new visual topic.
+Below every visualization is a Data panel listing the underlying rows with their label, field values, and evidence count. Clicking a point, component, or aggregate, or clicking a row, filters that list to exactly the records the selection stands for and highlights the clicked element. Clicking the selected element again, or choosing Show all, restores the full list. Large datasets list the first 100 rows with an explicit total. Nothing is revealed on hover, and no interaction changes the height of the surface being interacted with.
+
+Selecting a mark updates server-owned, revisioned state. For a visible aggregate, the browser sends only its governed target ID; the server recomputes membership, verifies its count and hash, and paginates the complete evidence set. Chat receives a bounded preview plus the explicit omission count. A selection attaches to the next sidebar question, and later messages inherit the latest relevant attachment until the user selects a new visual topic. Selecting does not open the chat drawer; the Ask control or `Cmd`+`/` does.
 
 Private local chat is the default. Attend sends only the bounded question packet, selected visual context, recent Attend turns, and implicated evidence to `gpt-oss-20b`. The inference subprocess starts with llama.cpp offline mode, receives no provider credentials, has no project path or tools, and makes no hosted inference call. If the service is interrupted during an answer, the durable local job is queued again on restart.
 
@@ -348,7 +360,7 @@ Attend reads source files but does not edit them. It does not scan paths that we
 npm run verify
 ```
 
-The verification suite covers the 19-family catalog, all 18 available mappings, the explicit specimen abstention, exact evidence and hash checks, fixed package-native renderer contracts, browser selection and revision behavior, phrase compatibility, private evidence hydration, the attachment-bound host loop, explicit detached adapters, idempotent cross-agent setup, loopback service lifecycle, the packaged experiment-inbox behavior contract, release tarball allowlisting, SHA-pinned staging, and package contents.
+The verification suite covers all 34 executable forms in the 19-family catalog, the explicit specimen abstention, exact evidence and hash checks, fixed package-native renderer contracts, direct and aggregate selection, private evidence hydration, the attachment-bound host loop, explicit detached adapters, idempotent cross-agent setup, and loopback service lifecycle. It also builds and extracts the release tarball, starts its viewer without `node_modules`, checks the published module graph, and drives every executable form through the live browser matrix at desktop and mobile widths.
 
 ## License
 

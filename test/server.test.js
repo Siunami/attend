@@ -10,12 +10,14 @@ import {
   createViewerServer,
   VIEWER_JSON_LIMIT,
 } from "../src/server.js";
+import { createQuestionStreamRelay } from "../src/question-stream.js";
 import {
   completeQuestionResponse,
   createSession,
   loadSession,
   markQuestionResponseFailed,
   markQuestionResponseRunning,
+  updateSession,
 } from "../src/session-store.js";
 
 const TEST_TOKEN = "viewer-test-token-0123456789";
@@ -136,6 +138,9 @@ async function fixture(t, options = {}) {
     ...(options.enqueueQuestion
       ? { enqueueQuestion: options.enqueueQuestion }
       : {}),
+    ...(options.questionStream
+      ? { questionStream: options.questionStream }
+      : {}),
     resolveQuestionRoute: options.resolveQuestionRoute ?? (async () => ({
       kind: "detached",
       adapter: "codex-cli",
@@ -155,6 +160,94 @@ function api(url, route) {
 
 function originOf(url) {
   return new URL(url).origin;
+}
+
+function sseFrameOf(block) {
+  let event = "message";
+  const data = [];
+  for (const line of block.split("\n")) {
+    if (line === "" || line.startsWith(":")) continue;
+    const colon = line.indexOf(":");
+    const field = colon < 0 ? line : line.slice(0, colon);
+    if (field !== "event" && field !== "data") continue;
+    const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /u, "");
+    if (field === "event") event = value;
+    else data.push(value);
+  }
+  return data.length === 0 ? null : { event, data: data.join("\n") };
+}
+
+function sseStream(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const pending = [];
+  let buffer = "";
+
+  const pump = (async () => {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      for (let split = buffer.indexOf("\n\n"); split >= 0; split = buffer.indexOf("\n\n")) {
+        const frame = sseFrameOf(buffer.slice(0, split));
+        buffer = buffer.slice(split + 2);
+        if (frame) pending.push(frame);
+      }
+    }
+  })().catch(() => {});
+
+  const matching = (event, count) => {
+    const found = [];
+    for (const frame of pending) {
+      if (frame.event !== event) continue;
+      found.push(frame);
+      if (found.length === count) break;
+    }
+    return found;
+  };
+
+  return {
+    drain() {
+      pending.length = 0;
+    },
+    async take(event, count, timeoutMs = 5_000) {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const found = matching(event, count);
+        if (found.length === count) {
+          for (const frame of found) pending.splice(pending.indexOf(frame), 1);
+          return found;
+        }
+        if (Date.now() > deadline) {
+          throw new Error(`received ${found.length} of ${count} ${event} frames before the deadline`);
+        }
+        await new Promise((settle) => setTimeout(settle, 10));
+      }
+    },
+    async cancel() {
+      await reader.cancel().catch(() => {});
+      await pump;
+    },
+  };
+}
+
+function stubQuestionStream() {
+  const handlers = new Map();
+  let attach;
+  const attached = new Promise((settle) => {
+    attach = settle;
+  });
+  return {
+    attached,
+    subscribe(sessionId, handler) {
+      handlers.set(sessionId, handler);
+      attach();
+      return () => handlers.delete(sessionId);
+    },
+    publish(sessionId, event) {
+      handlers.get(sessionId)?.(event);
+    },
+  };
 }
 
 async function responseJson(response) {
@@ -253,7 +346,7 @@ test("serves only the tokenized viewer and explicit read endpoints", async (t) =
     ok: true,
     service: "attend-library",
     protocolVersion: 4,
-    packageVersion: "0.5.5",
+    packageVersion: "0.6.0",
     instanceId: TEST_INSTANCE_ID,
     sessionCount: 1,
   });
@@ -1034,4 +1127,155 @@ test("generates a capability token, rejects non-loopback binds, and closes idemp
     }),
     /loopback-only/u,
   );
+});
+
+test("streams question relay events as SSE frames without a content length", async (t) => {
+  const relay = stubQuestionStream();
+  const viewer = await fixture(t, { questionStream: relay });
+
+  const head = await fetch(api(viewer.url, "events"), { method: "HEAD" });
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get("content-type"), "text/event-stream");
+
+  const response = await fetch(api(viewer.url, "events"));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/event-stream");
+  assert.equal(response.headers.get("content-length"), null);
+
+  const stream = sseStream(response);
+  t.after(() => stream.cancel());
+  await relay.attached;
+
+  const events = [
+    { type: "status", questionId: "q_stream", status: "running" },
+    { type: "delta", questionId: "q_stream", text: "first line\nsecond line" },
+    { type: "answer", questionId: "q_stream", answerTurnId: "turn_stream" },
+  ];
+  for (const event of events) relay.publish(viewer.analysisId, event);
+
+  const frames = await stream.take("question", events.length);
+  assert.deepEqual(
+    frames.map((frame) => frame.data),
+    events.map((event) => JSON.stringify(event)),
+  );
+});
+
+test("replays buffered question events to a later subscriber", async (t) => {
+  const relay = createQuestionStreamRelay();
+  const viewer = await fixture(t, { questionStream: relay });
+
+  const first = sseStream(await fetch(api(viewer.url, "events")));
+  t.after(() => first.cancel());
+
+  const events = [
+    { type: "status", questionId: "q_replay", status: "running" },
+    { type: "delta", questionId: "q_replay", text: "buffered " },
+    { type: "delta", questionId: "q_replay", text: "before the second reader" },
+  ];
+  for (const event of events) relay.publish(viewer.analysisId, event);
+  await first.take("question", events.length);
+
+  const second = sseStream(await fetch(api(viewer.url, "events")));
+  t.after(() => second.cancel());
+  const replayed = await second.take("question", events.length);
+  assert.deepEqual(
+    replayed.map((frame) => frame.data),
+    events.map((event) => JSON.stringify(event)),
+  );
+});
+
+test("emits a state event when the session changes on disk", async (t) => {
+  const viewer = await fixture(t);
+  const stream = sseStream(await fetch(api(viewer.url, "events")));
+  t.after(() => stream.cancel());
+
+  // macOS reports the fixture's own session write once the watcher comes up, so
+  // settle and discard that before the write this test is actually asserting.
+  await new Promise((settle) => setTimeout(settle, 500));
+  stream.drain();
+  await updateSession({
+    root: viewer.root,
+    sessionId: viewer.analysisId,
+    expectedRevision: 0,
+    patch: { query: "watched" },
+  });
+
+  const [frame] = await stream.take("state", 1);
+  assert.equal(frame.data, "{}");
+});
+
+test("keeps a stream writable well past the request timeout", { timeout: 30_000 }, async (t) => {
+  const relay = stubQuestionStream();
+  const viewer = await fixture(t, { questionStream: relay });
+  const stream = sseStream(await fetch(api(viewer.url, "events")));
+  t.after(() => stream.cancel());
+  await relay.attached;
+
+  const opened = Date.now();
+  const status = { type: "status", questionId: "q_soak", status: "running" };
+  const answer = { type: "answer", questionId: "q_soak", answerTurnId: "turn_soak" };
+
+  await new Promise((settle) => setTimeout(settle, 10_500));
+  relay.publish(viewer.analysisId, status);
+  const [pastTimeout] = await stream.take("question", 1);
+  assert.equal(pastTimeout.data, JSON.stringify(status));
+
+  await new Promise((settle) => setTimeout(settle, Math.max(0, 11_200 - (Date.now() - opened))));
+  relay.publish(viewer.analysisId, answer);
+  const [pastEleven] = await stream.take("question", 1);
+  assert.equal(pastEleven.data, JSON.stringify(answer));
+  assert.ok(Date.now() - opened > 11_000, `stream only survived ${Date.now() - opened}ms`);
+});
+
+test("an abruptly disconnected stream never takes the server down", async (t) => {
+  const relay = stubQuestionStream();
+  const viewer = await fixture(t, { questionStream: relay });
+  const target = new URL(api(viewer.url, "events"));
+  const opened = await new Promise((resolve, reject) => {
+    const pending = httpRequest({
+      hostname: target.hostname,
+      port: target.port,
+      path: target.pathname,
+      method: "GET",
+      headers: { Host: target.host },
+    }, (response) => response.once("data", () => resolve(pending)));
+    pending.once("error", reject);
+    pending.end();
+  });
+  await relay.attached;
+  opened.socket.destroy();
+
+  for (let index = 0; index < 5; index += 1) {
+    relay.publish(viewer.analysisId, {
+      type: "delta",
+      questionId: "q_gone",
+      text: `chunk ${index}`,
+    });
+  }
+  await updateSession({
+    root: viewer.root,
+    sessionId: viewer.analysisId,
+    expectedRevision: 0,
+    patch: { query: "gone" },
+  });
+  await new Promise((settle) => setTimeout(settle, 300));
+  relay.publish(viewer.analysisId, {
+    type: "answer",
+    questionId: "q_gone",
+    answerTurnId: "turn_gone",
+  });
+
+  const health = await responseJson(await fetch(api(viewer.url, "health")));
+  assert.equal(health.ok, true);
+});
+
+test("closes promptly while an event stream is open", async (t) => {
+  const viewer = await fixture(t);
+  const stream = sseStream(await fetch(api(viewer.url, "events")));
+  t.after(() => stream.cancel());
+
+  const started = Date.now();
+  await viewer.close();
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 1_000, `close took ${elapsed}ms with a stream open`);
 });

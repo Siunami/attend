@@ -117,4 +117,15 @@ export function deriveArtifactEvidence(value, selection) {
   return artifactAdapterFor(dataPackage).deriveEvidence(dataPackage, selection);
 }
 
+export async function resolveArtifactVisualTarget(value, targetId, options) {
+  const dataPackage = validateArtifactPackage(value);
+  const adapter = artifactAdapterFor(dataPackage);
+  if (typeof adapter.resolveVisualTarget !== "function") {
+    const error = new TypeError(`${adapter.artifactKind} does not expose aggregate visual targets`);
+    error.code = "VISUAL_TARGET_UNSUPPORTED";
+    throw error;
+  }
+  return adapter.resolveVisualTarget(dataPackage, targetId, options);
+}
+
 export const ARTIFACT_ADAPTERS = ADAPTERS;

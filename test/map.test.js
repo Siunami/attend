@@ -5,7 +5,6 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
-  executableCatalogMemberForFamily,
   listCatalogFamilies,
   requireCatalogFamily,
 } from "../src/catalog/index.js";
@@ -123,6 +122,28 @@ const FAMILY_REQUEST_RECORDS = Object.freeze({
   ],
 });
 
+const FROZEN_INCUMBENT_MEMBER_IDS = Object.freeze({
+  rank: "bar-list",
+  distribution: "strip",
+  composition: "hundred-bar",
+  profile: "parallel",
+  "passage-comparison": "parallel-text",
+  trend: "line",
+  timeline: "interval",
+  sequence: "step-strip",
+  relationship: "scatter",
+  matrix: "heatmap",
+  hierarchy: "tidy",
+  network: "local",
+  flow: "sankey",
+  mechanism: "flowchart",
+  "region-map": "choropleth",
+  "point-map": "exact-points",
+  field: "sample-raster",
+  "collection-atlas": "faceted-atlas",
+  "annotated-specimen": "callout-overlay",
+});
+
 function requestSourceLine(familyId, record) {
   return `${familyId} record ${record.key}: ${Object.entries(record)
     .filter(([field]) => field !== "key")
@@ -133,7 +154,7 @@ function requestSourceLine(familyId, record) {
 function requestForRecords(familyId, records, sourcePath = `${familyId}.txt`) {
   const family = requireCatalogFamily(familyId);
   const member = family.members.find((candidate) =>
-    candidate.status === "executable" || candidate.status === "unavailable");
+    candidate.id === FROZEN_INCUMBENT_MEMBER_IDS[familyId]);
   assert.ok(member, `${familyId} must expose a governed member`);
   const lines = records.map((record) => requestSourceLine(familyId, record));
   return {
@@ -877,7 +898,7 @@ test("all available families compile with private-only quotes and unavailable sp
   for (const family of listCatalogFamilies()) {
     const fixture = requestForFamily(family.id);
     await writeFile(join(root, fixture.sourcePath), fixture.sourceText);
-    if (!family.executableMemberId) {
+    if (family.executableMemberIds.length === 0) {
       await assert.rejects(
         compileCatalogMapRequest({ root, request: fixture.request }),
         { code: "UNAVAILABLE_CATALOG_MEMBER" },
@@ -885,7 +906,9 @@ test("all available families compile with private-only quotes and unavailable sp
       );
       continue;
     }
-    const member = executableCatalogMemberForFamily(family.id);
+    const member = family.members.find((candidate) =>
+      candidate.id === FROZEN_INCUMBENT_MEMBER_IDS[family.id]);
+    assert.equal(member?.status, "executable", family.id);
 
     const result = await compileCatalogMapRequest({
       root,
@@ -903,4 +926,88 @@ test("all available families compile with private-only quotes and unavailable sp
     assert.equal(result.evidenceStore.sources[0].text, fixture.sourceText, family.id);
     assert.equal(result.evidenceStore.sources[0].text.includes(fixture.request.evidence[0].quote), true, family.id);
   }
+});
+
+const WEEKDAY_MATRIX_ROWS = ["Wednesday", "Monday", "Tuesday", "Thursday"];
+const WEEKDAY_MATRIX_COLUMNS = ["Morning", "Evening"];
+
+function weekdayMatrixCells() {
+  return WEEKDAY_MATRIX_ROWS.flatMap((row) => WEEKDAY_MATRIX_COLUMNS.map((column) => ({
+    key: `${row}-${column}`.toLowerCase(),
+    row,
+    column,
+    value: row.length + column.length,
+  })));
+}
+
+function weekdayMatrixQuote(cell) {
+  return `${cell.row} ${cell.column} logged ${cell.value} sessions.`;
+}
+
+function weekdayMatrixRequest(options) {
+  const cells = weekdayMatrixCells();
+  return {
+    version: 1,
+    question: "When do sessions cluster?",
+    family: "matrix",
+    member: "heatmap",
+    sources: [{ path: "sessions.md" }],
+    records: cells.map(({ key, row, column, value }) => ({ key, row, column, value })),
+    evidence: cells.flatMap((cell) => ["row", "column", "value"].map((field) => ({
+      source: { path: "sessions.md" },
+      quote: weekdayMatrixQuote(cell),
+      recordKey: cell.key,
+      field,
+    }))),
+    ...(options ? { options } : {}),
+  };
+}
+
+async function weekdayMatrixProject(t) {
+  const root = await project(t);
+  await writeFile(join(root, "sessions.md"), `${weekdayMatrixCells().map(weekdayMatrixQuote).join("\n")}\n`);
+  return root;
+}
+
+test("a declared categoryOrder orders a role ahead of its automatic calendar order", async (t) => {
+  const root = await weekdayMatrixProject(t);
+
+  const automatic = await compileCatalogMapRequest({ root, request: weekdayMatrixRequest() });
+  assert.deepEqual(
+    [...new Set(automatic.dataPackage.marks.map((mark) => mark.values.row))],
+    ["Monday", "Tuesday", "Wednesday", "Thursday"],
+  );
+
+  const declared = await compileCatalogMapRequest({
+    root,
+    request: weekdayMatrixRequest({ categoryOrder: { row: ["Wednesday", "Monday"] } }),
+  });
+  assert.deepEqual(
+    [...new Set(declared.dataPackage.marks.map((mark) => mark.values.row))],
+    ["Wednesday", "Monday", "Tuesday", "Thursday"],
+  );
+});
+
+test("malformed categoryOrder requests fail closed at the boundary", async (t) => {
+  const root = await weekdayMatrixProject(t);
+  const rejects = (categoryOrder, path) => assert.rejects(
+    compileCatalogMapRequest({ root, request: weekdayMatrixRequest({ categoryOrder }) }),
+    (error) => error.code === "INVALID_OPTIONS" && error.path === path,
+  );
+
+  await rejects("Monday", "request.options.categoryOrder");
+  await rejects(["Monday"], "request.options.categoryOrder");
+  await rejects({ row: "Monday" }, "request.options.categoryOrder.row");
+  await rejects({ row: {} }, "request.options.categoryOrder.row");
+  await rejects({ row: [] }, "request.options.categoryOrder.row");
+  await rejects({ row: ["Monday", 7] }, "request.options.categoryOrder.row[1]");
+  await rejects({ row: ["Monday", ""] }, "request.options.categoryOrder.row[1]");
+  await rejects({ row: ["Monday", "Monday"] }, "request.options.categoryOrder.row[1]");
+  await rejects({ "not a role": ["Monday"] }, "request.options.categoryOrder.not a role");
+  await rejects({ weekday: ["Monday"] }, "request.options.categoryOrder.weekday");
+
+  await assert.rejects(
+    compileCatalogMapRequest({ root, request: weekdayMatrixRequest({ ordering: {} }) }),
+    (error) => error.code === "UNKNOWN_OPTIONS_KEY" && error.path === "request.options.ordering",
+  );
 });

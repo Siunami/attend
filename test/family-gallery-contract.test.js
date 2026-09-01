@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 import { createLibraryServer } from "../src/server.js";
 import { compileMap, compileMapWithEvidence } from "../src/pipeline/compile.js";
 import {
-  canonicalJson,
   isOpaqueEvidenceReferenceId,
   verifyDataPackageHashes,
 } from "../src/pipeline/data-package.js";
@@ -17,7 +16,8 @@ import {
   MAP_FAMILIES,
 } from "../src/map-families/registry.js";
 import SAMPLE_SOURCES from "../viewer/family-datasets.js";
-import { toCompilerRequest } from "../viewer/family-compiler-adapter.js";
+import { formFixtureDataset, toCompilerRequest } from "../viewer/family-compiler-adapter.js";
+import { GENERATED_FORM_RUNTIME } from "../viewer/form-runtime-generated.js";
 import { RENDERER_IDS } from "../viewer/family-renderers.js";
 
 const ATTEND_ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -167,7 +167,7 @@ function assertFamilyAssetHeaders(response, contentType, label) {
     assert.match(csp, new RegExp(`(?:^|; )${directive}(?:;|$)`, "u"), `${label} needs ${directive}`);
   }
   assert.match(csp, /(?:^|; )object-src 'none'(?:;|$)/u, `${label} must disable objects`);
-  assert.match(csp, /(?:^|; )frame-ancestors 'none'(?:;|$)/u, `${label} must disable framing`);
+  assert.match(csp, /(?:^|; )frame-ancestors 'self'(?:;|$)/u, `${label} must limit framing to the same viewer origin`);
   assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval|https?:/u, `${label} CSP cannot admit inline or remote code`);
 }
 
@@ -189,29 +189,48 @@ test("registry, sample data, and renderers have exact 19-family parity", () => {
   }
 });
 
-test("every gallery fixture compiles through the canonical pipeline deterministically", async () => {
-  for (const manifest of MAP_FAMILIES) {
-    const dataset = SAMPLE_SOURCES[manifest.id];
-    const request = await toCompilerRequest(dataset, manifest, { availableWidth: 1_024 });
+test("all 34 exact gallery fixtures compile through the canonical pipeline deterministically", async () => {
+  const manifestById = new Map(MAP_FAMILIES.map((manifest) => [manifest.id, manifest]));
+  assert.equal(GENERATED_FORM_RUNTIME.forms.length, 34);
+  for (const form of GENERATED_FORM_RUNTIME.forms) {
+    const manifest = manifestById.get(form.familyId);
+    const dataset = formFixtureDataset(form.familyId, form.memberId, SAMPLE_SOURCES[form.familyId]);
+    const request = await toCompilerRequest(dataset, manifest, {
+      availableWidth: 1_024,
+      memberId: form.memberId,
+    });
     const { dataPackage: first, evidenceReferences } = await compileMapWithEvidence(request);
     const second = await compileMap(request);
-    assert.equal(first.kind, "attend-data-package", `${manifest.id} must use the canonical package kind`);
-    assert.equal(first.schemaVersion, 2, `${manifest.id} must use schema version 2`);
-    assert.equal(first.family.id, manifest.id);
+    assert.equal(first.kind, "attend-data-package", `${form.key} must use the canonical package kind`);
+    assert.equal(first.schemaVersion, 2, `${form.key} must use schema version 2`);
+    assert.equal(first.family.id, form.familyId);
+    assert.equal(first.catalog.member, form.memberId);
     assert.equal(first.marks.length, request.sourceBundle.records.length);
-    assert.equal(first.hashes.package, second.hashes.package, `${manifest.id} fixture compilation must be deterministic`);
-    assert.equal(await verifyDataPackageHashes(first), true, `${manifest.id} package hashes must verify`);
+    assert.equal(first.hashes.package, second.hashes.package, `${form.key} fixture compilation must be deterministic`);
+    assert.equal(await verifyDataPackageHashes(first), true, `${form.key} package hashes must verify`);
     const compiledEvidence = new Set(first.marks.flatMap((mark) => mark.evidenceRefs));
-    assert.ok([...compiledEvidence].every(isOpaqueEvidenceReferenceId), `${manifest.id} must expose only opaque evidence reference ids`);
-    for (const evidence of dataset.evidence) {
-      assert.ok(evidenceReferences.some((reference) =>
-        reference.sourceId === evidence.sourceId
-        && canonicalJson(reference.locator) === canonicalJson(evidence.locator)
-        && reference.quote === evidence.excerpt
-      ), `${manifest.id}/${evidence.id} must remain available in the private evidence store`);
-    }
-    assert.doesNotMatch(JSON.stringify(first.marks), /"(?:sourceId|recordId|locator|excerpt|quote)"/u, `${manifest.id} public marks cannot disclose evidence linkage`);
+    assert.ok([...compiledEvidence].every(isOpaqueEvidenceReferenceId), `${form.key} must expose only opaque evidence reference ids`);
+    assert.equal(evidenceReferences.length, request.sourceBundle.records.length, `${form.key} must retain one private fixture reference per observation`);
+    assert.doesNotMatch(JSON.stringify(first.marks), /"(?:sourceId|recordId|locator|excerpt|quote)"/u, `${form.key} public marks cannot disclose evidence linkage`);
   }
+});
+
+test("the live browser matrix exercises exact forms and both direct and aggregate evidence", async () => {
+  const matrix = await readFile(`${ATTEND_ROOT}/scripts/verify-browser-matrix.mjs`, "utf8");
+  assert.match(matrix, /GENERATED_FORM_RUNTIME\.forms\.filter\(\(form\) => \([\s\S]*?form\.familyId === family\.id/u);
+  assert.match(matrix, /formFixtureDataset\(family\.id, form\.memberId/u);
+  assert.match(matrix, /memberId:\s*form\.memberId/u);
+  assert.doesNotMatch(matrix, /options:\s*\{[^}]*variant:|executableMemberIdForFamily|executableMemberIds\[0\]/su);
+  assert.match(matrix, /querySelectorAll\("\[data-mark-id\], \[data-target-id\]"\)/u);
+  assert.match(matrix, /value\.state\?\.targetId !== selected\.id/u);
+  assert.match(matrix, /api\/target-members/u);
+  assert.match(matrix, /membershipHash !== target\.membershipHash/u);
+  assert.match(matrix, /new URL\("form-runtime-generated\.js", viewerUrl\)/u);
+  assert.match(matrix, /contactUnavailableReady/u);
+  assert.match(matrix, /allowUnavailableContactAssets:\s*contactFixture/u);
+  assert.match(matrix, /data-preview-state"\) === "unavailable"/u);
+  assert.match(matrix, /label-overlap/u);
+  assert.match(matrix, /chat-area-select/u);
 });
 
 test("pipeline mode calls the canonical compiler and does not invent a second package contract", async () => {
@@ -418,6 +437,13 @@ test("family, mark, and media choices use labeled native keyboard controls", asy
   assert.match(navigationSource, /button\.type = "button"/u, "family navigation buttons need an explicit non-submit type");
   assert.match(navigationSource, /button\.dataset\.familyId = familyId/u, "family buttons must identify their family");
   assert.match(app, /relationships\.label = "Relationships"/u, "evidence-bearing links must be available through the native inspector");
+  assert.match(app, /aggregates\.label = "Aggregates"/u, "aggregate targets must be available through the native inspector");
+  assert.match(app, /`target:\$\{String\(target\.id\)\}`/u, "aggregate options must retain exact target identity");
+  assert.match(app, /state\.selectedTargetId\s*\?\s*`target:\$\{state\.selectedTargetId\}`/u, "the selected aggregate must remain visible in the native inspector");
+  assert.match(app, /selection\.startsWith\("target:"\)/u, "native selection must dispatch aggregate target events");
+  assert.match(app, /Verified aggregate target/u, "aggregate selection must summarize its complete evidence count");
+  assert.match(app, /renderReceipt = await renderAtlasPackage/u, "the inspector must enumerate renderer-visible marks and targets");
+  assert.doesNotMatch(sourceBetween(app, "function updateMarkSelect", "function updateSelection"), /dataset\.selectableMarkIds/u, "the inspector cannot offer raw package marks that the exact renderer did not expose");
   for (const className of ["network-link", "flow-link", "mechanism-link"]) {
     assert.match(renderers, new RegExp(`markClass\\(markId, selectedId, [^\\n]*${className}`, "u"), `${className} marks must expose linked selection`);
   }

@@ -9,6 +9,7 @@ import {
   evidenceSourceIdsForSelection,
   libraryMetadataForArtifact,
   patchArtifactState,
+  renderModelForArtifact,
   selectableIdsForArtifact,
   verifyArtifactPackage,
   viewDescriptorForArtifact,
@@ -56,7 +57,7 @@ async function atlasPackage() {
     sourceBundle: {
       kind: "attend-normalized-source-bundle",
       schemaVersion: 1,
-      adapter: { id: "fixture-adapter", version: 1 },
+      adapter: { id: "evidenced-records-v1", version: 1 },
       medium: "structured",
       requestedInputs: ["fixtures/records.jsonl"],
       sources: [{
@@ -69,6 +70,7 @@ async function atlasPackage() {
       records: [
         { id: "record_alpha", sourceId: "src_fixture", fields: { label: "Alpha", value: 8 } },
         { id: "record_beta", sourceId: "src_fixture", fields: { label: "Beta", value: 5 } },
+        { id: "record_gamma", sourceId: "src_fixture", fields: { label: "Gamma", value: 3 } },
       ],
     },
   });
@@ -151,7 +153,7 @@ test("atlas-v2 validates hashes and derives mark selection and evidence solely f
     { code: "EVIDENCE_PRIVATE_LINK_REQUIRED" },
   );
   assert.deepEqual(libraryMetadataForArtifact(dataPackage).counts, {
-    marks: 2,
+    marks: 3,
     sources: 1,
     noun: "mark",
   });
@@ -160,8 +162,14 @@ test("atlas-v2 validates hashes and derives mark selection and evidence solely f
   tampered.question.text = "A changed question with stale hashes";
   await assert.rejects(verifyArtifactPackage(tampered), { code: "HASH_MISMATCH" });
 
-  const previousCatalog = await withCatalogVersion(dataPackage, "3bcb588eaf291763");
-  assert.equal(await verifyArtifactPackage(previousCatalog), previousCatalog);
+  for (const version of ["3904c28aabcbc405", "3bcb588eaf291763"]) {
+    const previousCatalog = await withCatalogVersion(dataPackage, version);
+    assert.equal(await verifyArtifactPackage(previousCatalog), previousCatalog);
+    assert.equal(
+      renderModelForArtifact(previousCatalog).renderer.memberId,
+      dataPackage.catalog.member,
+    );
+  }
 
   const inventedCatalog = structuredClone(dataPackage);
   inventedCatalog.catalog.version = "not-the-bundled-catalog";

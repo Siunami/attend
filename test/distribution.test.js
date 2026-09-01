@@ -143,8 +143,14 @@ test("vendored browser assets match their pinned upstream files", async () => {
   for (const [filename, expectedDigest] of Object.entries(expected)) {
     assert.equal(await digest(new URL(`viewer/vendor/${filename}`, PACKAGE_ROOT)), expectedDigest);
   }
+  const exifrDigest = "a93b75793c24f45290370b3d7c91baedf05fd3e78250081e2f6f1282029d4364";
+  assert.equal(
+    await digest(new URL("src/media/vendor/exifr-7.1.3.esm.mjs", PACKAGE_ROOT)),
+    exifrDigest,
+  );
   const notice = await readFile(new URL("viewer/vendor/THIRD_PARTY_NOTICES.md", PACKAGE_ROOT), "utf8");
   for (const expectedDigest of Object.values(expected)) assert.match(notice, new RegExp(expectedDigest, "u"));
+  assert.match(notice, new RegExp(exifrDigest, "u"));
 });
 
 test("release staging produces a reproducible, private-data-free package and pinned prompt", async (t) => {
@@ -173,8 +179,8 @@ test("release staging produces a reproducible, private-data-free package and pin
   assert.deepEqual(first.manifest.catalog.counts, {
     families: 19,
     approved: 106,
-    documented: 87,
-    executable: 18,
+    documented: 71,
+    executable: 34,
     unavailable: 1,
     rejected: 38,
   });
@@ -197,7 +203,7 @@ test("release staging produces a reproducible, private-data-free package and pin
   assert.match(prompt, /attend model install --json/u);
   assert.match(prompt, /attend doctor --json/u);
   assert.match(prompt, /attend families --json/u);
-  assert.match(prompt, /19 families, 18 executable, 1 unavailable/u);
+  assert.match(prompt, /19 families, 34 executable, 1 unavailable/u);
   assert.match(prompt, /\.agents\/skills\/ and \.claude\/skills\//u);
   assert.match(prompt, /chat-route, and local-model checks pass/u);
   assert.match(prompt, /readiness\.core and readiness\.localModel\.ready are true/u);
@@ -252,7 +258,7 @@ test("release staging produces a reproducible, private-data-free package and pin
   assert.match(index, /Designed visualizations for a compatible coding agent/u);
   assert.match(index, /Private preview/u);
   assert.match(index, /invited collaborators/u);
-  assert.match(index, /eighteen designs executable/u);
+  assert.match(index, /34 designs executable/u);
   assert.match(index, /one explicit capability abstention/u);
   assert.match(index, /data-copy-prompt/u);
   assert.match(index, /one canonical experiment inbox/u);
@@ -273,7 +279,7 @@ test("release staging produces a reproducible, private-data-free package and pin
   assert.equal(archive.status, 0, archive.stderr);
   assert.doesNotMatch(
     archive.stdout,
-    /(^|\/)(?:\.attend|\.context|\.git|distribution|test|node_modules)(?:\/|$)/mu,
+    /(^|\/)(?:\.attend|\.context|\.git|node_modules)(?:\/|$)|^package\/(?:distribution|test)(?:\/|$)/mu,
   );
   for (const required of [
     "package/bin/attend.js",
@@ -284,6 +290,11 @@ test("release staging produces a reproducible, private-data-free package and pin
     "package/viewer/workspace.html",
     "package/viewer/workspace.js",
     "package/viewer/workspace.css",
+    "package/viewer/form-registry.js",
+    "package/viewer/form-renderers.js",
+    "package/viewer/form-runtime-generated.js",
+    "package/viewer/forms/distribution/histogram.js",
+    "package/src/catalog/generated-form-runtime.js",
     "package/viewer/vendor/d3.min.js",
     "package/viewer/vendor/topojson-client.min.js",
     "package/viewer/vendor/us-states.json",
@@ -344,8 +355,8 @@ test("release staging produces a reproducible, private-data-free package and pin
   assert.deepEqual(catalog.counts, {
     families: 19,
     approved: 106,
-    documented: 87,
-    executable: 18,
+    documented: 71,
+    executable: 34,
     unavailable: 1,
     rejected: 38,
   });
@@ -464,7 +475,7 @@ switch (process.argv[2]) {
   assert.equal(installRun.status, 0, installRun.stderr || installRun.stdout);
   assert.match(
     installRun.stdout,
-    new RegExp(`Attend ${version.replaceAll(".", "\\.")} installed: 19 families, 18 executable, 1 unavailable`, "u"),
+    new RegExp(`Attend ${version.replaceAll(".", "\\.")} installed: 19 families, 34 executable, 1 unavailable`, "u"),
   );
   assert.match(installRun.stdout, /Chat route: private gpt-oss-20b on this machine/u);
   assert.match(
@@ -555,7 +566,7 @@ switch (process.argv[2]) {
   await writeFile(checkpointRequest, JSON.stringify({
     version: 1,
     boundary: { kind: "before-final-answer", id: "packed-release-turn" },
-    host: { kind: "codex", skillVersion: "attend-visualize/0.5.5" },
+    host: { kind: "codex", skillVersion: "attend-visualize/0.6.0" },
     taskShape: {
       action: "review",
       evidenceState: "derived-records",
