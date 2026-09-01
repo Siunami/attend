@@ -4,7 +4,6 @@ import { setTimeout as delay } from "node:timers/promises";
 import { buildQuestionContext, QUESTION_CONTEXT_LIMITS } from "./question-context.js";
 import {
   completeQuestionResponse,
-  loadQuestionResponseContext,
   markQuestionResponseFailed,
   markQuestionResponseRunning,
   pendingQuestionResponseJobs,
@@ -20,6 +19,10 @@ const FAILURE_PERSIST_RETRY_MS = 40;
 const TERMINAL_JOB_ERRORS = new Set([
   "QUESTION_ALREADY_ANSWERED",
   "QUESTION_NOT_FOUND",
+]);
+const SKIPPED_START_ERRORS = new Set([
+  "QUESTION_RESPONSE_ROUTE_MISMATCH",
+  "QUESTION_RESPONSE_NOT_RUNNABLE",
 ]);
 
 function jobKey({ sessionId, questionId }) {
@@ -131,6 +134,7 @@ export function createQuestionWorker({
   capability,
   route,
   evidenceForSelection,
+  streamRelay,
 } = {}) {
   const workerRoot = resolve(root);
   if (!runner || typeof runner.respond !== "function") {
@@ -138,6 +142,9 @@ export function createQuestionWorker({
   }
   if (evidenceForSelection !== undefined && typeof evidenceForSelection !== "function") {
     throw new TypeError("evidenceForSelection must be a function");
+  }
+  if (streamRelay !== undefined && typeof streamRelay?.publish !== "function") {
+    throw new TypeError("streamRelay must provide publish(sessionId, event)");
   }
   const adapter = capability?.adapter ?? runner.adapter ?? "codex-cli";
   const workerRoute = normalizeWorkerRoute(route, adapter);
@@ -157,6 +164,10 @@ export function createQuestionWorker({
     idleWaiters = [];
     for (const resolveWaiter of waiters) resolveWaiter();
   };
+
+  const publish = streamRelay
+    ? (sessionId, event) => streamRelay.publish(sessionId, event)
+    : () => {};
 
   const persistFailure = async (job, errorCode) => {
     for (let attempt = 1; attempt <= FAILURE_PERSIST_ATTEMPTS; attempt += 1) {
@@ -183,7 +194,9 @@ export function createQuestionWorker({
     if (TERMINAL_JOB_ERRORS.has(error?.code)) return;
     // Never persist raw provider/process details. A few bounded retries cover
     // a transient session lock without ever invoking the provider again.
-    await persistFailure(job, questionResponseErrorCode(error));
+    const errorCode = questionResponseErrorCode(error);
+    await persistFailure(job, errorCode);
+    publish(job.sessionId, { type: "failed", questionId: job.questionId, errorCode });
   };
 
   const ensureAvailable = async (signal) => {
@@ -205,26 +218,28 @@ export function createQuestionWorker({
 
   const runJob = async (job, controller) => {
     try {
-      let context = await loadQuestionResponseContext({
-        root: workerRoot,
-        sessionId: job.sessionId,
-        questionId: job.questionId,
-      });
-      if (
-        !sameWorkerRoute(context.question.response?.route, workerRoute)
-      ) {
-        return;
+      try {
+        await markQuestionResponseRunning({
+          root: workerRoot,
+          sessionId: job.sessionId,
+          questionId: job.questionId,
+          route: workerRoute,
+          adapter,
+        });
+      } catch (error) {
+        // This worker never took ownership of the response, so a failure here
+        // belongs to whoever did; never persist one against their question.
+        if (SKIPPED_START_ERRORS.has(error?.code)) return;
+        throw error;
       }
-      await markQuestionResponseRunning({
-        root: workerRoot,
-        sessionId: job.sessionId,
+      publish(job.sessionId, {
+        type: "status",
         questionId: job.questionId,
-        route: workerRoute,
-        adapter,
+        status: "running",
       });
       if (closing) return;
 
-      context = await buildQuestionContext({
+      const context = await buildQuestionContext({
         root: workerRoot,
         sessionId: job.sessionId,
         questionId: job.questionId,
@@ -243,16 +258,26 @@ export function createQuestionWorker({
         conversation: context.conversation,
         dataPackagePath: context.dataPackagePath,
         signal: controller.signal,
+        onDelta: (text) => publish(job.sessionId, {
+          type: "delta",
+          questionId: job.questionId,
+          text,
+        }),
       });
       if (closing) return;
 
-      await completeQuestionResponse({
+      const completed = await completeQuestionResponse({
         root: workerRoot,
         sessionId: job.sessionId,
         questionId: job.questionId,
         content: validatedAnswer(result),
         route: workerRoute,
         adapter,
+      });
+      publish(job.sessionId, {
+        type: "answer",
+        questionId: job.questionId,
+        answerTurnId: completed.answer?.id ?? null,
       });
     } catch (error) {
       if (!isShutdownCancellation(error, closing) && !closing) {

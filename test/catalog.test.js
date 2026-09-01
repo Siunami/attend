@@ -6,11 +6,13 @@ import {
   CATALOG_COUNTS,
   CATALOG_VERSION,
   CATALOG_FAMILIES,
-  executableCatalogMemberForFamily,
   listCatalogFamilies,
+  requireExecutableCatalogMember,
 } from "../src/catalog/index.js";
 import { getMapFamily } from "../src/map-families/registry.js";
 import { AUTHORED_FAMILY_ATLAS_CONTENT } from "../src/catalog/snapshot.js";
+import { FORM_REQUIREMENT_KINDS, assertSupportedFormRequirement } from "../src/forms/index.js";
+import { assertRepresentationIntentSupported } from "../src/representation-intent.js";
 
 const AUTHORED_IDS = [
   "annotated-specimen",
@@ -69,8 +71,8 @@ test("generated Family Atlas catalog snapshots the exact inventory and does not 
   assert.deepEqual(CATALOG_COUNTS, {
     families: 19,
     approved: 106,
-    documented: 87,
-    executable: 18,
+    documented: 71,
+    executable: 34,
     unavailable: 1,
     rejected: 38,
   });
@@ -82,24 +84,32 @@ test("generated Family Atlas catalog snapshots the exact inventory and does not 
       assert.equal(executable.length, 0);
       assert.equal(unavailable.length, 1);
       assert.equal(unavailable[0].id, "callout-overlay");
-      assert.equal(family.executableMemberId, null);
+      assert.deepEqual(family.executableMemberIds, []);
       assert.match(unavailable[0].unavailableReason, /visible specimen/u);
       continue;
     }
-    assert.equal(executable.length, 1, `${family.id} must expose exactly one executable member`);
+    assert.ok(executable.length >= 1, `${family.id} must expose executable members`);
     assert.equal(unavailable.length, 0, family.id);
-    assert.equal(executable[0].id, family.executableMemberId);
-    assert.equal(executableCatalogMemberForFamily(family.id).id, family.executableMemberId);
-    assert.equal(
-      getMapFamily(family.id).variants.some((variant) => variant.id === executable[0].rendererVariantId),
-      true,
-      `${family.id}/${executable[0].id} must bind one declared renderer variant`,
-    );
+    assert.deepEqual(executable.map((member) => member.id), family.executableMemberIds);
+    for (const member of executable) {
+      assert.equal(requireExecutableCatalogMember(family.id, member.id), member);
+      assert.equal(member.rendererId, getMapFamily(family.id).renderer.id);
+    }
   }
 });
 
 test("catalog members expose structured authored data requirements and honest renderer bindings", () => {
-  const executable = (familyId) => executableCatalogMemberForFamily(familyId);
+  const incumbents = {
+    sequence: "step-strip",
+    rank: "bar-list",
+    profile: "parallel",
+    network: "local",
+    flow: "sankey",
+    "collection-atlas": "faceted-atlas",
+    "point-map": "exact-points",
+    mechanism: "flowchart",
+  };
+  const executable = (familyId) => requireExecutableCatalogMember(familyId, incumbents[familyId]);
   const requirement = (familyId, id) => executable(familyId).requirements.find((item) => item.id === id);
 
   assert.deepEqual(
@@ -157,29 +167,83 @@ test("catalog members expose structured authored data requirements and honest re
     minimumItems: 5,
     maximumItems: 200,
   });
+  assert.deepEqual(executable("collection-atlas").roleSchema.required, ["label", "cluster"]);
+  assert.deepEqual(Object.keys(executable("collection-atlas").roleSchema.properties), ["label", "cluster", "order"]);
+  const sampleRaster = requireExecutableCatalogMember("field", "sample-raster");
+  assert.equal(sampleRaster.authoredBand, "20–250,000 cells; ≥2 px per visible cell");
+  assert.deepEqual(sampleRaster.requirements.find((item) => item.id === "record-count"), {
+    id: "record-count",
+    kind: "record-count",
+    minimum: 20,
+    maximum: 2_500,
+  });
+});
+
+test("catalog generation fails closed on unknown exact-form requirement kinds", () => {
+  const supported = new Set(FORM_REQUIREMENT_KINDS);
+  for (const family of CATALOG_FAMILIES) {
+    for (const member of family.members.filter((item) => item.status === "executable")) {
+      for (const requirement of member.requirements) {
+        assert.ok(supported.has(requirement.kind), `${family.id}/${member.id}/${requirement.id}`);
+        assert.equal(assertSupportedFormRequirement(requirement), requirement);
+      }
+    }
+  }
+  assert.throws(
+    () => assertSupportedFormRequirement({ id: "typo", kind: "record-cont" }),
+    (error) => error.code === "UNKNOWN_FORM_REQUIREMENT",
+  );
 });
 
 test("executable members publish finite representation capabilities", () => {
-  const mechanism = executableCatalogMemberForFamily("mechanism");
+  const mechanism = requireExecutableCatalogMember("mechanism", "flowchart");
   assert.deepEqual(mechanism.representationCapabilities, {
     version: 1,
     constraints: {
       dimensionality: ["2d"],
-      form: ["flowchart", "system-schematic"],
+      form: ["flowchart"],
       interaction: ["selection"],
       motion: ["static"],
       projection: ["none"],
     },
   });
 
-  const pointMap = executableCatalogMemberForFamily("point-map");
-  assert.deepEqual(pointMap.representationCapabilities.constraints.interaction, [
-    "pan-zoom",
-    "selection",
-  ]);
+  const executable = CATALOG_FAMILIES.flatMap((family) => family.members
+    .filter((member) => member.status === "executable")
+    .map((member) => ({ family, member })));
+  assert.equal(executable.length, 34);
+  for (const { family, member } of executable) {
+    assert.deepEqual(member.representationCapabilities.constraints.form, [member.id], `${family.id}/${member.id}`);
+    assert.deepEqual(member.representationCapabilities.constraints.interaction, ["selection"], `${family.id}/${member.id}`);
+    assert.equal(member.representationCapabilities.constraints.interaction.includes("pan-zoom"), false, `${family.id}/${member.id}`);
+  }
+
+  const pointMap = requireExecutableCatalogMember("point-map", "exact-points");
   assert.deepEqual(pointMap.representationCapabilities.constraints.projection, ["geographic"]);
   assert.equal(mechanism.representationCapabilities.constraints.dimensionality.includes("3d"), false);
   assert.equal(mechanism.representationCapabilities.constraints.interaction.includes("orbit"), false);
+});
+
+test("exact representation intent accepts only member-owned form and implemented interaction capabilities", () => {
+  const intent = (kind, value) => ({ version: 1, mode: "exact", constraints: [{ kind, value }] });
+  const cases = [
+    ["composition", "hundred-bar", "form", "normalized-parts"],
+    ["collection-atlas", "faceted-atlas", "form", "contact-atlas"],
+    ["point-map", "exact-points", "interaction", "pan-zoom"],
+  ];
+  for (const [familyId, memberId, kind, value] of cases) {
+    const family = CATALOG_FAMILIES.find((item) => item.id === familyId);
+    const member = requireExecutableCatalogMember(familyId, memberId);
+    assert.throws(
+      () => assertRepresentationIntentSupported(intent(kind, value), { family, member }),
+      (error) => error.code === "UNSUPPORTED_REQUESTED_REPRESENTATION",
+      `${familyId}/${memberId} ${kind}=${value}`,
+    );
+    assert.deepEqual(
+      assertRepresentationIntentSupported(intent("form", memberId), { family, member }),
+      intent("form", memberId),
+    );
+  }
 });
 
 test("bundled catalog snapshot preserves the complete authored inventory", () => {

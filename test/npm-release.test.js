@@ -12,7 +12,7 @@ test("the public package leads with a human-readable coding-agent install", asyn
     readFile(`${PACKAGE_ROOT}/README.md`, "utf8"),
   ]);
 
-  assert.equal(manifest.version, "0.5.5");
+  assert.equal(manifest.version, "0.6.0");
   assert.equal(manifest.name, "@siunami/attend");
   assert.equal(manifest.license, "MIT");
   assert.equal(manifest.author, "Siunami");
@@ -40,7 +40,10 @@ test("the public package leads with a human-readable coding-agent install", asyn
   )?.groups?.prompt;
   assert.ok(prompt, "coding-agent prompt is missing");
   assert.ok(prompt.split(/\s+/u).length <= 180, "coding-agent prompt is too long");
-  assert.match(prompt, /npm install --global @siunami\/attend@0\.5\.5/u);
+  assert.ok(
+    prompt.includes(`npm install --global @siunami/attend@${manifest.version}`),
+    "the coding-agent prompt must install the version this package publishes",
+  );
   assert.match(prompt, /attend bootstrap --yes/u);
   assert.match(prompt, /show me the output/iu);
   assert.match(prompt, /show me the actual error/iu);

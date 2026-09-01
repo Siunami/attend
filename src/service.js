@@ -26,10 +26,16 @@ import {
   sameChatRoute,
   setChatRoute,
 } from "./chat-route.js";
+import { evidencePacketForSelection } from "./evidence.js";
+import { createQuestionStreamRelay } from "./question-stream.js";
 import { createQuestionWorker } from "./question-worker.js";
 import { createLibraryServer } from "./server.js";
 import { pendingQuestionResponseJobs } from "./session-store.js";
-import { createLlamaCppModelRunner, LOCAL_MODEL } from "./local-model.js";
+import {
+  createLlamaCppModelRunner,
+  LOCAL_EVIDENCE_PACKET_BYTES,
+  LOCAL_MODEL,
+} from "./local-model.js";
 import { PACKAGE_VERSION } from "./constants.js";
 
 const SERVICE_SCHEMA_VERSION = 1;
@@ -898,6 +904,7 @@ export async function runForegroundService({
     const serviceChat = serviceChatForRoute(configuredRoute);
     let agent;
     let runner;
+    let streamRelay;
     if (configuredRoute.kind === "local") {
       modelRunner = localRunnerFactory({ projectRoot });
       agent = safeAgentCapability(await modelRunner.start());
@@ -905,6 +912,7 @@ export async function runForegroundService({
         throw new Error("Attend's private local model did not become ready");
       }
       runner = modelRunner;
+      streamRelay = createQuestionStreamRelay();
     } else if (configuredRoute.kind === "detached") {
       runner = runnerFactory(configuredRoute.adapter, {
         projectRoot,
@@ -917,6 +925,13 @@ export async function runForegroundService({
         runner,
         capability: agent,
         route: configuredRoute,
+        ...(configuredRoute.kind === "local" ? {
+          evidenceForSelection: (request) => evidencePacketForSelection({
+            ...request,
+            maxBytes: LOCAL_EVIDENCE_PACKET_BYTES,
+          }),
+        } : {}),
+        ...(streamRelay ? { streamRelay } : {}),
       });
     }
 
@@ -1025,6 +1040,7 @@ export async function runForegroundService({
       token: config.token,
       instanceId,
       ...(questionWorker ? { enqueueQuestion: questionWorker.enqueueQuestion } : {}),
+      ...(streamRelay ? { questionStream: streamRelay } : {}),
       resolveQuestionRoute: resolveProjectRoute,
       chatCapability: projectChatCapability,
       serviceChat,

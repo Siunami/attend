@@ -4,6 +4,7 @@ import {
   open,
   readdir,
   readFile,
+  stat,
   unlink,
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -25,6 +26,7 @@ import {
   writeJsonAtomic,
 } from "./project.js";
 import { LOCAL_MODEL } from "./local-model.js";
+import { validateSessionAssetReceipt } from "./media/session-assets.js";
 
 const SESSION_SCHEMA_VERSION = 1;
 const SESSION_DIRECTORY = ".attend/local/sessions";
@@ -44,6 +46,11 @@ const RESPONSE_STATUSES = new Set([
 const RESPONSE_ERROR_CODE = /^[a-z][a-z0-9_]{0,63}$/u;
 const HOST_ATTACHMENT_ID = /^host_[a-f0-9]{16}$/u;
 const DETACHED_ADAPTERS = new Set(["codex-cli", "claude-cli"]);
+// Keyed by the session file's stat identity, so an out-of-band edit preserving
+// mtime, size, and inode is not re-detected within one process. A hit skips the
+// staged-asset manifest, but readSessionAsset revalidates the receipt itself.
+const SESSION_CACHE = new Map();
+const SESSION_CACHE_MAX = 32;
 
 function normalizeResponseRoute(route) {
   if (!route || typeof route !== "object" || Array.isArray(route)) {
@@ -652,11 +659,20 @@ export async function createSession({
   id,
   state = {},
   exploration,
+  assetReceipt,
 } = {}) {
   const packageSnapshot = cloneJson(dataPackage, "dataPackage");
   validateArtifactPackage(packageSnapshot);
   await verifyArtifactPackage(packageSnapshot);
   const sessionId = validateSessionId(id ?? packageSnapshot.id);
+  const normalizedAssetReceipt = assetReceipt === undefined
+    ? undefined
+    : await validateSessionAssetReceipt({
+        root,
+        sessionId,
+        dataPackage: packageSnapshot,
+        receipt: assetReceipt,
+      });
   const path = sessionFilePath({ root, sessionId });
   await ensureSafeDirectory(root, dirname(path));
   await assertSafeWritePath(root, path);
@@ -685,6 +701,9 @@ export async function createSession({
       dataPackage: packageSnapshot,
       state: createArtifactState(packageSnapshot, state),
       conversation: { turns: [] },
+      ...(normalizedAssetReceipt === undefined
+        ? {}
+        : { assetReceipt: normalizedAssetReceipt }),
       ...(exploration === undefined
         ? {}
         : { exploration: normalizeExplorationProvenance(exploration) }),
@@ -696,11 +715,46 @@ export async function createSession({
   }
 }
 
+async function sessionStatKey(path) {
+  try {
+    const info = await stat(path);
+    return `${info.mtimeMs}:${info.size}:${info.ino}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function loadSession({ root, sessionId } = {}) {
   const path = sessionFilePath({ root, sessionId });
   await assertSafeWritePath(root, path);
+  const statKey = await sessionStatKey(path);
+  const cached = statKey === undefined ? undefined : SESSION_CACHE.get(path);
+  if (cached !== undefined && cached.statKey === statKey) {
+    SESSION_CACHE.delete(path);
+    SESSION_CACHE.set(path, cached);
+    return JSON.parse(cached.serialized);
+  }
+
   const session = normalizeStoredSession(cloneJson(await readJson(path), "session"));
   await verifyStoredArtifact(session);
+  if (session.assetReceipt !== undefined) {
+    session.assetReceipt = await validateSessionAssetReceipt({
+      root,
+      sessionId: session.id,
+      dataPackage: session.dataPackage,
+      receipt: session.assetReceipt,
+    });
+  }
+  // Without this, an atomic rename landing between the first stat and the read
+  // would cache stale bytes under the new file's identity and serve them forever.
+  const settledStatKey = await sessionStatKey(path);
+  if (settledStatKey !== undefined && settledStatKey === statKey) {
+    SESSION_CACHE.delete(path);
+    SESSION_CACHE.set(path, { statKey, serialized: JSON.stringify(session) });
+    while (SESSION_CACHE.size > SESSION_CACHE_MAX) {
+      SESSION_CACHE.delete(SESSION_CACHE.keys().next().value);
+    }
+  }
   return session;
 }
 

@@ -26,7 +26,10 @@ export async function renderAtlasPackage({
   packageValue,
   selectedMarkIds = [],
   selectedNodeId = null,
+  selectedTargetId = null,
   onSelect,
+  onClear,
+  loadTargetMembers,
 } = {}) {
   const model = atlasPackageToRenderModel(packageValue);
   if (!isCatalogReceiptAllowlisted(model.catalog)) {
@@ -39,14 +42,18 @@ export async function renderAtlasPackage({
     selectedId: selected[0] ?? null,
     selectedIds: selected,
     selectedNodeId,
+    selectedTargetId,
     selectableMarkIds: model.selectableMarkIds,
     onSelect,
+    onClear,
+    loadTargetMembers,
   });
   return {
     ...receipt,
     packageId: model.packageId,
     familyId: model.familyId,
     selectedMarkIds: selected,
+    selectedTargetId: model.selectableTargetIds.includes(String(selectedTargetId ?? "")) ? String(selectedTargetId) : null,
   };
 }
 
@@ -54,4 +61,9 @@ export function atlasSelectionSummary(packageValue, selectedMarkIds = []) {
   const model = atlasPackageToRenderModel(packageValue);
   const selected = selectedIds(selectedMarkIds, model);
   return selected.map((id) => model.markById[id]).filter(Boolean);
+}
+
+export function atlasTargetSummary(packageValue, targetId) {
+  const model = atlasPackageToRenderModel(packageValue);
+  return model.targetById[String(targetId ?? "")] ?? null;
 }

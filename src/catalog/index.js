@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
-
 import { MAP_FAMILIES, requireMapFamily } from "../map-families/registry.js";
+import { FORM_DEFINITIONS, getExecutableForm, requireExecutableForm } from "../forms/index.js";
 import { US_STATES_GEOGRAPHY } from "../geography.js";
 import { representationCapabilitiesFor } from "../representation-intent.js";
 import { AUTHORED_FAMILY_ATLAS_CONTENT } from "./snapshot.js";
+import { sha256HexSync } from "../forms/sha256.js";
 
 const EXECUTABLE_SPECS = Object.freeze({
   rank: { memberId: "bar-list", rendererVariantId: "bar-list", mediaPolicy: "text-only" },
@@ -25,21 +25,6 @@ const EXECUTABLE_SPECS = Object.freeze({
   field: { memberId: "sample-raster", rendererVariantId: "sample-raster", mediaPolicy: "text-only" },
   "annotated-specimen": { memberId: "callout-overlay", rendererVariantId: "callout-overlay", mediaPolicy: "normalized-text" },
   "collection-atlas": { memberId: "faceted-atlas", rendererVariantId: "contact-atlas", mediaPolicy: "text-only" },
-});
-
-const COLLECTION_ATLAS_FIELDS = Object.freeze({
-  required: ["label", "cluster"],
-  optional: ["order"],
-});
-
-const COLLECTION_ATLAS_OUTPUT_ROLES = Object.freeze({
-  required: [
-    { id: "label", description: "Item label.", types: ["string"] },
-    { id: "cluster", description: "Declared cluster or facet label.", types: ["string"] },
-  ],
-  optional: [
-    { id: "order", description: "Optional local order within a cluster.", types: ["number"] },
-  ],
 });
 
 const EXECUTABLE_DATA_REQUIREMENTS = Object.freeze({
@@ -199,7 +184,6 @@ function roleJsonSchema(role) {
 }
 
 function catalogRolesFor(familyId, manifest) {
-  if (familyId === "collection-atlas") return COLLECTION_ATLAS_OUTPUT_ROLES;
   return {
     required: manifest.data.requiredRoles,
     optional: manifest.data.optionalRoles,
@@ -207,7 +191,6 @@ function catalogRolesFor(familyId, manifest) {
 }
 
 function fieldListFor(familyId, manifest) {
-  if (familyId === "collection-atlas") return COLLECTION_ATLAS_FIELDS;
   return {
     required: manifest.data.requiredRoles.map((role) => role.id),
     optional: manifest.data.optionalRoles.map((role) => role.id),
@@ -251,9 +234,6 @@ function roleSchemaFor(familyId, manifest) {
 }
 
 function catalogSummaryFor(familyId, manifest) {
-  if (familyId === "collection-atlas") {
-    return "Navigate a complete collection through deterministic faceted atlas positions derived by the CLI.";
-  }
   return manifest.summary;
 }
 
@@ -271,14 +251,6 @@ function requirementsFor(manifest, executable) {
       policy: "Every populated input field for every record must have at least one exact verified quote. This proves literal field coverage; transformed numeric meaning is only proven when the literal value appears in the quote.",
     },
   ];
-  if (manifest.id === "collection-atlas") {
-    requirements.push({
-      id: "derived-layout",
-      kind: "derived-layout",
-      fields: ["x", "y"],
-      policy: "Atlas coordinates are derived deterministically from cluster and order. Requests may not supply semantic coordinates.",
-    });
-  }
   if (manifest.id === "annotated-specimen") {
     requirements.push({
       id: "native-locator",
@@ -306,7 +278,7 @@ function requirementsFor(manifest, executable) {
   return requirements;
 }
 
-function buildMember(family, manifest, executable, member) {
+function buildMember(family, manifest, member) {
   const base = {
     id: member.id,
     family: family.id,
@@ -323,51 +295,78 @@ function buildMember(family, manifest, executable, member) {
       rejectionReason: member.good,
     };
   }
-  if (member.id !== executable.memberId) {
+  const form = getExecutableForm(family.id, member.id);
+  if (!form && family.id !== "annotated-specimen") {
     return {
       ...base,
       status: "documented",
     };
   }
-  const requirements = requirementsFor(manifest, executable);
+  const unavailable = family.id === "annotated-specimen" && member.id === "callout-overlay";
+  if (!form && !unavailable) {
+    return {
+      ...base,
+      status: "documented",
+    };
+  }
+  const requirements = form?.requirements ?? requirementsFor(manifest, EXECUTABLE_SPECS[family.id]);
   const capabilityBlocker = requirements.find((requirement) => requirement.kind === "capability-blocker");
+  const roles = form?.roles ?? catalogRolesFor(family.id, manifest);
   return {
     ...base,
-    status: capabilityBlocker ? "unavailable" : "executable",
+    status: unavailable || capabilityBlocker ? "unavailable" : "executable",
     rendererId: manifest.renderer.id,
     rendererVersion: manifest.renderer.version,
-    rendererVariantId: executable.rendererVariantId,
-    roleSchema: roleSchemaFor(family.id, manifest),
-    recordSchema: recordSchemaFor(family.id, manifest),
+    rendererVariantId: form?.renderer.variant ?? EXECUTABLE_SPECS[family.id].rendererVariantId,
+    roleSchema: form ? roleSchemaForRoles(roles) : roleSchemaFor(family.id, manifest),
+    recordSchema: form ? recordSchemaForRoles(roles) : recordSchemaFor(family.id, manifest),
     requirements,
+    authoredBand: member.band,
+    executableBand: form?.quantityBands.executable ?? [],
+    guidance: form?.guidance ?? null,
+    sourcePolicy: form?.sourcePolicy ?? null,
+    projector: form?.projector ?? null,
+    payload: form?.payload ?? null,
+    selectionPolicy: form?.selection ?? null,
+    browserRendererModule: form?.browserRendererModule ?? null,
+    fixtureId: form?.fixtureId ?? null,
+    staticAssets: form?.staticAssets ?? [],
     representationCapabilities: representationCapabilitiesFor({
       family: manifest,
       member: {
         id: member.id,
-        rendererVariantId: executable.rendererVariantId,
+        rendererVariantId: form?.renderer.variant ?? EXECUTABLE_SPECS[family.id].rendererVariantId,
       },
     }),
-    mediaPolicy: executable.mediaPolicy,
-    ...(capabilityBlocker ? {
-      unavailableReason: capabilityBlocker.reason,
+    mediaPolicy: form?.mediaPolicy ?? EXECUTABLE_SPECS[family.id].mediaPolicy,
+    ...(unavailable || capabilityBlocker ? {
+      unavailableReason: capabilityBlocker?.reason ?? "This release cannot bind and display the visible specimen required by anchored callouts.",
     } : {}),
   };
 }
 
+function roleSchemaForRoles(roles) {
+  const properties = {};
+  for (const item of [...roles.required, ...roles.optional]) properties[item.id] = roleJsonSchema(item);
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: roles.required.map((item) => item.id),
+    properties,
+  };
+}
+
+function recordSchemaForRoles(roles) {
+  return roleSchemaForRoles(roles);
+}
+
 function buildFamily(content) {
   const manifest = requireMapFamily(content.id);
-  const executable = EXECUTABLE_SPECS[content.id];
-  if (!executable) throw new Error(`Missing executable catalog mapping for ${content.id}`);
-  if (!manifest.variants.some((variant) => variant.id === executable.rendererVariantId)) {
-    throw new Error(
-      `Executable catalog mapping ${content.id}/${executable.memberId} names undeclared variant ${executable.rendererVariantId}`,
-    );
-  }
   const roles = catalogRolesFor(content.id, manifest);
-  const members = content.members.map((member) => buildMember(content, manifest, executable, member));
-  const executableMember = members.find((member) => member.status === "executable");
+  const members = content.members.map((member) => buildMember(content, manifest, member));
+  const executableMembers = members.filter((member) => member.status === "executable");
   const unavailableMember = members.find((member) => member.status === "unavailable");
-  if (!executableMember && !unavailableMember) throw new Error(`Catalog family ${content.id} has no governed member`);
+  if (executableMembers.length === 0 && !unavailableMember) throw new Error(`Catalog family ${content.id} has no governed member`);
   return {
     id: content.id,
     title: content.title,
@@ -375,7 +374,7 @@ function buildFamily(content) {
     question: content.question,
     oneLine: content.oneLine,
     summary: catalogSummaryFor(content.id, manifest),
-    executableMemberId: executableMember?.id ?? null,
+    executableMemberIds: executableMembers.map((member) => member.id),
     rendererId: manifest.renderer.id,
     requiredRoles: roles.required.map((role) => ({ id: role.id, description: role.description, types: [...role.types] })),
     optionalRoles: roles.optional.map((role) => ({ id: role.id, description: role.description, types: [...role.types] })),
@@ -418,14 +417,11 @@ export const CATALOG_COUNTS = Object.freeze(CATALOG_FAMILIES.reduce((totals, fam
   rejected: 0,
 }));
 
-export const CATALOG_VERSION = createHash("sha256")
-  .update(canonicalJson({
+export const CATALOG_VERSION = sha256HexSync(canonicalJson({
     families: CATALOG_FAMILIES,
     counts: CATALOG_COUNTS,
     manifests: MAP_FAMILIES.map((family) => ({ id: family.id, version: family.version, renderer: family.renderer })),
-  }))
-  .digest("hex")
-  .slice(0, 16);
+  })).slice(0, 16);
 
 const FAMILY_BY_ID = new Map(CATALOG_FAMILIES.map((family) => [family.id, family]));
 const MEMBER_BY_KEY = new Map(CATALOG_FAMILIES.flatMap((family) =>
@@ -478,19 +474,15 @@ export function requireExecutableCatalogMember(familyId, memberId) {
   throw error;
 }
 
-export function executableCatalogMemberForFamily(familyId) {
+export function executableCatalogMembersForFamily(familyId) {
   const family = requireCatalogFamily(familyId);
-  if (!family.executableMemberId) {
-    const error = new RangeError(`${familyId} has no executable member in this release.`);
-    error.code = "NO_EXECUTABLE_CATALOG_MEMBER";
-    throw error;
-  }
-  return requireExecutableCatalogMember(familyId, family.executableMemberId);
+  return family.executableMemberIds.map((memberId) => requireExecutableCatalogMember(familyId, memberId));
 }
 
 export function catalogReceiptForMember(familyId, memberId) {
   const family = requireCatalogFamily(familyId);
   const member = requireExecutableCatalogMember(familyId, memberId);
+  requireExecutableForm(familyId, memberId);
   return {
     version: CATALOG_VERSION,
     family: family.id,
@@ -499,4 +491,86 @@ export function catalogReceiptForMember(familyId, memberId) {
     rendererVersion: member.rendererVersion,
     rendererVariantId: member.rendererVariantId,
   };
+}
+
+const LEGACY_EXECUTABLE_RECEIPTS = Object.freeze(Object.fromEntries([
+  ["rank", "bar-list", "attend-rank", "bar-list"],
+  ["distribution", "strip", "attend-distribution", "strip"],
+  ["composition", "hundred-bar", "attend-composition", "normalized-parts"],
+  ["profile", "parallel", "attend-profile", "parallel-profile"],
+  ["passage-comparison", "parallel-text", "attend-passage-comparison", "aligned-passages"],
+  ["trend", "line", "attend-trend", "observed-line"],
+  ["timeline", "interval", "attend-timeline", "lane-timeline"],
+  ["sequence", "step-strip", "attend-sequence", "storyboard"],
+  ["relationship", "scatter", "attend-relationship", "scatter"],
+  ["matrix", "heatmap", "attend-matrix", "heat-matrix"],
+  ["hierarchy", "tidy", "attend-hierarchy", "node-tree"],
+  ["network", "local", "attend-network", "node-link"],
+  ["flow", "sankey", "attend-flow", "sankey"],
+  ["mechanism", "flowchart", "attend-mechanism", "system-schematic"],
+  ["region-map", "choropleth", "attend-region-map", "choropleth"],
+  ["point-map", "exact-points", "attend-point-map", "dot-map"],
+  ["field", "sample-raster", "attend-field", "sample-raster"],
+  ["collection-atlas", "faceted-atlas", "attend-collection-atlas", "contact-atlas"],
+].map(([family, member, rendererId, rendererVariantId]) => {
+  return [`${family}/${member}`, Object.freeze({
+    family,
+    member,
+    rendererId,
+    rendererVersion: 1,
+    rendererVariantId,
+  })];
+})));
+
+export const HISTORICAL_CATALOG_RECEIPTS = Object.freeze({
+  "3904c28aabcbc405": LEGACY_EXECUTABLE_RECEIPTS,
+  "3bcb588eaf291763": LEGACY_EXECUTABLE_RECEIPTS,
+});
+
+const HISTORICAL_PRESENTATION_VARIANTS = Object.freeze({
+  "rank/bar-list": "bar-list",
+  "distribution/strip": "strip",
+  "composition/hundred-bar": "absolute-stack",
+  "profile/parallel": "parallel-profile",
+  "passage-comparison/parallel-text": "aligned-passages",
+  "trend/line": "observed-line",
+  "timeline/interval": "event-strip",
+  "sequence/step-strip": "storyboard",
+  "relationship/scatter": "scatter",
+  "matrix/heatmap": "heat-matrix",
+  "hierarchy/tidy": "node-tree",
+  "network/local": "node-link",
+  "flow/sankey": "sankey",
+  "mechanism/flowchart": "system-schematic",
+  "region-map/choropleth": "choropleth",
+  "point-map/exact-points": "dot-map",
+  "field/sample-raster": "contours",
+  "collection-atlas/faceted-atlas": "semantic-field",
+});
+
+export function historicalCatalogReceiptForMember(version, familyId, memberId) {
+  const table = HISTORICAL_CATALOG_RECEIPTS[version];
+  const receipt = table?.[`${familyId}/${memberId}`];
+  if (!receipt) {
+    const error = new RangeError(`Unknown historical catalog receipt: ${String(version)} ${String(familyId)}/${String(memberId)}`);
+    error.code = "UNKNOWN_HISTORICAL_CATALOG_RECEIPT";
+    throw error;
+  }
+  return { version, ...receipt };
+}
+
+export function historicalPresentationVariantForMember(version, familyId, memberId) {
+  historicalCatalogReceiptForMember(version, familyId, memberId);
+  const variant = HISTORICAL_PRESENTATION_VARIANTS[`${familyId}/${memberId}`];
+  if (!variant) {
+    const error = new RangeError(`Unknown historical presentation contract: ${String(version)} ${String(familyId)}/${String(memberId)}`);
+    error.code = "UNKNOWN_HISTORICAL_PRESENTATION_CONTRACT";
+    throw error;
+  }
+  return variant;
+}
+
+export function resolveCatalogReceipt(catalog) {
+  if (catalog?.version === CATALOG_VERSION) return catalogReceiptForMember(catalog.family, catalog.member);
+  return historicalCatalogReceiptForMember(catalog?.version, catalog?.family, catalog?.member);
 }

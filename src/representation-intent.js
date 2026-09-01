@@ -1,4 +1,5 @@
 import { requireMapFamily } from "./map-families/registry.js";
+import { getExecutableForm } from "./forms/index.js";
 
 export const REPRESENTATION_INTENT_VERSION = 1;
 export const REPRESENTATION_INTENT_MODES = Object.freeze(["open", "exact"]);
@@ -139,18 +140,20 @@ function projectionForFamily(familyId) {
 
 export function representationCapabilitiesFor({ family, member }) {
   const manifest = requireMapFamily(typeof family === "string" ? family : family.id);
-  const forms = [...new Set([member.id, member.rendererVariantId].filter(Boolean))].sort();
-  const interactions = [];
-  if (manifest.selections.length > 0) interactions.push("selection");
-  if (manifest.controls.some((control) => ["pan-zoom", "map-navigation"].includes(control.type))) {
-    interactions.push("pan-zoom");
+  const form = getExecutableForm(manifest.id, member.id);
+  if (form) {
+    return {
+      version: REPRESENTATION_INTENT_VERSION,
+      constraints: Object.fromEntries(Object.entries(form.representation.constraints)
+        .map(([kind, values]) => [kind, [...values]])),
+    };
   }
   return {
     version: REPRESENTATION_INTENT_VERSION,
     constraints: {
       dimensionality: ["2d"],
-      form: forms,
-      interaction: interactions.sort(),
+      form: [member.id],
+      interaction: [],
       motion: ["static"],
       projection: [projectionForFamily(manifest.id)],
     },

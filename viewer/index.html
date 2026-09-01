@@ -31,7 +31,7 @@
         </div>
       </header>
 
-      <main id="workspace" class="workspace" data-chat-open="false">
+      <main id="workspace" class="workspace" data-chat-open="false" data-area-select="false">
         <section id="map-pane" class="map-pane" aria-labelledby="question-heading">
           <header class="map-header">
             <p id="visualization-kind" class="eyebrow">Evidence visualization</p>
@@ -101,7 +101,21 @@
                   <span id="suggested-question-text"></span>
                 </div>
               </div>
-              <button id="chat-submit" class="chat-submit" type="submit" disabled>Ask</button>
+              <div class="composer-actions">
+                <button
+                  id="chat-area-select"
+                  class="chat-icon-button chat-area-select"
+                  type="button"
+                  aria-pressed="false"
+                  aria-label="Select an area of the visualization"
+                  hidden
+                >
+                  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+                    <path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"></path>
+                  </svg>
+                </button>
+                <button id="chat-submit" class="chat-submit" type="submit" disabled>Ask</button>
+              </div>
             </div>
             <p id="status" class="status" role="status"></p>
           </form>

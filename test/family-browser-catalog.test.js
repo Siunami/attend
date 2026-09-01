@@ -111,7 +111,7 @@ test("each family joins authored release truth to the complete browser-safe prod
       "question",
       "oneLine",
       "summary",
-      "executableMemberId",
+      "executableMemberIds",
       "maturity",
       "renderer",
       "questions",
@@ -134,7 +134,7 @@ test("each family joins authored release truth to the complete browser-safe prod
     assert.equal(family.question, catalogFamily.question);
     assert.equal(family.oneLine, catalogFamily.oneLine);
     assert.equal(family.summary, catalogFamily.summary);
-    assert.equal(family.executableMemberId, catalogFamily.executableMemberId);
+    assert.deepEqual(family.executableMemberIds, catalogFamily.executableMemberIds);
     assert.equal(family.version, manifest.version);
     assert.equal(family.maturity, manifest.maturity);
     assert.deepEqual(family.renderer, manifest.renderer);
@@ -178,7 +178,9 @@ test("members keep authored band separate from release status and retain governe
       assert.deepEqual(Object.keys(member), [
         "id",
         "name",
-        "authoredBand",
+        "authoredStatus",
+        "authoredQuantityBand",
+        "executableQuantityBand",
         "status",
         "when",
         "rationale",
@@ -187,11 +189,20 @@ test("members keep authored band separate from release status and retain governe
         "rejectionReason",
         "unavailableReason",
         "requirements",
+        "roles",
+        "guidance",
+        "sourcePolicy",
+        "projector",
+        "payload",
+        "selectionPolicy",
         "representationCapabilities",
         "renderer",
         "mediaPolicy",
+        "fixtureId",
       ]);
-      assert.equal(member.authoredBand, authored.status);
+      assert.equal(member.authoredStatus, authored.status);
+      assert.deepEqual(member.authoredQuantityBand, catalog.authoredBand ?? authored.band);
+      assert.deepEqual(member.executableQuantityBand, catalog.executableBand ?? []);
       assert.equal(member.status, catalog.status);
       assert.equal(member.when, catalog.when);
       assert.equal(member.band, catalog.band);
@@ -209,14 +220,21 @@ test("members keep authored band separate from release status and retain governe
             variantId: catalog.rendererVariantId,
           }
         : null);
-      assert.equal(member.mediaPolicy, catalog.mediaPolicy ?? null);
+      assert.deepEqual(member.roles, catalog.roleSchema ?? null);
+      assert.deepEqual(member.guidance, catalog.guidance ?? null);
+      assert.deepEqual(member.sourcePolicy, catalog.sourcePolicy ?? null);
+      assert.deepEqual(member.projector, catalog.projector ?? null);
+      assert.deepEqual(member.payload, catalog.payload ?? null);
+      assert.deepEqual(member.selectionPolicy, catalog.selectionPolicy ?? null);
+      assert.deepEqual(member.mediaPolicy, catalog.mediaPolicy ?? null);
+      assert.equal(member.fixtureId, catalog.fixtureId ?? null);
     }
   }
 
   const annotated = FAMILY_BROWSER_CATALOG.families.find((family) => family.id === "annotated-specimen");
   const callout = annotated.members.find((member) => member.id === "callout-overlay");
   const layered = annotated.members.find((member) => member.id === "layered-lens");
-  assert.equal(callout.authoredBand, "core");
+  assert.equal(callout.authoredStatus, "core");
   assert.equal(callout.status, "unavailable");
   assert.match(callout.unavailableReason, /visible specimen/u);
   assert.deepEqual(callout.representationCapabilities, {
@@ -224,7 +242,7 @@ test("members keep authored band separate from release status and retain governe
     constraints: {
       dimensionality: ["2d"],
       form: ["callout-overlay"],
-      interaction: ["pan-zoom", "selection"],
+      interaction: [],
       motion: ["static"],
       projection: ["none"],
     },

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import { analyzePhrases, analyzePhrasesWithEvidence } from "../src/analyze.js";
 import {
   buildEvidencePacket,
   ensureEvidenceStore,
+  evidencePacketForSelection,
   evidenceStorePath,
   EVIDENCE_LIMITS,
   validateEvidenceStore,
@@ -30,12 +31,15 @@ const analysisOptions = {
   limit: 60,
 };
 
-function selected(dataPackage, phrase) {
-  const row = dataPackage.rows.find((candidate) => candidate.phrase === phrase);
-  assert.ok(row, `missing phrase row: ${phrase}`);
+function selected(dataPackage, ...phrases) {
+  const rows = phrases.map((phrase) => {
+    const row = dataPackage.rows.find((candidate) => candidate.phrase === phrase);
+    assert.ok(row, `missing phrase row: ${phrase}`);
+    return row;
+  });
   return buildSelection(dataPackage, {
     revision: 1,
-    selectedIds: [row.id],
+    selectedIds: rows.map((row) => row.id),
     query: "",
     minCount: dataPackage.config.minCount,
     sort: { by: "distinctSourceCount", direction: "desc" },
@@ -229,4 +233,176 @@ test("new stores can be persisted privately and loaded without source re-reads",
 
   assert.equal(path, evidenceStorePath({ root, dataPackageId: dataPackage.id }));
   assert.equal((await ensureEvidenceStore({ root, dataPackage })).id, evidenceStore.id);
+});
+
+test("a store mutated after a successful load is re-verified and rejected", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "attend-evidence-reload-"));
+  await writeFile(join(root, "note.md"), "Stable phrase repeats. Stable phrase repeats.\n");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { dataPackage, evidenceStore } = await analyzePhrasesWithEvidence({
+    root,
+    inputPaths: ["note.md"],
+    question: "What recurs?",
+    minSources: 1,
+  });
+  const path = await writeEvidenceStore({ root, dataPackage, evidenceStore });
+  assert.equal((await ensureEvidenceStore({ root, dataPackage })).id, evidenceStore.id);
+  const loadedSize = (await stat(path)).size;
+
+  const stored = JSON.parse(await readFile(path, "utf8"));
+  stored.sources[0].text = `${stored.sources[0].text}Smuggled sentence appended after the first load.\n`;
+  await writeFile(path, `${JSON.stringify(stored, null, 2)}\n`);
+  assert.notEqual((await stat(path)).size, loadedSize);
+
+  await assert.rejects(
+    ensureEvidenceStore({ root, dataPackage }),
+    (error) => error.code === "EVIDENCE_STORE_INVALID",
+  );
+});
+
+test("a loaded packet honours an explicit byte budget below the default", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "attend-evidence-budget-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repeated = Array.from(
+    { length: 2_000 },
+    (_, index) => `Shared thread entry ${index}. Detail ${index} remains inspectable.`,
+  ).join("\n");
+  await Promise.all([
+    writeFile(join(root, "alpha.md"), `# Alpha\n${repeated}\nAlpha ending.`),
+    writeFile(join(root, "beta.md"), `# Beta\n${repeated}\nBeta ending.`),
+  ]);
+  const { dataPackage, evidenceStore } = await analyzePhrasesWithEvidence({
+    root,
+    inputPaths: ["alpha.md", "beta.md"],
+    question: "What recurs?",
+    minWords: 2,
+    maxWords: 2,
+    minSources: 2,
+    limit: 10,
+  });
+  await writeEvidenceStore({ root, dataPackage, evidenceStore });
+  const packet = await evidencePacketForSelection({
+    root,
+    dataPackage,
+    selection: selected(dataPackage, "shared thread"),
+    maxBytes: 64 * 1024,
+  });
+
+  assert.equal(packet.kind, "attend-evidence-packet");
+  assert.ok(Buffer.byteLength(JSON.stringify(packet), "utf8") <= 64 * 1024);
+  assert.equal(packet.sources.length, 2);
+  assert.equal(packet.coverage.includedSourceCount, 2);
+  assert.equal(packet.coverage.complete, false);
+  assert.equal(packet.coverage.sampling, "head-middle-tail/v1");
+});
+
+test("a two-mark selection covers the deduplicated union of both marks' sources", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "attend-evidence-union-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const lines = (prefix) => Array.from(
+    { length: 40 },
+    (_, index) => `${prefix} entry ${index}.`,
+  ).join("\n");
+  await Promise.all([
+    writeFile(join(root, "alpha.md"), `${lines("Shared thread")}\n`),
+    writeFile(join(root, "beta.md"), `${lines("Shared thread")}\n${lines("Distinct signal")}\n`),
+    writeFile(join(root, "gamma.md"), `${lines("Distinct signal")}\n`),
+  ]);
+  const { dataPackage, evidenceStore } = await analyzePhrasesWithEvidence({
+    root,
+    inputPaths: ["alpha.md", "beta.md", "gamma.md"],
+    question: "What recurs?",
+    minWords: 2,
+    maxWords: 2,
+    minSources: 2,
+    limit: 60,
+  });
+  const idFor = (displayPath) =>
+    dataPackage.sources.find((source) => source.displayPath === displayPath).id;
+  const packet = buildEvidencePacket({
+    dataPackage,
+    evidenceStore,
+    selection: selected(dataPackage, "shared thread", "distinct signal"),
+  });
+  const sourceIds = packet.sources.map((source) => source.sourceId);
+
+  assert.equal(packet.coverage.selectedSourceCount, 3);
+  assert.equal(sourceIds.length, 3);
+  assert.equal(new Set(sourceIds).size, 3);
+  assert.deepEqual(
+    new Set(sourceIds),
+    new Set([idFor("alpha.md"), idFor("beta.md"), idFor("gamma.md")]),
+  );
+});
+
+test("an unchanged store is served without reopening its file", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "attend-evidence-reuse-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "note.md"), "Stable phrase repeats. Stable phrase repeats.\n");
+  const { dataPackage, evidenceStore } = await analyzePhrasesWithEvidence({
+    root,
+    inputPaths: ["note.md"],
+    question: "What recurs?",
+    minSources: 1,
+  });
+  const path = await writeEvidenceStore({ root, dataPackage, evidenceStore });
+  await ensureEvidenceStore({ root, dataPackage });
+  // An unreadable file is the only way to observe that the second load skipped
+  // the read and the source-body rebuild behind it.
+  await chmod(path, 0o000);
+
+  assert.equal((await ensureEvidenceStore({ root, dataPackage })).id, evidenceStore.id);
+});
+
+test("a warm packet costs one whole store verification less than a caller-supplied one", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "attend-evidence-verify-count-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repeated = Array.from(
+    { length: 3_000 },
+    (_, index) => `Shared thread entry ${index}. Detail ${index} remains inspectable.`,
+  ).join("\n");
+  await Promise.all([
+    writeFile(join(root, "alpha.md"), `# Alpha\n${repeated}\nAlpha ending.`),
+    writeFile(join(root, "beta.md"), `# Beta\n${repeated}\nBeta ending.`),
+  ]);
+  const { dataPackage, evidenceStore } = await analyzePhrasesWithEvidence({
+    root,
+    inputPaths: ["alpha.md", "beta.md"],
+    question: "What recurs?",
+    minWords: 2,
+    maxWords: 2,
+    minSources: 2,
+    limit: 10,
+  });
+  await writeEvidenceStore({ root, dataPackage, evidenceStore });
+  const selection = selected(dataPackage, "shared thread");
+  const request = { root, dataPackage, selection, maxBytes: 64 * 1024 };
+
+  assert.deepEqual(
+    await evidencePacketForSelection(request),
+    buildEvidencePacket({ dataPackage, evidenceStore, selection, maxBytes: 64 * 1024 }),
+  );
+
+  // Both paths run the same sampler, so their difference is the verification
+  // this fixture is sized to make measurable. The bound is calibrated in-process
+  // against one real verification rather than against any wall-clock constant.
+  const fastest = async (run) => {
+    let lowest = Infinity;
+    for (let index = 0; index < 5; index += 1) {
+      const started = process.hrtime.bigint();
+      await run();
+      lowest = Math.min(lowest, Number(process.hrtime.bigint() - started) / 1e6);
+    }
+    return lowest;
+  };
+  const verification = await fastest(() => validateEvidenceStore({ dataPackage, evidenceStore }));
+  const supplied = await fastest(() =>
+    buildEvidencePacket({ dataPackage, evidenceStore, selection, maxBytes: 64 * 1024 }));
+  const warm = await fastest(() => evidencePacketForSelection(request));
+
+  assert.ok(verification > 1, `fixture too small to measure a verification: ${verification} ms`);
+  assert.ok(
+    warm <= supplied - verification / 2,
+    `warm packet ${warm} ms still verifies; supplied ${supplied} ms, verification ${verification} ms`,
+  );
 });

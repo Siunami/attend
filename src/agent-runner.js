@@ -605,17 +605,21 @@ export function attendQuestionPrompt({
     throw new TypeError("evidence must be an object or null");
   }
   jsonBytes("evidence", evidenceValue, MAX_EVIDENCE_BYTES);
+  // Stable fields first, volatile last: the encoded context is the tail of the
+  // prompt, and llama-server reuses the KV cache for an unchanged prefix. With
+  // the question ahead of the packet, every follow-up re-processed the whole
+  // evidence packet; this order makes follow-ups on one selection near-free.
   const context = {
     schema: "attend-agent-context/2",
-    question: questionValue,
     visualContext: selectionValue,
+    evidencePacket: evidenceValue,
     visualContextBinding: visualContextBindingProjection(
       contextBinding,
       question,
       selectionValue,
     ),
-    evidencePacket: evidenceValue,
     conversation: conversationProjection(conversation),
+    question: questionValue,
   };
   const encoded = JSON.stringify(context, null, 2);
 

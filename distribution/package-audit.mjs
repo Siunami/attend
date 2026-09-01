@@ -1,8 +1,11 @@
+import { GENERATED_FORM_RUNTIME } from "../src/catalog/generated-form-runtime.js";
+
 const REQUIRED_PACKAGE_FILES = Object.freeze([
   "package.json",
   "README.md",
   "CHANGELOG.md",
   "LICENSE",
+  "docs/getting-started.md",
   "bin/attend.js",
   "agent-skill/attend-visualize/SKILL.md",
   "agent-skill/attend-visualize/agents/openai.yaml",
@@ -16,6 +19,9 @@ const REQUIRED_PACKAGE_FILES = Object.freeze([
   "viewer/package-model.js",
   "viewer/package-renderer.js",
   "viewer/family-renderers.js",
+  "viewer/family-catalog.js",
+  "viewer/form-runtime-generated.js",
+  "src/catalog/generated-form-runtime.js",
   "viewer/vendor/d3.min.js",
   "viewer/vendor/topojson-client.min.js",
   "viewer/vendor/us-states.json",
@@ -26,12 +32,17 @@ const REQUIRED_PACKAGE_FILES = Object.freeze([
   "viewer/vendor/licenses/topojson-client-3.1.0.txt",
   "viewer/vendor/licenses/us-atlas-3.0.1.txt",
   "viewer/vendor/licenses/world-atlas-2.0.2.txt",
+  "src/media/vendor/exifr-7.1.3.esm.mjs",
+  "viewer/vendor/licenses/exifr-7.1.3.txt",
+  ...GENERATED_FORM_RUNTIME.staticAssets.map((path) => `viewer/${path.slice(2)}`),
+  ...GENERATED_FORM_RUNTIME.familyLabCoreAssets.map(({ file }) => file.slice(3)),
 ]);
 
 export function auditPackage(pack, packageJson) {
   const files = Array.isArray(pack.files) ? pack.files.map((file) => file.path) : [];
   const forbidden = files.filter((path) =>
-    /(^|\/)(?:\.attend|\.context|\.git|distribution|test|node_modules)(?:\/|$)/u.test(path),
+    /^(?:\.attend|\.context|\.git|distribution|test|node_modules)(?:\/|$)/u.test(path) ||
+    /\/(?:\.attend|\.context|\.git|node_modules)(?:\/|$)/u.test(path),
   );
   if (forbidden.length) {
     throw new Error(`Refusing to release private or development files: ${forbidden.join(", ")}`);

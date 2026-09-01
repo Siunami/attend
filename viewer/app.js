@@ -1,5 +1,5 @@
 import { atlasPackageToRenderModel, isAtlasPackage } from "./package-model.js";
-import { atlasSelectionSummary, renderAtlasPackage } from "./package-renderer.js";
+import { atlasSelectionSummary, atlasTargetSummary, renderAtlasPackage } from "./package-renderer.js";
 
 const basePath = `${window.location.pathname.replace(/[^/]*$/, "").replace(/\/+$/, "")}/`;
 const libraryBasePath = basePath.replace(/s\/[^/]+\/$/u, "");
@@ -27,6 +27,12 @@ function hostBoundHref(href) {
     }).toString();
   }
   return url.href;
+}
+
+// A workspace gallery embed asks for the visualization alone; the shell
+// chrome, question header, chat, and ledger stay hidden.
+if (new URLSearchParams(window.location.hash.slice(1)).get("attend-preview") === "1") {
+  document.documentElement.setAttribute("data-attend-preview", "true");
 }
 
 const libraryReturn = document.querySelector(".library-return");
@@ -57,6 +63,7 @@ const elements = {
   form: document.getElementById("chat-form"),
   input: document.getElementById("chat-input"),
   submit: document.getElementById("chat-submit"),
+  areaSelect: document.getElementById("chat-area-select"),
   suggestion: document.getElementById("suggested-question"),
   suggestionText: document.getElementById("suggested-question-text"),
   status: document.getElementById("status"),
@@ -73,6 +80,30 @@ let viewingHistory = false;
 let chatPinned = true;
 let draftSelectionKey = null;
 let atlasRenderRevision = 0;
+let areaSelectMode = false;
+const OPTIMISTIC_TURN_ID = "optimistic";
+const POLL_INTERVAL_MS = 1500;
+const STREAMED_POLL_BEATS = 3;
+const STATE_REFRESH_DEBOUNCE_MS = 60;
+let optimisticTurn = null;
+let questionPreview = null;
+let eventStreamHealthy = false;
+let stateRefreshTimer = null;
+let areaDrag = null;
+const MAX_AREA_SELECTION = 50;
+const AREA_DRAG_THRESHOLD = 4;
+const TARGET_MEMBER_PAGE_LIMIT = 12;
+let targetMemberLoadRevision = 0;
+let targetMemberPage = {
+  targetId: null,
+  status: "idle",
+  offset: 0,
+  count: 0,
+  markIds: [],
+  evidenceRefIds: [],
+  nextOffset: null,
+  error: null,
+};
 
 function apiUrl(path) {
   const url = new URL(`${basePath}api/${path}`, window.location.origin);
@@ -142,6 +173,7 @@ function threadProjection(payload) {
 function acceptThreadProjection(payload) {
   const next = threadProjection(payload);
   if (!next) return false;
+  optimisticTurn = null;
   const changed = next.revision !== activeThread?.revision;
   activeThread = next;
   try {
@@ -235,6 +267,195 @@ function atlasSelectedMarks(value = session) {
   }
 }
 
+function atlasSelectedTargetId(value = session) {
+  const candidate = value?.selection?.targetId ?? value?.state?.targetId ?? null;
+  if (typeof candidate !== "string" || !candidate) return null;
+  try {
+    return atlasPackageToRenderModel(dataPackage).selectableTargetIds.includes(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+function atlasSelectedTarget(value = session) {
+  const targetId = atlasSelectedTargetId(value);
+  if (!targetId) return null;
+  try {
+    return atlasTargetSummary(dataPackage, targetId);
+  } catch {
+    return null;
+  }
+}
+
+function resetTargetMemberPage(targetId = null) {
+  targetMemberLoadRevision += 1;
+  targetMemberPage = {
+    targetId,
+    status: "idle",
+    offset: 0,
+    count: 0,
+    markIds: [],
+    evidenceRefIds: [],
+    nextOffset: null,
+    error: null,
+  };
+}
+
+function targetMembersPath(targetId, offset) {
+  const query = new URLSearchParams({
+    targetId,
+    offset: String(offset),
+    limit: String(TARGET_MEMBER_PAGE_LIMIT),
+  });
+  return `target-members?${query}`;
+}
+
+async function loadTargetMemberPage(targetId, offset = 0) {
+  if (atlasSelectedTargetId() !== targetId) return;
+  if (targetMemberPage.targetId !== targetId) resetTargetMemberPage(targetId);
+  const requestRevision = ++targetMemberLoadRevision;
+  targetMemberPage = { ...targetMemberPage, status: "loading", offset, error: null };
+  try {
+    const payload = await request(targetMembersPath(targetId, offset));
+    if (requestRevision !== targetMemberLoadRevision || atlasSelectedTargetId() !== targetId) return;
+    if (
+      payload?.target?.id !== targetId
+      || !Array.isArray(payload.markIds)
+      || !Array.isArray(payload.evidenceRefIds)
+      || !Number.isSafeInteger(payload.count)
+      || !Number.isSafeInteger(payload.page?.offset)
+    ) {
+      throw new Error("The aggregate evidence page was malformed.");
+    }
+    targetMemberPage = {
+      targetId,
+      status: "ready",
+      offset: payload.page.offset,
+      count: payload.count,
+      markIds: payload.markIds.map(String),
+      evidenceRefIds: payload.evidenceRefIds.map(String),
+      nextOffset: Number.isSafeInteger(payload.page.nextOffset) ? payload.page.nextOffset : null,
+      error: null,
+    };
+    renderSelection();
+  } catch (error) {
+    if (requestRevision !== targetMemberLoadRevision || atlasSelectedTargetId() !== targetId) return;
+    targetMemberPage = {
+      ...targetMemberPage,
+      status: "error",
+      error: error instanceof Error ? error.message : "The aggregate evidence page could not be loaded.",
+    };
+    renderSelection();
+  }
+}
+
+function targetMemberLabel(markId) {
+  try {
+    return atlasPackageToRenderModel(dataPackage).markById[markId]?.label ?? markId;
+  } catch {
+    return markId;
+  }
+}
+
+function renderTargetMembersDrawer(target) {
+  if (targetMemberPage.targetId !== target.id) resetTargetMemberPage(target.id);
+  const drawer = document.createElement("details");
+  drawer.className = "target-members-drawer";
+  drawer.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = `Evidence members · ${target.count}`;
+  drawer.append(summary);
+
+  const body = document.createElement("div");
+  body.className = "target-members-body";
+  body.setAttribute("aria-live", "polite");
+  if (targetMemberPage.status === "ready") {
+    const start = targetMemberPage.count === 0 ? 0 : targetMemberPage.offset + 1;
+    const end = targetMemberPage.offset + targetMemberPage.markIds.length;
+    const status = document.createElement("p");
+    status.className = "target-members-status";
+    status.textContent = `Showing ${start}–${end} of ${targetMemberPage.count}`;
+    const members = document.createElement("ol");
+    members.className = "target-members-list";
+    members.start = start || 1;
+    targetMemberPage.markIds.forEach((markId) => {
+      const item = document.createElement("li");
+      item.textContent = targetMemberLabel(markId);
+      members.append(item);
+    });
+    const navigation = document.createElement("nav");
+    navigation.className = "target-members-navigation";
+    navigation.setAttribute("aria-label", "Aggregate evidence pages");
+    const previous = document.createElement("button");
+    previous.type = "button";
+    previous.textContent = "Previous";
+    previous.disabled = targetMemberPage.offset === 0;
+    previous.addEventListener("click", () => loadTargetMemberPage(
+      target.id,
+      Math.max(0, targetMemberPage.offset - TARGET_MEMBER_PAGE_LIMIT),
+    ));
+    const next = document.createElement("button");
+    next.type = "button";
+    next.textContent = "Next";
+    next.disabled = targetMemberPage.nextOffset === null;
+    next.addEventListener("click", () => loadTargetMemberPage(target.id, targetMemberPage.nextOffset));
+    navigation.append(previous, next);
+    body.append(status, members, navigation);
+  } else if (targetMemberPage.status === "error") {
+    const error = document.createElement("p");
+    error.className = "target-members-error";
+    error.textContent = targetMemberPage.error;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.textContent = "Retry";
+    retry.addEventListener("click", () => loadTargetMemberPage(target.id, targetMemberPage.offset));
+    body.append(error, retry);
+  } else {
+    const loading = document.createElement("p");
+    loading.className = "target-members-status";
+    loading.textContent = "Resolving complete membership…";
+    body.append(loading);
+  }
+  drawer.append(body);
+  if (targetMemberPage.status === "idle") loadTargetMemberPage(target.id, 0);
+  return drawer;
+}
+
+function selectedContactOriginal(marks) {
+  if (marks.length !== 1) return null;
+  let model;
+  try {
+    model = atlasPackageToRenderModel(dataPackage);
+  } catch {
+    return null;
+  }
+  if (model.familyId !== "collection-atlas" || model.memberId !== "contact-atlas") return null;
+  const mark = marks[0];
+  const assetId = mark.values?.assetId;
+  const route = mark.values?.previewRoute;
+  if (!/^asset_[a-f0-9]{32}$/u.test(assetId ?? "") || route !== `assets/${assetId}`) return null;
+  if (mark.media?.preview?.src !== route) return null;
+  const href = new URL(route, window.location.href);
+  const assetRoot = new URL("./assets/", window.location.href);
+  if (href.origin !== window.location.origin || !href.pathname.startsWith(assetRoot.pathname)) return null;
+  return { href: href.href, label: mark.label };
+}
+
+function renderContactOriginalDetail(original) {
+  const detail = document.createElement("div");
+  detail.className = "contact-original-detail";
+  const label = document.createElement("span");
+  label.textContent = "Whole-file evidence · staged JPEG";
+  const link = document.createElement("a");
+  link.href = original.href;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = "Open staged original";
+  link.setAttribute("aria-label", `Open staged original for ${original.label}`);
+  detail.append(label, link);
+  return detail;
+}
+
 function atlasSelectedFocus(value = session) {
   const focus = value?.selection?.focus ?? value?.state?.focus ?? null;
   if (focus?.kind !== "node" || typeof focus.id !== "string" || !focus.id) return null;
@@ -248,6 +469,8 @@ function currentMark() {
 function currentSuggestedQuestion() {
   if (atlasMode()) {
     const marks = atlasSelectedMarks();
+    const target = atlasSelectedTarget();
+    if (target) return `What does the selected “${target.label}” aggregate reveal about this view?`;
     if (!marks.length) return "";
     const focus = atlasSelectedFocus();
     if (focus) return `What role does the selected “${focus.label}” component play in this view?`;
@@ -267,12 +490,14 @@ function semanticAttachmentKey(value = session) {
   const selection = atlasMode()
     ? { ...sourceSelection, selectedMarkIds }
     : sourceSelection;
-  if (!selection?.selectedMarkIds?.length) return null;
+  const targetId = atlasMode() ? atlasSelectedTargetId(value) : null;
+  if (!selection?.selectedMarkIds?.length && !targetId) return null;
   return JSON.stringify({
     dataPackageId: selection.dataPackageId,
     dataHash: selection.dataHash,
     map: selection.map,
     selectedMarkIds: selection.selectedMarkIds,
+    targetId,
     focus: selection.focus,
     predicate: selection.predicate,
     filters: selection.filters,
@@ -445,6 +670,7 @@ function syncComposer() {
     elements.input.removeAttribute("aria-describedby");
   }
   elements.input.disabled = responseActive || hostUnattached;
+  elements.areaSelect.hidden = !atlasMode();
   elements.submit.disabled =
     pending || responseActive || hostUnattached || !elements.input.value.trim() || draftNeedsReview();
 }
@@ -549,7 +775,19 @@ async function renderAtlasVisualization() {
       packageValue: dataPackage,
       selectedMarkIds,
       selectedNodeId: atlasSelectedFocus()?.id,
+      selectedTargetId: atlasSelectedTargetId(),
       onSelect: (target) => selectAtlasTarget(target),
+      onClear: () => clearAtlasSelection(),
+      loadTargetMembers: async ({ targetId, offset }) => {
+        const payload = await request(targetMembersPath(targetId, offset));
+        return {
+          markIds: Array.isArray(payload?.markIds) ? payload.markIds.map(String) : [],
+          count: Number.isSafeInteger(payload?.count) ? payload.count : 0,
+          offset: Number.isSafeInteger(payload?.page?.offset) ? payload.page.offset : offset,
+          nextOffset: Number.isSafeInteger(payload?.page?.nextOffset) ? payload.page.nextOffset : null,
+          limit: TARGET_MEMBER_PAGE_LIMIT,
+        };
+      },
     });
     if (revision !== atlasRenderRevision) return;
   } catch (error) {
@@ -562,6 +800,46 @@ async function renderAtlasVisualization() {
   } finally {
     if (revision === atlasRenderRevision) elements.atlasVisual.setAttribute("aria-busy", "false");
   }
+}
+
+function setAreaSelectMode(on) {
+  const next = Boolean(on) && atlasMode();
+  if (!next) endAreaDrag();
+  if (next === areaSelectMode) return;
+  areaSelectMode = next;
+  elements.workspace.dataset.areaSelect = String(next);
+  elements.areaSelect.setAttribute("aria-pressed", String(next));
+  setStatus(next ? "Area select on. Drag across the chart to attach marks. Escape exits." : "");
+}
+
+function endAreaDrag() {
+  if (!areaDrag) return;
+  areaDrag.marquee.remove();
+  if (elements.atlasVisual.hasPointerCapture(areaDrag.pointerId)) {
+    elements.atlasVisual.releasePointerCapture(areaDrag.pointerId);
+  }
+  areaDrag = null;
+}
+
+function areaSelectViewBox(svg) {
+  const numbers = (svg.getAttribute("viewBox") ?? "").trim().split(/[\s,]+/u).map(Number);
+  return numbers.length === 4 && numbers.every(Number.isFinite) ? numbers : null;
+}
+
+function marksWithinClientRect(bounds) {
+  const ids = [];
+  const seen = new Set();
+  for (const element of elements.atlasVisual.querySelectorAll("[data-mark-id]")) {
+    const markId = element.getAttribute("data-mark-id");
+    if (!markId || seen.has(markId)) continue;
+    const rect = element.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) continue;
+    if (rect.left > bounds.maxX || rect.right < bounds.minX) continue;
+    if (rect.top > bounds.maxY || rect.bottom < bounds.minY) continue;
+    seen.add(markId);
+    ids.push(markId);
+  }
+  return ids;
 }
 
 function createReplyArrow() {
@@ -587,29 +865,89 @@ function appendReplyAttachment(container, label) {
   container.append(copy);
 }
 
+const SHARED_FACET_KEYS = ["series", "category", "kind", "source", "status"];
+const TIME_FACET_KEY_PATTERN = /(?:time|date|start|week)/iu;
+
+function sharedFacetValue(marks) {
+  for (const key of SHARED_FACET_KEYS) {
+    const rendered = String(marks[0]?.values?.[key] ?? "");
+    if (!rendered) continue;
+    if (marks.every((mark) => String(mark?.values?.[key] ?? "") === rendered)) return rendered;
+  }
+  return null;
+}
+
+// A bare series value like "5" parses as a month, so a time facet needs a year in it.
+function timeFacetValue(value) {
+  return typeof value === "string" && /\d{4}/u.test(value) && Number.isFinite(Date.parse(value))
+    ? value
+    : null;
+}
+
+function sharedTimeExtent(marks) {
+  const candidates = [];
+  for (const mark of marks) {
+    for (const key of Object.keys(mark?.values ?? {})) {
+      if (TIME_FACET_KEY_PATTERN.test(key) && !candidates.includes(key)) candidates.push(key);
+    }
+  }
+  for (const key of candidates) {
+    const times = marks.map((mark) => timeFacetValue(mark?.values?.[key]));
+    if (times.some((value) => value === null)) continue;
+    const ordered = times
+      .map((value) => ({ value, time: Date.parse(value) }))
+      .sort((left, right) => left.time - right.time);
+    const min = ordered[0].value;
+    const max = ordered[ordered.length - 1].value;
+    return min === max ? min : `${min} → ${max}`;
+  }
+  return null;
+}
+
+function atlasMultiSelectionSummary(marks) {
+  const facets = [sharedFacetValue(marks), sharedTimeExtent(marks)].filter(Boolean);
+  if (!facets.length) return `${marks.length} marks · ${marks[0].label} …`;
+  return [`${marks.length} marks`, ...facets].join(" · ");
+}
+
 function renderSelection() {
   elements.selection.replaceChildren();
   if (atlasMode()) {
     const marks = atlasSelectedMarks();
+    const target = atlasSelectedTarget();
     const focus = atlasSelectedFocus();
-    elements.selection.hidden = marks.length === 0;
-    if (!marks.length) {
+    elements.selection.hidden = marks.length === 0 && !target;
+    if (!marks.length && !target) {
+      if (targetMemberPage.targetId !== null) resetTargetMemberPage();
       syncComposer();
       return;
     }
     const attachment = document.createElement("div");
     attachment.className = "selection-attachment atlas-selection-attachment";
-    const name = focus?.label ?? marks.map((mark) => mark.label).join(" · ");
+    const name = target?.label
+      ?? focus?.label
+      ?? (marks.length > 3
+        ? atlasMultiSelectionSummary(marks)
+        : marks.map((mark) => mark.label).join(" · "));
     appendReplyAttachment(attachment, name);
 
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "selection-remove attachment-remove";
-    remove.setAttribute("aria-label", focus ? `Remove attached component ${focus.label}` : "Remove selected marks");
+    remove.setAttribute(
+      "aria-label",
+      target ? `Remove attached aggregate ${target.label}`
+        : focus ? `Remove attached component ${focus.label}`
+          : marks.length > 1 ? `Remove ${marks.length} selected marks`
+            : `Remove attached mark ${marks[0].label}`,
+    );
     remove.textContent = "×";
     remove.addEventListener("click", clearSelection);
     attachment.append(remove);
     elements.selection.append(attachment);
+    const contactOriginal = selectedContactOriginal(marks);
+    if (contactOriginal) elements.selection.append(renderContactOriginalDetail(contactOriginal));
+    if (target) elements.selection.append(renderTargetMembersDrawer(target));
     syncComposer();
     return;
   }
@@ -877,16 +1215,38 @@ function activeResponseMessage(turn) {
   return "Saved locally. Attend cannot wake an inactive agent.";
 }
 
+function questionPreviewFor(questionId) {
+  if (!questionPreview || questionPreview.questionId !== questionId || !questionPreview.text) return null;
+  const message = renderAssistantMessage(questionPreview.text);
+  message.classList.add("turn-stream");
+  return message;
+}
+
+function paintQuestionPreview() {
+  const message = questionPreviewFor(questionPreview?.questionId);
+  if (!message) return false;
+  for (const wrap of elements.conversation.querySelectorAll(".turn-wrap-transient")) {
+    if (wrap.getAttribute("data-question-id") !== questionPreview.questionId) continue;
+    wrap.replaceChildren(message);
+    if (chatPinned) elements.chatScroll.scrollTop = elements.chatScroll.scrollHeight;
+    return true;
+  }
+  return false;
+}
+
 function responseState(turn, answeredQuestionIds) {
   if (turn.role !== "user" || answeredQuestionIds.has(turn.id)) return null;
   const status = turn.response?.status;
   let response;
   if (status === "queued" || status === "running") {
-    const active = document.createElement("span");
-    active.className = "turn-response turn-response-active";
-    active.setAttribute("role", "status");
-    active.textContent = activeResponseMessage(turn);
-    response = active;
+    response = questionPreviewFor(turn.id);
+    if (!response) {
+      const active = document.createElement("span");
+      active.className = "turn-response turn-response-active";
+      active.setAttribute("role", "status");
+      active.textContent = activeResponseMessage(turn);
+      response = active;
+    }
   } else if (status === "failed") {
     const failure = document.createElement("div");
     failure.className = "turn-response turn-response-failed";
@@ -907,6 +1267,8 @@ function responseState(turn, answeredQuestionIds) {
 
   const wrap = document.createElement("article");
   wrap.className = "turn-wrap turn-wrap-assistant turn-wrap-transient";
+  wrap.setAttribute("data-question-id", turn.id);
+  if (turn.id === OPTIMISTIC_TURN_ID) wrap.setAttribute("data-optimistic", "true");
   wrap.append(response);
   return wrap;
 }
@@ -935,11 +1297,15 @@ function renderConversation({ follow = false, focusTurnId = null } = {}) {
   );
   const turns = rawTurns.filter((turn) => !isLegacyContextReceipt(turn));
   const turnsById = new Map(turns.map((turn) => [turn.id, turn]));
-  const events = activeThread?.events ?? turns.map((turn) => ({
+  const events = [...(activeThread?.events ?? turns.map((turn) => ({
     type: "message",
     id: `message:${turn.id}`,
     turnId: turn.id,
-  }));
+  })))];
+  if (optimisticTurn) {
+    turnsById.set(optimisticTurn.id, optimisticTurn);
+    events.push({ type: "message", id: `message:${optimisticTurn.id}`, turnId: optimisticTurn.id });
+  }
 
   for (const event of events) {
     if (event.type === "page-context") {
@@ -950,6 +1316,7 @@ function renderConversation({ follow = false, focusTurnId = null } = {}) {
     if (!turn) continue;
     const wrap = document.createElement("article");
     wrap.className = `turn-wrap turn-wrap-${turn.role}`;
+    if (turn.id === OPTIMISTIC_TURN_ID) wrap.setAttribute("data-optimistic", "true");
     if (turn.id === focusTurnId) focusedTurn = wrap;
     if (turn.role === "user") {
       const attachment = historicalAttachment(turn);
@@ -999,24 +1366,24 @@ function renderState({ followConversation = false, focusConversationTurnId = nul
 async function selectAtlasTarget(target) {
   if (!atlasMode() || pending) return;
   const isNode = target?.kind === "node";
-  const markId = isNode || typeof target !== "string" ? null : target;
-  if ((isNode && (typeof target.nodeId !== "string" || !target.nodeId)) || (!isNode && !markId)) return;
+  const isAggregate = target?.kind === "target";
+  const markId = target?.kind === "mark" ? target.markId : (!isNode && !isAggregate && typeof target === "string" ? target : null);
+  const targetId = isAggregate ? target.targetId : null;
+  if ((isNode && (typeof target.nodeId !== "string" || !target.nodeId)) || (isAggregate && (typeof targetId !== "string" || !targetId)) || (!isNode && !isAggregate && !markId)) return;
   const selected = atlasSelectedMarkIds();
+  const selectedTargetId = atlasSelectedTargetId();
   const focus = atlasSelectedFocus();
   const alreadySelected = isNode
     ? focus?.id === target.nodeId
-    : focus === null && selected.includes(markId);
+    : isAggregate ? selectedTargetId === targetId : focus === null && selectedTargetId === null && selected.includes(markId);
   if (alreadySelected) {
-    pinDraftToCurrentSelection();
-    syncComposer();
-    setStatus("");
-    openChat();
-    elements.input.focus();
+    // Clicking the selected element again widens the data list back out.
+    await clearAtlasSelection();
     return;
   }
   pending = true;
   syncComposer();
-  setStatus(isNode ? "Attaching the selected component…" : "Attaching the selected mark…");
+  setStatus(isNode ? "Attaching the selected component…" : isAggregate ? "Attaching the selected aggregate…" : "Attaching the selected mark…");
   try {
     const payload = await request("selection", {
       method: "POST",
@@ -1024,17 +1391,81 @@ async function selectAtlasTarget(target) {
       body: JSON.stringify({
         sessionId: atlasSessionId(),
         revision: sessionRevision(),
-        ...(target.kind === "node"
-          ? { nodeId: target.nodeId }
-          : { markId }),
+        ...(isNode ? { nodeId: target.nodeId } : isAggregate ? { targetId } : { markId }),
       }),
     });
     acceptChatProjection(payload);
     session = unwrapSession(payload);
     pinDraftToCurrentSelection();
     renderState();
-    openChat();
+    setStatus("");
+  } catch (error) {
+    if (error.status === 409) await refreshState();
+    setStatus(error.message, true);
+  } finally {
+    pending = false;
+    syncComposer();
+  }
+}
+
+async function selectAtlasMarks(markIds) {
+  if (!atlasMode() || pending) return;
+  const unique = [...new Set(markIds.map(String))].filter(Boolean);
+  if (!unique.length) {
+    setStatus("No marks in that area.");
+    return;
+  }
+  const attached = unique.slice(0, MAX_AREA_SELECTION);
+  pending = true;
+  syncComposer();
+  setStatus("Attaching the selected marks…");
+  try {
+    const payload = await request("selection", {
+      method: "POST",
+      body: JSON.stringify({
+        sessionId: atlasSessionId(),
+        revision: sessionRevision(),
+        markIds: attached,
+      }),
+    });
+    acceptChatProjection(payload);
+    session = unwrapSession(payload);
+    pinDraftToCurrentSelection();
+    setAreaSelectMode(false);
+    renderState();
     elements.input.focus();
+    // Leaving the mode clears the status, so the clamp notice has to be written after it.
+    setStatus(attached.length < unique.length
+      ? `Attached ${attached.length} of ${unique.length} marks (selection limit).`
+      : "");
+  } catch (error) {
+    if (error.status === 409) await refreshState();
+    setStatus(error.message, true);
+  } finally {
+    pending = false;
+    syncComposer();
+  }
+}
+
+async function clearAtlasSelection() {
+  if (!atlasMode() || pending) return;
+  if (!atlasSelectedMarkIds().length && !atlasSelectedTargetId() && !atlasSelectedFocus()) return;
+  pending = true;
+  syncComposer();
+  setStatus("Clearing the selection…");
+  try {
+    const payload = await request("selection", {
+      method: "POST",
+      body: JSON.stringify({
+        sessionId: atlasSessionId(),
+        revision: sessionRevision(),
+        markId: null,
+      }),
+    });
+    acceptChatProjection(payload);
+    session = unwrapSession(payload);
+    pinDraftToCurrentSelection();
+    renderState();
     setStatus("");
   } catch (error) {
     if (error.status === 409) await refreshState();
@@ -1085,7 +1516,8 @@ async function selectRow(rowId) {
 }
 
 async function clearSelection() {
-  if (pending || (atlasMode() ? !atlasSelectedMarkIds().length : !session.selection?.selectedMarkIds?.length)) return;
+  setAreaSelectMode(false);
+  if (pending || (atlasMode() ? !atlasSelectedMarkIds().length && !atlasSelectedTargetId() : !session.selection?.selectedMarkIds?.length)) return;
   pending = true;
   syncComposer();
   setStatus(atlasMode() ? "Removing the selected marks…" : "Removing the attached phrase…");
@@ -1112,6 +1544,17 @@ async function clearSelection() {
   }
 }
 
+function optimisticSelection() {
+  if (atlasMode()) {
+    const focus = atlasSelectedFocus();
+    if (focus) return { focus };
+    const marks = atlasSelectedMarks();
+    return marks.length ? { marks } : null;
+  }
+  const mark = currentMark();
+  return mark ? { marks: [mark] } : null;
+}
+
 async function sendMessage(message) {
   if (pending || hasActiveResponse()) return;
   if (draftNeedsReview()) {
@@ -1121,7 +1564,15 @@ async function sendMessage(message) {
     return;
   }
   pending = true;
+  optimisticTurn = {
+    id: OPTIMISTIC_TURN_ID,
+    role: "user",
+    message,
+    selection: optimisticSelection(),
+    response: { status: "queued", route: activeChatRoute() },
+  };
   syncComposer();
+  renderConversation({ follow: true });
   setStatus("Sending…");
   try {
     const payload = await request("chat", {
@@ -1142,6 +1593,8 @@ async function sendMessage(message) {
     renderState({ followConversation: true });
     setStatus("");
   } catch (error) {
+    optimisticTurn = null;
+    renderConversation();
     if (error.status === 409) {
       await refreshState();
       setStatus(atlasMode()
@@ -1246,6 +1699,68 @@ elements.chatHistory.addEventListener("click", async () => {
 
 elements.chatNew.addEventListener("click", () => createNewChat());
 
+elements.areaSelect.addEventListener("click", () => setAreaSelectMode(!areaSelectMode));
+
+// renderAtlasPackage replaces the svg on every re-render, so the drag lives on the container.
+elements.atlasVisual.addEventListener("pointerdown", (event) => {
+  if (!areaSelectMode || !event.isPrimary || event.button !== 0) return;
+  const svg = elements.atlasVisual.querySelector("svg");
+  if (!svg || !svg.contains(event.target)) return;
+  const viewBox = areaSelectViewBox(svg);
+  if (!viewBox) return;
+  event.preventDefault();
+  elements.atlasVisual.setPointerCapture(event.pointerId);
+  const marquee = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  marquee.classList.add("area-select-marquee");
+  svg.append(marquee);
+  areaDrag = {
+    pointerId: event.pointerId,
+    svg,
+    viewBox,
+    originX: event.clientX,
+    originY: event.clientY,
+    marquee,
+    dragged: false,
+  };
+});
+
+elements.atlasVisual.addEventListener("pointermove", (event) => {
+  if (!areaDrag || event.pointerId !== areaDrag.pointerId) return;
+  if (
+    Math.abs(event.clientX - areaDrag.originX) < AREA_DRAG_THRESHOLD &&
+    Math.abs(event.clientY - areaDrag.originY) < AREA_DRAG_THRESHOLD
+  ) {
+    return;
+  }
+  areaDrag.dragged = true;
+  const box = areaDrag.svg.getBoundingClientRect();
+  if (box.width === 0 || box.height === 0) return;
+  const [viewMinX, viewMinY, viewWidth, viewHeight] = areaDrag.viewBox;
+  const originX = viewMinX + ((areaDrag.originX - box.left) / box.width) * viewWidth;
+  const currentX = viewMinX + ((event.clientX - box.left) / box.width) * viewWidth;
+  const originY = viewMinY + ((areaDrag.originY - box.top) / box.height) * viewHeight;
+  const currentY = viewMinY + ((event.clientY - box.top) / box.height) * viewHeight;
+  areaDrag.marquee.setAttribute("x", String(Math.min(originX, currentX)));
+  areaDrag.marquee.setAttribute("y", String(Math.min(originY, currentY)));
+  areaDrag.marquee.setAttribute("width", String(Math.abs(currentX - originX)));
+  areaDrag.marquee.setAttribute("height", String(Math.abs(currentY - originY)));
+});
+
+elements.atlasVisual.addEventListener("pointerup", (event) => {
+  if (!areaDrag || event.pointerId !== areaDrag.pointerId) return;
+  const dragged = areaDrag.dragged;
+  const bounds = {
+    minX: Math.min(areaDrag.originX, event.clientX),
+    maxX: Math.max(areaDrag.originX, event.clientX),
+    minY: Math.min(areaDrag.originY, event.clientY),
+    maxY: Math.max(areaDrag.originY, event.clientY),
+  };
+  endAreaDrag();
+  if (dragged) selectAtlasMarks(marksWithinClientRect(bounds));
+});
+
+elements.atlasVisual.addEventListener("pointercancel", () => endAreaDrag());
+
 elements.form.addEventListener("submit", (event) => {
   event.preventDefault();
   const message = elements.input.value.trim();
@@ -1304,6 +1819,11 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
+  if (event.key === "Escape" && areaSelectMode) {
+    event.preventDefault();
+    setAreaSelectMode(false);
+    return;
+  }
   if (event.key === "Escape" && chatOpen) {
     event.preventDefault();
     if (viewingHistory) {
@@ -1314,6 +1834,65 @@ document.addEventListener("keydown", (event) => {
     }
   }
 });
+
+const QUESTION_EVENT_HANDLERS = {
+  status: () => {},
+  delta: (event) => {
+    questionPreview.text += typeof event.text === "string" ? event.text : "";
+    if (!paintQuestionPreview()) renderConversation();
+  },
+  answer: () => {
+    questionPreview = null;
+    refreshState().catch(() => {});
+  },
+  failed: () => {
+    questionPreview = null;
+    refreshState().catch(() => {});
+  },
+};
+
+function handleQuestionEvent(event) {
+  if (typeof event?.questionId !== "string") return;
+  const handler = QUESTION_EVENT_HANDLERS[event.type];
+  if (!handler) return;
+  if (questionPreview?.questionId !== event.questionId) {
+    questionPreview = { questionId: event.questionId, text: "" };
+  }
+  handler(event);
+}
+
+function scheduleStateRefresh() {
+  if (stateRefreshTimer !== null) return;
+  stateRefreshTimer = window.setTimeout(() => {
+    stateRefreshTimer = null;
+    if (!pending) refreshState().catch(() => {});
+  }, STATE_REFRESH_DEBOUNCE_MS);
+}
+
+function openEventStream() {
+  const source = new EventSource(apiUrl("events"));
+  source.addEventListener("open", () => {
+    eventStreamHealthy = true;
+    // The relay replays a live question's buffered events to every new
+    // subscriber, so a reconnect has to rebuild the preview from scratch.
+    if (!questionPreview) return;
+    questionPreview = null;
+    renderConversation();
+  });
+  source.addEventListener("error", () => {
+    eventStreamHealthy = false;
+  });
+  source.addEventListener("state", scheduleStateRefresh);
+  source.addEventListener("question", (event) => {
+    let payload;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    handleQuestionEvent(payload);
+  });
+}
 
 async function boot() {
   setChatOpen(false);
@@ -1342,11 +1921,15 @@ async function boot() {
     renderHeader();
     renderState({ followConversation: true });
     setStatus("");
+    openEventStream();
+    let pollBeat = 0;
     window.setInterval(() => {
-      if (!pending && document.visibilityState === "visible") {
-        refreshState().catch(() => {});
-      }
-    }, 1500);
+      pollBeat += 1;
+      if (pending || document.visibilityState !== "visible") return;
+      // A healthy stream already pushes every change; this is only a safety net.
+      if (eventStreamHealthy && pollBeat % STREAMED_POLL_BEATS !== 0) return;
+      refreshState().catch(() => {});
+    }, POLL_INTERVAL_MS);
   } catch (error) {
     setStatus(error.message, true);
     elements.question.textContent = "This local view could not be opened.";

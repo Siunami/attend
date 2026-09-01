@@ -6,16 +6,23 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 import SAMPLE_SOURCES from "../viewer/family-datasets.js";
-import { toCompilerRequest } from "../viewer/family-compiler-adapter.js";
+import { formFixtureDataset, toCompilerRequest } from "../viewer/family-compiler-adapter.js";
+import { GENERATED_FORM_RUNTIME } from "../viewer/form-runtime-generated.js";
+import { legacyIncumbentMemberId } from "../viewer/form-registry.js";
 import {
   ATLAS_CATALOG_VERSION,
   atlasPackageToRenderModel,
-  catalogReceiptForFamily,
+  catalogReceiptForMember,
   isAtlasPackage,
 } from "../viewer/package-model.js";
 import { ATLAS_ASSET_PATHS } from "../viewer/package-renderer.js";
 import { RENDERER_IDS, renderFamily } from "../viewer/family-renderers.js";
-import { CATALOG_VERSION, getCatalogFamily } from "../src/catalog/index.js";
+import {
+  CATALOG_VERSION,
+  getCatalogFamily,
+  historicalCatalogReceiptForMember,
+  historicalPresentationVariantForMember,
+} from "../src/catalog/index.js";
 import { MAP_FAMILIES } from "../src/map-families/registry.js";
 import { compileMap } from "../src/pipeline/compile.js";
 
@@ -39,6 +46,17 @@ const FAMILY_IDS = [
   "mechanism", "region-map", "point-map", "field", "annotated-specimen", "collection-atlas",
 ];
 
+function incumbentReceipt(familyId) {
+  const memberId = legacyIncumbentMemberId(familyId);
+  if (!memberId) throw new TypeError(`Unknown Atlas family: ${String(familyId)}`);
+  return catalogReceiptForMember(familyId, memberId);
+}
+
+function incumbentDataset(familyId) {
+  const receipt = incumbentReceipt(familyId);
+  return formFixtureDataset(familyId, receipt.member, SAMPLE_SOURCES[familyId]);
+}
+
 const MINIMAL_COLLECTIONS = Object.freeze({
   rank: "items",
   distribution: "observations",
@@ -61,30 +79,35 @@ const MINIMAL_COLLECTIONS = Object.freeze({
   "collection-atlas": "items",
 });
 
-// Reuse each real compiler package, then remove every optional role from its
-// first canonical mark/record. This leaves an honest required-only package
-// without inventing evidence ids or a parallel test schema.
+// Reuse each governed incumbent fixture, then remove every optional role while
+// retaining the exact form's structurally required record set.
 async function minimalRequiredPackage(familyId, manifest) {
-  const compiled = await compileMap(await toCompilerRequest(SAMPLE_SOURCES[familyId], manifest));
-  const required = new Set(manifest.data.requiredRoles.map((role) => role.id));
-  const mark = compiled.marks[0];
-  const values = Object.fromEntries(Object.entries(mark.values).filter(([key]) => required.has(key)));
-  const minimalMark = {
-    ...mark,
-    label: String(values.label ?? mark.id),
-    values,
-  };
+  const memberId = incumbentReceipt(familyId).member;
+  const compiled = await compileMap(await toCompilerRequest(incumbentDataset(familyId), manifest, {
+    memberId,
+  }));
+  const form = GENERATED_FORM_RUNTIME.forms.find((candidate) => (
+    candidate.familyId === familyId && candidate.memberId === memberId
+  ));
+  const required = new Set(form.packageContract.roles.required.map((role) => role.id));
+  // A parent reference is role-optional for a singleton tree, but it is
+  // structurally necessary when retaining the governed multi-node fixture.
+  if (familyId === "hierarchy") required.add("parentId");
+  const minimalMarks = compiled.marks.map((mark) => {
+    const values = Object.fromEntries(Object.entries(mark.values).filter(([key]) => required.has(key)));
+    return { ...mark, label: String(values.label ?? mark.id), values };
+  });
+  const markIds = new Set(minimalMarks.map((mark) => mark.id));
   const payload = { ...compiled.payload };
   const collection = MINIMAL_COLLECTIONS[familyId];
   if (collection && Array.isArray(payload[collection])) {
     payload[collection] = payload[collection]
-      .filter((record) => record.markId === mark.id)
-      .slice(0, 1)
+      .filter((record) => markIds.has(record.markId))
       .map((record) => Object.fromEntries(
         Object.entries(record).filter(([key]) => key === "markId" || required.has(key)),
       ));
   }
-  return { ...compiled, payload, marks: [minimalMark] };
+  return { ...compiled, payload, marks: minimalMarks };
 }
 
 class MiniElement {
@@ -228,12 +251,77 @@ test("atlas package model rejects non-canonical or unallowlisted package shapes"
 test("browser catalog authority is pinned to the bundled catalog version", async () => {
   assert.equal(ATLAS_CATALOG_VERSION, CATALOG_VERSION);
   const manifest = MAP_FAMILIES.find((candidate) => candidate.id === "rank");
-  const packageValue = await compileMap(await toCompilerRequest(SAMPLE_SOURCES.rank, manifest));
+  const packageValue = await compileMap(await toCompilerRequest(incumbentDataset("rank"), manifest, {
+    memberId: incumbentReceipt("rank").member,
+  }));
   assert.equal(isAtlasPackage(packageValue), true);
+  const withoutRequiredRole = structuredClone(packageValue);
+  delete withoutRequiredRole.marks[0].values.label;
+  assert.equal(isAtlasPackage(withoutRequiredRole), false);
+  const wrongRoleType = structuredClone(packageValue);
+  wrongRoleType.marks[0].values.value = "not a number";
+  assert.equal(isAtlasPackage(wrongRoleType), false);
+  const unknownRole = structuredClone(packageValue);
+  unknownRole.marks[0].values.uncontracted = "not allowed";
+  assert.equal(isAtlasPackage(unknownRole), false);
   assert.equal(isAtlasPackage({
     ...packageValue,
     catalog: { ...packageValue.catalog, version: "0000000000000000" },
   }), false);
+});
+
+test("browser validation preserves both historical receipts and all 18 incumbent presentation contracts", async () => {
+  const versions = ["3904c28aabcbc405", "3bcb588eaf291763"];
+  assert.equal(Object.keys(GENERATED_FORM_RUNTIME.historicalPackageContracts).length, 36);
+  const executableManifests = MAP_FAMILIES.filter((manifest) => legacyIncumbentMemberId(manifest.id));
+  let verified = 0;
+  for (const manifest of executableManifests) {
+    const memberId = legacyIncumbentMemberId(manifest.id);
+    const current = await compileMap(await toCompilerRequest(incumbentDataset(manifest.id), manifest, { memberId }));
+    for (const version of versions) {
+      const frozenContract = GENERATED_FORM_RUNTIME.historicalPackageContracts[
+        `${version}/${manifest.id}/${memberId}`
+      ];
+      const historicalMarks = current.marks.map((mark, index) => ({
+        ...mark,
+        values: manifest.id === "collection-atlas"
+          ? { ...mark.values, x: index, y: 0 }
+          : mark.values,
+      }));
+      const historical = {
+        ...current,
+        marks: historicalMarks,
+        catalog: historicalCatalogReceiptForMember(version, manifest.id, memberId),
+        presentation: {
+          ...current.presentation,
+          variant: historicalPresentationVariantForMember(version, manifest.id, memberId),
+        },
+      };
+      assert.equal(historical.payload.schemaVersion, frozenContract.payload.schemaVersion);
+      assert.equal(historical.payload.kind, frozenContract.payload.kind);
+      assert.ok(Array.isArray(historical.payload[frozenContract.payload.collection]));
+      assert.equal(isAtlasPackage(historical), true, `${version} ${manifest.id}/${memberId}`);
+      const missingHistoricalRole = structuredClone(historical);
+      delete missingHistoricalRole.marks[0].values[frozenContract.roles.required[0].id];
+      assert.equal(isAtlasPackage(missingHistoricalRole), false, `${version} ${manifest.id} must require its frozen mark roles`);
+      const wrongHistoricalRoleType = structuredClone(historical);
+      wrongHistoricalRoleType.marks[0].values[frozenContract.roles.required[0].id] = null;
+      assert.equal(isAtlasPackage(wrongHistoricalRoleType), false, `${version} ${manifest.id} must enforce its frozen role types`);
+      assert.equal(isAtlasPackage({
+        ...historical,
+        payload: { ...historical.payload, kind: `${frozenContract.payload.kind}-forged` },
+      }), false, `${version} ${manifest.id} must reject a package kind outside its frozen contract`);
+      const model = atlasPackageToRenderModel(historical);
+      assert.equal(model.familyId, manifest.id);
+      assert.equal(model.memberId, memberId);
+      assert.equal(isAtlasPackage({
+        ...historical,
+        presentation: { ...historical.presentation, variant: current.catalog.rendererVariantId },
+      }), current.catalog.rendererVariantId === historical.presentation.variant, `${version} ${manifest.id} must reject a cross-wired current variant`);
+      verified += 1;
+    }
+  }
+  assert.equal(verified, 36);
 });
 
 test("the package renderer has explicit self-hosted asset paths", () => {
@@ -497,7 +585,7 @@ test("parallel text uses two witness columns aligned by order or label", async (
       schemaVersion: 2,
       id: "data_parallel_text",
       family: { id: "passage-comparison" },
-      catalog: catalogReceiptForFamily("passage-comparison"),
+    catalog: incumbentReceipt("passage-comparison"),
       question: { text: "How did this passage change?", target: "Two supplied witnesses" },
       payload: {
         schemaVersion: 1,
@@ -553,42 +641,20 @@ test("parallel text uses two witness columns aligned by order or label", async (
   });
 });
 
-test("annotated specimen uses supplied preview media and otherwise declares a neutral frame", async () => {
-  const packageValue = {
-    kind: "attend-data-package",
-    schemaVersion: 2,
-    id: "data_specimen_preview",
-    family: { id: "annotated-specimen" },
-    catalog: catalogReceiptForFamily("annotated-specimen"),
-    question: { text: "What is marked?", target: "Supplied specimen" },
-    payload: {
-      schemaVersion: 1,
-      kind: "attend-annotated-specimen-payload",
-      specimenIds: ["specimen-one"],
-      annotations: [{ markId: "mark-specimen", specimen: "specimen-one", label: "Observed region", x: 0.2, y: 0.3 }],
-    },
-    marks: [{
-      id: "mark-specimen",
-      kind: "annotated-specimen",
-      label: "Observed region",
-      summary: "",
-      values: { specimen: "specimen-one", label: "Observed region", x: 0.2, y: 0.3 },
-      evidenceRefs: ["evidence_0123456789abcdef"],
-      media: {
-        type: "image",
-        width: 1_600,
-        height: 900,
-        preview: { kind: "image", src: "previews/specimen.png", alt: "The actual supplied specimen" },
-      },
-    }],
-  };
-  const model = atlasPackageToRenderModel(packageValue);
-  assert.equal(model.specimen.preview.src, "previews/specimen.png");
-  assert.equal(model.specimen.aspectRatio, 16 / 9);
-
+test("the unavailable annotated specimen prototype can preview fixtures but has no executable receipt", async () => {
+  assert.throws(() => incumbentReceipt("annotated-specimen"), /Unknown Atlas family/u);
   await withMiniRenderer(async () => {
     const supplied = new MiniElement("div");
-    await renderFamily({ root: supplied, dataset: model, selectableMarkIds: model.selectableMarkIds });
+    await renderFamily({
+      root: supplied,
+      dataset: {
+        familyId: "annotated-specimen",
+        title: "Supplied specimen",
+        roles: { label: "label", x: "x", y: "y", width: "width", height: "height" },
+        specimen: { aspectRatio: 16 / 9, preview: { src: "previews/specimen.png", alt: "The actual supplied specimen" } },
+        records: [{ markId: "mark-specimen", label: "Observed region", x: 0.2, y: 0.3 }],
+      },
+    });
     const suppliedSvg = descendants(supplied).find((node) => node.tagName === "svg");
     const image = descendants(supplied).find((node) => node.tagName === "image");
     assert.equal(suppliedSvg?.getAttribute("data-preview-state"), "supplied");
@@ -632,7 +698,7 @@ test("mechanism render models isolate real feedback loops without swallowing dow
     schemaVersion: 2,
     id: "data_feedback_layers",
     family: { id: "mechanism" },
-    catalog: catalogReceiptForFamily("mechanism"),
+    catalog: incumbentReceipt("mechanism"),
     question: { text: "How does this loop feed its outputs?", target: "Feedback system" },
     payload: {
       schemaVersion: 1,
@@ -877,8 +943,11 @@ test("sequence, flow, mechanism, and region views preserve their governed semant
 
 test("real compiler output for every executable family closes over package mark IDs", async () => {
   for (const manifest of MAP_FAMILIES) {
-    if (!getCatalogFamily(manifest.id)?.executableMemberId) continue;
-    const request = await toCompilerRequest(SAMPLE_SOURCES[manifest.id], manifest, { availableWidth: 1_024 });
+    if (!getCatalogFamily(manifest.id)?.executableMemberIds.length) continue;
+    const request = await toCompilerRequest(incumbentDataset(manifest.id), manifest, {
+      availableWidth: 1_024,
+      memberId: incumbentReceipt(manifest.id).member,
+    });
     const compiled = await compileMap(request);
     const packageValue = compiled;
     const model = atlasPackageToRenderModel(packageValue);
@@ -905,6 +974,41 @@ test("real compiler output for every executable family closes over package mark 
     }
     assert.equal(model.familyId, manifest.id);
   }
+});
+
+test("all 34 governed exact-form fixtures compile and render through their receipt handlers", async () => {
+  await withMiniRenderer(async () => {
+    const manifestById = new Map(MAP_FAMILIES.map((manifest) => [manifest.id, manifest]));
+    assert.equal(GENERATED_FORM_RUNTIME.forms.length, 34);
+    for (const form of GENERATED_FORM_RUNTIME.forms) {
+      const dataset = formFixtureDataset(form.familyId, form.memberId, SAMPLE_SOURCES[form.familyId]);
+      const packageValue = await compileMap(await toCompilerRequest(
+        dataset,
+        manifestById.get(form.familyId),
+        { availableWidth: 1_024, memberId: form.memberId },
+      ));
+      const model = atlasPackageToRenderModel(packageValue);
+      if (form.key === "collection-atlas/contact-atlas") {
+        const firstMark = model.markById[packageValue.marks[0].id];
+        assert.equal(firstMark.media.preview.src, firstMark.values.previewRoute);
+        assert.match(firstMark.media.preview.src, /^assets\/asset_[a-f0-9]{32}$/u);
+      }
+      const root = new MiniElement("div");
+      const receipt = await renderFamily({
+        root,
+        dataset: model,
+        selectableMarkIds: model.selectableMarkIds,
+      });
+      assert.equal(model.memberId, form.memberId, `${form.key} must retain exact execution identity`);
+      assert.ok(
+        receipt.selectableMarkIds.length
+          + receipt.selectableTargetIds.length
+          + receipt.selectableNodeIds.length > 0,
+        `${form.key} must expose at least one evidence interaction`,
+      );
+      assert.doesNotMatch(String(root), /\b(?:undefined|NaN|Infinity)\b/u, `${form.key} must render finite, declared semantics`);
+    }
+  });
 });
 
 test("required-only canonical packages render all eighteen executable families with exact mark ids", async () => {
@@ -934,7 +1038,7 @@ test("required-only canonical packages render all eighteen executable families w
   });
 
   try {
-    for (const familyId of FAMILY_IDS.filter((candidate) => getCatalogFamily(candidate)?.executableMemberId)) {
+    for (const familyId of FAMILY_IDS.filter((candidate) => getCatalogFamily(candidate)?.executableMemberIds.length)) {
       const manifest = MAP_FAMILIES.find((candidate) => candidate.id === familyId);
       const packageValue = await minimalRequiredPackage(familyId, manifest);
       const model = atlasPackageToRenderModel(packageValue);
@@ -945,7 +1049,11 @@ test("required-only canonical packages render all eighteen executable families w
         selectableMarkIds: model.selectableMarkIds,
       });
       const renderedIds = root.querySelectorAll("[data-mark-id]").map((node) => node.getAttribute("data-mark-id"));
-      assert.deepEqual([...new Set(renderedIds)], [packageValue.marks[0].id], `${familyId} must render its exact package mark id`);
+      assert.deepEqual(
+        [...new Set(renderedIds)].sort(),
+        packageValue.marks.map((mark) => mark.id).sort(),
+        `${familyId} must render every exact required-only package mark id`,
+      );
       assert.doesNotMatch(String(root), /\b(?:undefined|NaN|Infinity)\b/u, `${familyId} must not render undefined or non-finite semantics`);
       if (familyId === "point-map") {
         const scrollRegion = root.querySelectorAll("[data-visualization-scroll-region]")[0];
@@ -975,7 +1083,8 @@ test("production app branches by artifact schema and does not import fixtures", 
   assert.doesNotMatch(app, /family-datasets/u);
   assert.doesNotMatch(packageModel, /compilerPackageToAtlasPackage/u);
   assert.doesNotMatch(compilerAdapter, /\.\.\/src\/catalog/u);
-  assert.match(compilerAdapter, /rendererVariantId/u);
+  assert.match(compilerAdapter, /catalogReceiptForMember/u);
+  assert.doesNotMatch(compilerAdapter, /options:\s*\{[^}]*variant:/su);
   assert.doesNotMatch(compilerAdapter, /manifest\.variants\[0\]/u);
 });
 
@@ -987,6 +1096,7 @@ test("Atlas draft attachment keys change when the selected mark changes", async 
   const semanticAttachmentKey = runInNewContext(`(${app.slice(start, end)})`, {
     atlasMode: () => true,
     atlasSelectedMarkIds: (value) => value.selection.selectedMarkIds,
+    atlasSelectedTargetId: () => null,
   });
   const selection = {
     dataPackageId: "data_test",

@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import {
@@ -12,11 +13,17 @@ import { loadSources, sha256 } from "./sources.js";
 
 const EVIDENCE_STORE_SCHEMA_VERSION = 1;
 const ATLAS_EVIDENCE_STORE_SCHEMA_VERSION = 2;
+const IMAGE_EVIDENCE_STORE_SCHEMA_VERSION = 3;
 const EVIDENCE_PACKET_SCHEMA_VERSION = 1;
 const EVIDENCE_DIRECTORY = ".attend/local/evidence";
 const SAFE_DATA_ID = /^data_[a-f0-9]{16}$/u;
+const SAFE_RECORD_ID = /^[a-z][a-z0-9_-]{1,127}$/u;
+const SAFE_ASSET_ID = /^asset_[a-f0-9]{32}$/u;
+const SHA256 = /^[a-f0-9]{64}$/u;
 const DEFAULT_MAX_PACKET_BYTES = 1024 * 1024;
 const HARD_MAX_PACKET_BYTES = 1024 * 1024;
+const EVIDENCE_CACHE = new Map();
+const EVIDENCE_CACHE_MAX = 32;
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -104,6 +111,7 @@ function storeHashable(store) {
     corpusHash: store.corpusHash,
     sources: store.sources,
     ...(store.references === undefined ? {} : { references: store.references }),
+    ...(store.assetBinding === undefined ? {} : { assetBinding: store.assetBinding }),
   };
 }
 
@@ -121,6 +129,14 @@ function privateEvidenceReferenceId(reference) {
     recordId: reference.recordId,
     locator: reference.locator,
     quote: reference.quote,
+  })).slice(0, 16)}`;
+}
+
+function privateImageEvidenceReferenceId(reference) {
+  return `evidence_${sha256(canonicalJson({
+    sourceId: reference.sourceId,
+    recordId: reference.recordId,
+    locator: reference.locator,
   })).slice(0, 16)}`;
 }
 
@@ -209,6 +225,159 @@ function normalizeAtlasEvidenceReferences({ dataPackage, evidenceSources, eviden
   return references.sort((left, right) => compareText(left.id, right.id));
 }
 
+function imageSourceEvidence(source, expected, assetId) {
+  return canonicalValue({
+    id: expected.id,
+    displayPath: expected.displayPath,
+    sourceSha256: expected.sha256,
+    byteLength: expected.byteLength,
+    kind: expected.kind,
+    medium: "image",
+    mimeType: expected.mimeType ?? source.mimeType ?? "image/jpeg",
+    assetId,
+    ...(typeof expected.title === "string" ? { title: expected.title } : {}),
+    ...(typeof expected.date === "string" ? { date: expected.date } : {}),
+  });
+}
+
+function normalizeImageReference(reference, sourceById, expectedIds, index) {
+  const path = `references[${index}]`;
+  if (!isPlainObject(reference)) throw invalidPrivateReference(`${path} must be an object`);
+  const source = sourceById.get(reference.sourceId);
+  if (!isOpaqueEvidenceReferenceId(reference.id) || !expectedIds.has(reference.id)) {
+    throw invalidPrivateReference(`${path}.id does not resolve to a public mark evidence id`);
+  }
+  if (!source) throw invalidPrivateReference(`${path}.sourceId does not resolve to a verified image`);
+  if (typeof reference.recordId !== "string" || !SAFE_RECORD_ID.test(reference.recordId)) {
+    throw invalidPrivateReference(`${path}.recordId is invalid`);
+  }
+  const locator = reference.locator;
+  if (
+    !isPlainObject(locator) ||
+    Object.keys(locator).sort(compareText).join(",") !== "assetId,kind" ||
+    locator.kind !== "whole-file" ||
+    !SAFE_ASSET_ID.test(locator.assetId ?? "")
+  ) {
+    throw invalidPrivateReference(`${path}.locator must identify one whole staged file`);
+  }
+  const sourceSha256 = reference.sourceSha256 ?? reference.sha256 ?? source.sourceSha256;
+  const byteLength = reference.byteLength ?? source.byteLength;
+  const mimeType = reference.mimeType ?? source.mimeType;
+  if (
+    source.assetId !== locator.assetId ||
+    sourceSha256 !== source.sourceSha256 ||
+    byteLength !== source.byteLength ||
+    mimeType !== "image/jpeg"
+  ) {
+    throw invalidPrivateReference(`${path} does not match its verified whole-file source`);
+  }
+  const normalized = canonicalValue({
+    id: reference.id,
+    sourceId: reference.sourceId,
+    recordId: reference.recordId,
+    locator,
+    sourceSha256,
+    byteLength,
+    mimeType,
+  });
+  if (privateImageEvidenceReferenceId(normalized) !== normalized.id) {
+    throw invalidPrivateReference(`${path}.id does not bind its image source and locator`);
+  }
+  return normalized;
+}
+
+/** Build a private whole-file evidence store for contact-atlas images. */
+export function buildImageEvidenceStore({
+  dataPackage,
+  sources,
+  evidenceReferences,
+  sourceBundleSha256,
+} = {}) {
+  const packageValue = validateDataPackage(dataPackage);
+  if (
+    !isAtlasPackage(packageValue) ||
+    packageValue.catalog?.member !== "contact-atlas"
+  ) {
+    throw new TypeError("Image evidence is supported only for collection-atlas/contact-atlas");
+  }
+  if (!Array.isArray(sources) || sources.length !== packageValue.sources.length) {
+    throw evidenceError(
+      "EVIDENCE_SOURCE_MISMATCH",
+      "Image evidence sources do not match the package source count; regenerate the map.",
+    );
+  }
+  if (!SHA256.test(sourceBundleSha256 ?? "")) {
+    throw new TypeError("sourceBundleSha256 must be a lowercase SHA-256 digest");
+  }
+  const suppliedById = new Map(sources.map((source) => [source?.id, source]));
+  if (suppliedById.size !== sources.length || suppliedById.has(undefined)) {
+    throw evidenceError("EVIDENCE_SOURCE_MISMATCH", "Image evidence source ids must be unique.");
+  }
+  const suppliedReferencesBySource = new Map();
+  for (const reference of evidenceReferences ?? []) {
+    if (typeof reference?.sourceId === "string" && !suppliedReferencesBySource.has(reference.sourceId)) {
+      suppliedReferencesBySource.set(reference.sourceId, reference);
+    }
+  }
+  const evidenceSources = packageValue.sources.map((expected) => {
+    const supplied = suppliedById.get(expected.id);
+    const displayPath = supplied?.displayPath ?? supplied?.label;
+    const assetId = supplied?.media?.assetId ?? supplied?.assetId ??
+      suppliedReferencesBySource.get(expected.id)?.locator?.assetId ??
+      suppliedReferencesBySource.get(expected.id)?.assetId;
+    if (
+      !supplied ||
+      displayPath !== expected.displayPath ||
+      supplied.sha256 !== expected.sha256 ||
+      supplied.byteLength !== expected.byteLength ||
+      supplied.kind !== expected.kind ||
+      !SAFE_ASSET_ID.test(assetId ?? "") ||
+      (expected.mimeType ?? "image/jpeg") !== "image/jpeg"
+    ) {
+      throw evidenceError(
+        "EVIDENCE_SOURCE_MISMATCH",
+        `Image evidence no longer matches the analysis: ${expected.displayPath}. Regenerate the map.`,
+      );
+    }
+    return imageSourceEvidence(supplied, expected, assetId);
+  });
+  const expectedIds = publicEvidenceReferenceIds(packageValue);
+  const sourceById = new Map(evidenceSources.map((source) => [source.id, source]));
+  const seen = new Set();
+  const references = (evidenceReferences ?? []).map((reference, index) => {
+    const normalized = normalizeImageReference(reference, sourceById, expectedIds, index);
+    if (seen.has(normalized.id)) {
+      throw invalidPrivateReference(`references contains duplicate id ${normalized.id}`);
+    }
+    seen.add(normalized.id);
+    return normalized;
+  }).sort((left, right) => compareText(left.id, right.id));
+  if (seen.size !== expectedIds.size || [...expectedIds].some((id) => !seen.has(id))) {
+    throw invalidPrivateReference("references do not close over every public image evidence id");
+  }
+  const assetBinding = canonicalValue({
+    kind: "session-image-assets",
+    sourceBundleSha256,
+    assetCount: evidenceSources.length,
+  });
+  const hashable = {
+    schemaVersion: IMAGE_EVIDENCE_STORE_SCHEMA_VERSION,
+    kind: "attend-evidence-store",
+    dataPackageId: packageValue.id,
+    dataHash: packageValue.hashes.data,
+    corpusHash: packageValue.hashes.corpus,
+    sources: evidenceSources,
+    references,
+    assetBinding,
+  };
+  const contentHash = sha256(canonicalJson(hashable));
+  return {
+    ...hashable,
+    id: `evidence_${contentHash.slice(0, 16)}`,
+    hashes: { content: contentHash },
+  };
+}
+
 /** Build the private content companion for a public, text-free DataPackage. */
 export function buildEvidenceStore({ dataPackage, sources, evidenceReferences } = {}) {
   const packageValue = validateDataPackage(dataPackage);
@@ -283,18 +452,26 @@ export function buildEvidenceStore({ dataPackage, sources, evidenceReferences } 
 export function validateEvidenceStore({ dataPackage, evidenceStore } = {}) {
   const packageValue = validateDataPackage(dataPackage);
   const atlas = isAtlasPackage(packageValue);
+  const image = evidenceStore?.schemaVersion === IMAGE_EVIDENCE_STORE_SCHEMA_VERSION;
+  const expectedSchemaVersion = image
+    ? IMAGE_EVIDENCE_STORE_SCHEMA_VERSION
+    : atlas
+      ? ATLAS_EVIDENCE_STORE_SCHEMA_VERSION
+      : EVIDENCE_STORE_SCHEMA_VERSION;
   if (
     !evidenceStore ||
     typeof evidenceStore !== "object" ||
     Array.isArray(evidenceStore) ||
-    evidenceStore.schemaVersion !== (atlas ? ATLAS_EVIDENCE_STORE_SCHEMA_VERSION : EVIDENCE_STORE_SCHEMA_VERSION) ||
+    evidenceStore.schemaVersion !== expectedSchemaVersion ||
     evidenceStore.kind !== "attend-evidence-store" ||
     evidenceStore.dataPackageId !== packageValue.id ||
     evidenceStore.dataHash !== packageValue.hashes.data ||
     evidenceStore.corpusHash !== packageValue.hashes.corpus ||
     !Array.isArray(evidenceStore.sources) ||
     (atlas && !Array.isArray(evidenceStore.references)) ||
-    (!atlas && evidenceStore.references !== undefined)
+    (!atlas && evidenceStore.references !== undefined) ||
+    (image && !isPlainObject(evidenceStore.assetBinding)) ||
+    (!image && evidenceStore.assetBinding !== undefined)
   ) {
     throw evidenceError(
       "EVIDENCE_STORE_INVALID",
@@ -313,14 +490,24 @@ export function validateEvidenceStore({ dataPackage, evidenceStore } = {}) {
   }
   // Reuse the exact source/package checks used at creation, including each
   // original source SHA. This intentionally hashes bodies on each load.
-  const rebuilt = buildEvidenceStore({
-    dataPackage: packageValue,
-    sources: evidenceStore.sources.map((source) => ({
-      ...source,
-      sha256: source.sourceSha256,
-    })),
-    ...(atlas ? { evidenceReferences: evidenceStore.references } : {}),
-  });
+  const rebuilt = image
+    ? buildImageEvidenceStore({
+        dataPackage: packageValue,
+        sources: evidenceStore.sources.map((source) => ({
+          ...source,
+          sha256: source.sourceSha256,
+        })),
+        evidenceReferences: evidenceStore.references,
+        sourceBundleSha256: evidenceStore.assetBinding.sourceBundleSha256,
+      })
+    : buildEvidenceStore({
+        dataPackage: packageValue,
+        sources: evidenceStore.sources.map((source) => ({
+          ...source,
+          sha256: source.sourceSha256,
+        })),
+        ...(atlas ? { evidenceReferences: evidenceStore.references } : {}),
+      });
   if (rebuilt.hashes.content !== expectedHash) {
     throw evidenceError(
       "EVIDENCE_STORE_INVALID",
@@ -356,18 +543,55 @@ function migrationInputs(dataPackage) {
   return [...inputs];
 }
 
+async function evidenceStatKey(path) {
+  try {
+    const stats = await stat(path);
+    return `${stats.mtimeMs}:${stats.size}:${stats.ino}`;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Load the private store, or safely migrate a legacy analysis by re-reading
- * only its explicit recorded files/JSONL containers through loadSources.
+ * Load the private store, re-verifying every source body once per changed
+ * store file, or safely migrate a legacy analysis by re-reading only its
+ * explicit recorded files/JSONL containers through loadSources. Every return
+ * path has already reproduced the store from this exact package, so callers
+ * must not verify it again.
  */
 export async function ensureEvidenceStore({ root, dataPackage } = {}) {
   const packageValue = validateDataPackage(dataPackage);
   const path = evidenceStorePath({ root, dataPackageId: packageValue.id });
+  // validateEvidenceStore binds the store to the supplied package, so a hit
+  // must also match this fingerprint or that binding would go unchecked.
+  const fingerprint = [
+    packageValue.id,
+    packageValue.hashes.package,
+    packageValue.hashes.data,
+    packageValue.hashes.corpus,
+  ].join(":");
+  const statKey = await evidenceStatKey(path);
+  const entry = EVIDENCE_CACHE.get(path);
+  if (statKey && entry?.statKey === statKey && entry.fingerprint === fingerprint) {
+    EVIDENCE_CACHE.delete(path);
+    EVIDENCE_CACHE.set(path, entry);
+    return JSON.parse(entry.serialized);
+  }
   try {
-    return validateEvidenceStore({
+    const store = validateEvidenceStore({
       dataPackage: packageValue,
       evidenceStore: await readJson(path),
     });
+    // Without the re-stat, an atomic rename between the first stat and the read
+    // would cache stale bytes under the new file's identity.
+    if (statKey && (await evidenceStatKey(path)) === statKey) {
+      EVIDENCE_CACHE.delete(path);
+      EVIDENCE_CACHE.set(path, { statKey, fingerprint, serialized: JSON.stringify(store) });
+      while (EVIDENCE_CACHE.size > EVIDENCE_CACHE_MAX) {
+        EVIDENCE_CACHE.delete(EVIDENCE_CACHE.keys().next().value);
+      }
+    }
+    return store;
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
@@ -482,7 +706,31 @@ function sampledSegments(text, maxTextBytes) {
 function selectedSourceIds(dataPackage, evidenceStore, selection) {
   try {
     if (isAtlasPackage(dataPackage)) {
-      const evidenceRefIds = evidenceReferenceIdsForSelection(dataPackage, selection);
+      const targetId = selection?.target?.id
+        ?? (selection?.predicate?.kind === "visual-target" ? selection.predicate.targetId : null);
+      let evidenceRefIds;
+      if (targetId) {
+        if (!Number.isSafeInteger(selection?.stateRevision) || selection.stateRevision < 0) {
+          throw evidenceError(
+            "EVIDENCE_SELECTION_INVALID",
+            "Aggregate selection is missing its canonical state revision.",
+          );
+        }
+        const canonicalSelection = artifactAdapterFor(dataPackage).buildSelection(dataPackage, {
+          revision: selection.stateRevision,
+          markIds: [],
+          targetId,
+        });
+        if (selection.id !== canonicalSelection.id) {
+          throw evidenceError(
+            "EVIDENCE_SELECTION_INVALID",
+            "Aggregate selection does not match its server-derived bounded evidence preview.",
+          );
+        }
+        evidenceRefIds = canonicalSelection.evidenceRefIds;
+      } else {
+        evidenceRefIds = evidenceReferenceIdsForSelection(dataPackage, selection);
+      }
       const referencesById = new Map(evidenceStore.references.map((reference) => [reference.id, reference]));
       const selected = evidenceRefIds.map((id) => {
         const reference = referencesById.get(id);
@@ -511,6 +759,25 @@ function selectedSourceIds(dataPackage, evidenceStore, selection) {
 }
 
 function packetSource(source, maxTextBytes) {
+  if (source.medium === "image") {
+    return {
+      sourceId: source.id,
+      displayPath: source.displayPath,
+      sourceSha256: source.sourceSha256,
+      sourceByteLength: source.byteLength,
+      ...(source.title ? { title: source.title } : {}),
+      ...(source.date ? { date: source.date } : {}),
+      contentComplete: false,
+      includedByteLength: 0,
+      segments: [],
+      media: {
+        kind: "whole-file",
+        assetId: source.assetId,
+        mimeType: source.mimeType,
+        contentIncluded: false,
+      },
+    };
+  }
   const segments = sampledSegments(source.text, maxTextBytes);
   const includedByteLength = segments.reduce(
     (total, segment) => total + Buffer.byteLength(segment.text, "utf8"),
@@ -553,7 +820,17 @@ function candidatePacket({ dataPackage, evidenceStore, selection, selectedSource
     (total, source) => total + source.includedByteLength,
     0,
   );
-  const truncatedSourceCount = sources.filter((source) => !source.contentComplete).length;
+  const omittedBinarySourceCount = sources.filter(
+    (source) => source.media?.kind === "whole-file" && !source.media.contentIncluded,
+  ).length;
+  const truncatedSourceCount = sources.filter(
+    (source) => !source.contentComplete && source.media?.kind !== "whole-file",
+  ).length;
+  const sampling = omittedBinarySourceCount === sources.length && sources.length > 0
+    ? "whole-file-locator/v1"
+    : truncatedSourceCount === 0
+      ? "full-source/v1"
+      : "head-middle-tail/v1";
   return finalizePacket({
     schemaVersion: EVIDENCE_PACKET_SCHEMA_VERSION,
     kind: "attend-evidence-packet",
@@ -566,9 +843,15 @@ function candidatePacket({ dataPackage, evidenceStore, selection, selectedSource
       includedSourceCount: sources.length,
       selectedByteCount,
       includedByteCount,
-      complete: truncatedSourceCount === 0,
+      complete: truncatedSourceCount === 0 && omittedBinarySourceCount === 0,
       truncatedSourceCount,
-      sampling: truncatedSourceCount === 0 ? "full-source/v1" : "head-middle-tail/v1",
+      sampling,
+      ...(omittedBinarySourceCount === 0
+        ? {}
+        : {
+            omittedBinarySourceCount,
+            binaryEvidence: "whole-file locators only; original image bytes are omitted from chat context",
+          }),
     },
     sources,
   });
@@ -579,14 +862,7 @@ function candidatePacket({ dataPackage, evidenceStore, selection, selectedSource
  * complete packet fits; otherwise every implicated source receives the same
  * deterministic byte allowance sampled across its beginning, middle, and end.
  */
-export function buildEvidencePacket({
-  dataPackage,
-  evidenceStore,
-  selection,
-  maxBytes = DEFAULT_MAX_PACKET_BYTES,
-} = {}) {
-  const packageValue = validateDataPackage(dataPackage);
-  const store = validateEvidenceStore({ dataPackage: packageValue, evidenceStore });
+function packetFromVerifiedStore({ packageValue, store, selection, maxBytes }) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > HARD_MAX_PACKET_BYTES) {
     throw new TypeError(`maxBytes must be an integer between 1 and ${HARD_MAX_PACKET_BYTES}`);
   }
@@ -640,14 +916,33 @@ export function buildEvidencePacket({
   return best;
 }
 
+/** Verify a caller-supplied store before any of its bodies reach a packet. */
+export function buildEvidencePacket({
+  dataPackage,
+  evidenceStore,
+  selection,
+  maxBytes = DEFAULT_MAX_PACKET_BYTES,
+} = {}) {
+  const packageValue = validateDataPackage(dataPackage);
+  return packetFromVerifiedStore({
+    packageValue,
+    store: validateEvidenceStore({ dataPackage: packageValue, evidenceStore }),
+    selection,
+    maxBytes,
+  });
+}
+
 export async function evidencePacketForSelection({
   root,
   dataPackage,
   selection,
   maxBytes = DEFAULT_MAX_PACKET_BYTES,
 } = {}) {
-  const evidenceStore = await ensureEvidenceStore({ root, dataPackage });
-  return buildEvidencePacket({ dataPackage, evidenceStore, selection, maxBytes });
+  const packageValue = validateDataPackage(dataPackage);
+  // ensureEvidenceStore only ever returns a store already verified against this
+  // exact package, so re-verifying here would hash every source body twice.
+  const store = await ensureEvidenceStore({ root, dataPackage: packageValue });
+  return packetFromVerifiedStore({ packageValue, store, selection, maxBytes });
 }
 
 /** Persist a store created from the analyzer's already-loaded source snapshot. */

@@ -34,7 +34,7 @@ function sha256(value) {
 }
 
 async function fixturePackage() {
-  const sourceText = "Alpha ranks above Beta in the verified fixture.\n";
+  const sourceText = "Alpha ranks above Beta and Gamma in the verified fixture.\n";
   const quote = sourceText.trim();
   const evidenceRef = (recordId) => ({
     sourceId: "src_fixture",
@@ -58,7 +58,7 @@ async function fixturePackage() {
       sourceBundle: {
         kind: "attend-normalized-source-bundle",
         schemaVersion: 1,
-        adapter: { id: "fixture-adapter", version: 1 },
+        adapter: { id: "evidenced-records-v1", version: 1 },
         medium: "structured",
         requestedInputs: ["fixtures/records.jsonl"],
         sources: [{
@@ -71,6 +71,7 @@ async function fixturePackage() {
         records: [
           { id: "record_alpha", sourceId: "src_fixture", fields: { label: "Alpha", value: 8 }, evidenceRefs: [evidenceRef("record_alpha")] },
           { id: "record_beta", sourceId: "src_fixture", fields: { label: "Beta", value: 5 }, evidenceRefs: [evidenceRef("record_beta")] },
+          { id: "record_gamma", sourceId: "src_fixture", fields: { label: "Gamma", value: 3 }, evidenceRefs: [evidenceRef("record_gamma")] },
         ],
       },
     })),
@@ -94,7 +95,7 @@ async function fixtureMechanismPackage() {
     sourceBundle: {
       kind: "attend-normalized-source-bundle",
       schemaVersion: 1,
-      adapter: { id: "fixture-adapter", version: 1 },
+      adapter: { id: "evidenced-records-v1", version: 1 },
       medium: "structured",
       requestedInputs: ["fixtures/mechanism.jsonl"],
       sources: [{
@@ -192,6 +193,9 @@ test("atlas-v2 sessions persist mark ids, freeze server-derived attachments, and
   assert.deepEqual(queued.state.markIds, []);
 
   const path = sessionFilePath({ root, sessionId: created.id });
+  // Warm the load cache first. Atlas packages are the only ones whose verify
+  // step recomputes hashes, so this is where a cache could hide a tamper.
+  await loadSession({ root, sessionId: created.id });
   const tampered = JSON.parse(await readFile(path, "utf8"));
   tampered.dataPackage.question.text = "tampered after canonical compilation";
   await writeFile(path, `${JSON.stringify(tampered)}\n`);
@@ -386,6 +390,82 @@ test("atlas-v2 server routes use a tiny revision-bound mark envelope and expose 
   const loaded = await loadSession({ root, sessionId: session.id });
   assert.deepEqual(loaded.state, { revision: 2, markIds: [] });
   assert.deepEqual(loaded.conversation.turns.at(-1).selection.selectedMarkIds, [markId]);
+});
+
+test("atlas-v2 multi-mark selection dedupes ids and refuses unknown, oversized, ambiguous, or empty requests", async (t) => {
+  const root = await project(t);
+  const { dataPackage } = await fixturePackage();
+  const session = await createSession({ root, dataPackage, id: "atlas_multi_mark" });
+  const viewer = await createViewerServer({
+    root,
+    analysisId: session.id,
+    assetsDir: VIEWER_ASSETS,
+    token: "atlas-multi-mark-token-0123456789",
+    instanceId: "atlas-multi-mark-instance-0123456789",
+  });
+  t.after(() => viewer.close());
+
+  const [first, second] = dataPackage.marks;
+  const selectedResponse = await post(viewer.url, "selection", {
+    sessionId: session.id,
+    revision: 0,
+    markIds: [first.id, second.id],
+  });
+  assert.equal(selectedResponse.status, 200);
+  const selected = await selectedResponse.json();
+  assert.deepEqual(selected.state, { revision: 1, markIds: [first.id, second.id] });
+  assert.deepEqual(selected.selection.selectedMarkIds, [first.id, second.id]);
+  assert.deepEqual(selected.selection.predicate, {
+    field: "markId",
+    operator: "in",
+    values: [first.id, second.id],
+  });
+  assert.deepEqual(
+    selected.selection.evidenceRefIds,
+    [...new Set([...first.evidenceRefs, ...second.evidenceRefs])],
+  );
+
+  const deduped = await post(viewer.url, "selection", {
+    sessionId: session.id,
+    revision: 1,
+    markIds: [first.id, first.id, second.id],
+  });
+  assert.equal(deduped.status, 200);
+  assert.deepEqual((await deduped.json()).state, { revision: 2, markIds: [first.id, second.id] });
+
+  const unknown = await post(viewer.url, "selection", {
+    sessionId: session.id,
+    revision: 2,
+    markIds: [first.id, "mark_invented"],
+  });
+  assert.equal(unknown.status, 400);
+
+  const oversized = await post(viewer.url, "selection", {
+    sessionId: session.id,
+    revision: 2,
+    markIds: Array.from({ length: 51 }, (_value, index) => `mark_${index}`),
+  });
+  assert.equal(oversized.status, 400);
+
+  const ambiguous = await post(viewer.url, "selection", {
+    sessionId: session.id,
+    revision: 2,
+    markIds: [first.id],
+    markId: second.id,
+  });
+  assert.equal(ambiguous.status, 400);
+
+  const empty = await post(viewer.url, "selection", {
+    sessionId: session.id,
+    revision: 2,
+    markIds: [],
+  });
+  assert.equal(empty.status, 400);
+
+  assert.deepEqual((await loadSession({ root, sessionId: session.id })).state, {
+    revision: 2,
+    markIds: [first.id, second.id],
+  });
 });
 
 test("mechanism node selection attaches its server-derived connected evidence to chat", async (t) => {

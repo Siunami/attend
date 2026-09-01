@@ -1,6 +1,6 @@
 {
   "name": "@siunami/attend",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "description": "Evidence-backed visualizations for coding agents in a private local workspace.",
   "homepage": "https://github.com/Siunami/attend#readme",
   "author": "Siunami",
@@ -26,14 +26,16 @@
     "LICENSE",
     "agent-skill/",
     "bin/",
+    "docs/",
     "src/",
     "viewer/",
     "README.md"
   ],
   "scripts": {
     "test": "node --test",
+    "verify:browser": "node scripts/verify-browser-matrix.mjs",
     "verify:package": "node distribution/verify-package.mjs",
-    "verify": "node --test && npm run verify:package"
+    "verify": "node --test && npm run verify:package && npm run verify:browser"
   },
   "engines": {
     "node": ">=22.0.0"

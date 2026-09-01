@@ -1,4 +1,4 @@
-# Third-party browser assets
+# Third-party packaged assets
 
 Attend is distributed under the MIT License. The files in this directory are
 separate third-party works distributed under their own licenses.
@@ -10,6 +10,7 @@ separate third-party works distributed under their own licenses.
 | `us-states.json` | `us-atlas` `states-10m.json` | 3.0.1 | `d76b391ccfa8bff601d51e3e3da5d43a89fa46cd5caca72ce731b383be5596d0` |
 | `us-counties.json` | `us-atlas` `counties-10m.json` | 3.0.1 | `145aaf5d1433352a6a1d8e86b5f149c7c653f9171baf14aaf75ee66575def1b0` |
 | `world-countries.json` | `world-atlas` `countries-110m.json` | 2.0.2 | `2516c915867c7baf18ddec727aec46c315541a07cfb3d79a6559b05d5e94eee8` |
+| `../../src/media/vendor/exifr-7.1.3.esm.mjs` | `exifr` `dist/mini.esm.mjs` | 7.1.3 | `a93b75793c24f45290370b3d7c91baedf05fd3e78250081e2f6f1282029d4364` |
 
 The corresponding upstream license texts are in `licenses/`. The versioned
 filenames make the notice unambiguous if one package changes later.

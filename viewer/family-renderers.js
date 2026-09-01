@@ -1,14 +1,24 @@
 import {
-  appendVisualizationInspector,
+  appendVisualizationDataList,
   buildVisualizationInspectionIndex,
   inspectionTargetKey,
 } from "./visualization-inspector.js";
+import { rendererForCatalogReceipt, renderCatalogForm } from "./form-renderers.js";
+import { allowlistedCatalogReceipt } from "./form-registry.js";
+import {
+  estimateTextWidth,
+  labelInterval,
+  niceTicks,
+  thinLabels,
+  truncateToWidth,
+} from "./forms/shared.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const WIDTH = 960;
 const HEIGHT = 450;
 const MAX_NODE_SELECTION_MARKS = 50;
 let chartCounter = 0;
+const pageListenerByRoot = new WeakMap();
 
 function element(name, attributes = {}, text) {
   const node = document.createElementNS(SVG_NS, name);
@@ -93,17 +103,11 @@ function observedScale(domain, range) {
   return linear(domain, range);
 }
 
-function observedTicks(domain, count = 5) {
-  if (domain[0] === domain[1]) return [domain[0]];
-  return Array.from({ length: count }, (_, index) => (
-    domain[0] + ((domain[1] - domain[0]) * index) / (count - 1)
-  ));
-}
-
-function observedTicksWithZero(domain, count = 5) {
-  const ticks = observedTicks(domain, count);
-  if (domain[0] < 0 && domain[1] > 0) ticks.push(0);
-  return [...new Set(ticks)].sort((left, right) => left - right);
+function clampedLabelX(position, text, { anchor = "start", fontSize = 12, minimum = 5, maximum = 955 } = {}) {
+  const [left, right] = labelInterval(position, text, { anchor, fontSize });
+  if (left < minimum) return position + (minimum - left);
+  if (right > maximum) return position - (right - maximum);
+  return position;
 }
 
 function countLabel(count, singular, plural = `${singular}s`) {
@@ -204,18 +208,26 @@ function renderRank(root, dataset, selectedId) {
   const domainDescription = observed[0] === observed[1]
     ? `Every supplied value is ${formatNumber(observed[0])}.`
     : `The supplied value extent is ${formatNumber(observed[0])} to ${formatNumber(observed[1])}.`;
-  const svg = canvas(root, dataset.title, `${countLabel(records.length, "ranked item")}. ${domainDescription}`);
   const left = 220;
   const top = 26;
-  const rowHeight = Math.min(58, 360 / Math.max(records.length, 1));
+  const rowHeight = Math.min(58, Math.max(14, 360 / Math.max(records.length, 1)));
+  const plotBottom = top + rowHeight * records.length;
+  const svg = canvas(
+    root,
+    dataset.title,
+    `${countLabel(records.length, "ranked item")}. ${domainDescription}`,
+    Math.max(HEIGHT, plotBottom + 60),
+  );
   const x = observedScale(domain, [left, 875]);
   const zero = x(0);
   svg.setAttribute("data-value-domain", `${domain[0]},${domain[1]}`);
 
-  observedTicks(domain).forEach((tick) => {
+  const ticks = niceTicks(domain, { maxTicks: 5, pixels: Math.abs(x(domain[1]) - x(domain[0])), format: formatNumber });
+  const keptTicks = thinLabels(ticks.map((tick) => ({ position: x(tick), text: formatNumber(tick) })), { minGap: 6 });
+  ticks.forEach((tick, index) => {
     const px = x(tick);
-    svg.append(element("line", { x1: px, x2: px, y1: top, y2: top + rowHeight * records.length, class: "grid-line" }));
-    appendText(svg, px, top + rowHeight * records.length + 25, formatNumber(tick), "axis-label", "middle");
+    svg.append(element("line", { x1: px, x2: px, y1: top, y2: plotBottom, class: "grid-line" }));
+    if (keptTicks.has(index)) appendText(svg, clampedLabelX(px, formatNumber(tick), { anchor: "middle" }), plotBottom + 25, formatNumber(tick), "axis-label", "middle");
   });
 
   records.forEach((record, index) => {
@@ -223,7 +235,7 @@ function renderRank(root, dataset, selectedId) {
     const amount = numericValue(record, valueField);
     const endpoint = x(amount);
     const y = top + index * rowHeight + rowHeight * 0.23;
-    appendText(svg, left - 14, y + rowHeight * 0.29, label(record, dataset), undefined, "end");
+    appendText(svg, left - 14, y + rowHeight * 0.29, truncateToWidth(label(record, dataset), left - 19), undefined, "end");
     const bar = element("rect", {
       x: Math.min(zero, endpoint),
       y,
@@ -235,9 +247,10 @@ function renderRank(root, dataset, selectedId) {
       "aria-label": `${label(record, dataset)}: ${formatNumber(amount)}`,
     });
     svg.append(bar);
+    const valueAnchor = amount < 0 ? "end" : "start";
     appendText(
       svg,
-      endpoint + (amount < 0 ? -9 : 9),
+      clampedLabelX(endpoint + (amount < 0 ? -9 : 9), formatNumber(amount), { anchor: valueAnchor }),
       y + rowHeight * 0.31,
       formatNumber(amount),
       undefined,
@@ -268,17 +281,19 @@ function renderDistribution(root, dataset, selectedId) {
     chartHeight,
   );
 
-  for (const tick of observedTicks(domain)) {
+  const ticks = niceTicks(domain, { maxTicks: 5, pixels: Math.abs(x(domain[1]) - x(domain[0])), format: formatNumber });
+  const keptTicks = thinLabels(ticks.map((tick) => ({ position: x(tick), text: formatNumber(tick) })), { minGap: 6 });
+  ticks.forEach((tick, index) => {
     const px = x(tick);
     svg.append(element("line", { x1: px, x2: px, y1: 28, y2: plotBottom, class: "grid-line" }));
-    appendText(svg, px, plotBottom + 24, formatNumber(tick), "axis-label", "middle");
-  }
+    if (keptTicks.has(index)) appendText(svg, clampedLabelX(px, formatNumber(tick), { anchor: "middle" }), plotBottom + 24, formatNumber(tick), "axis-label", "middle");
+  });
   appendText(svg, 900, plotBottom + 52, "Observed value", "axis-label", "end");
 
   groups.forEach((group, groupIndex) => {
     const cy = 58 + groupIndex * rowHeight;
     const groupRecords = records.filter((record) => groupName(record) === group);
-    appendText(svg, 142, cy + 4, group, undefined, "end");
+    appendText(svg, 142, cy + 4, truncateToWidth(group, 137), undefined, "end");
     svg.append(element("line", { x1: 165, x2: 900, y1: cy, y2: cy, class: "baseline" }));
     const sorted = groupRecords.map((record) => numericValue(record, valueField)).filter(Number.isFinite).sort((a, b) => a - b);
     const middle = Math.floor(sorted.length / 2);
@@ -325,11 +340,20 @@ function renderComposition(root, dataset, selectedId) {
     const y = 52 + seriesIndex * rowPitch;
     const selected = records.filter((record) => String(record[seriesField]) === seriesName);
     const total = selected.reduce((sum, record) => sum + value(record, valueField), 0);
-    appendText(svg, left - 18, y + 34, seriesName, undefined, "end");
+    appendText(svg, left - 18, y + 34, truncateToWidth(seriesName, left - 23), undefined, "end");
     let cursor = left;
-    selected.forEach((record) => {
+    const segments = selected.map((record) => {
       const amount = value(record, valueField);
       const segmentWidth = total > 0 ? width * (amount / total) : 0;
+      const start = cursor;
+      cursor += segmentWidth;
+      return { record, amount, segmentWidth, start, center: start + segmentWidth / 2 };
+    });
+    const keptParts = thinLabels(
+      segments.map(({ record, center }) => ({ position: center, text: String(record[partField]) })),
+      { minGap: 6 },
+    );
+    segments.forEach(({ record, amount, segmentWidth, start, center }, segmentIndex) => {
       const markId = id(record, dataset);
       const part = String(record[partField]);
       const className = seriesClass(parts.indexOf(part));
@@ -339,14 +363,12 @@ function renderComposition(root, dataset, selectedId) {
         "aria-label": `${part}: ${formatNumber(amount)} of ${formatNumber(total)}`,
       };
       if (segmentWidth > 0) {
-        svg.append(element("rect", { x: cursor, y, width: segmentWidth, height: 56, ...attributes }));
-        if (segmentWidth >= 72) appendText(svg, cursor + segmentWidth / 2, y + 34, formatNumber(amount), "inside-label", "middle");
-        appendText(svg, cursor + segmentWidth / 2, y - 10, part, "axis-label", "middle");
+        svg.append(element("rect", { x: start, y, width: segmentWidth, height: 56, ...attributes }));
+        if (segmentWidth >= 72) appendText(svg, center, y + 34, formatNumber(amount), "inside-label", "middle");
       } else {
-        svg.append(element("circle", { cx: cursor, cy: y + 28, r: 4, ...attributes }));
-        appendText(svg, cursor, y - 10, part, "axis-label", "middle");
+        svg.append(element("circle", { cx: start, cy: y + 28, r: 4, ...attributes }));
       }
-      cursor += segmentWidth;
+      if (keptParts.has(segmentIndex)) appendText(svg, clampedLabelX(center, part, { anchor: "middle" }), y - 10, part, "axis-label", "middle");
     });
     appendText(
       svg,
@@ -404,9 +426,11 @@ function renderProfile(root, dataset, selectedId) {
     svg.append(element("line", { x1: x, x2: x, y1: 50, y2: 370, class: "grid-line" }));
     appendText(svg, x, 28, formatNumber(domain[1]), "axis-label", "middle");
     if (domain[0] !== domain[1]) appendText(svg, x, 386, formatNumber(domain[0]), "axis-label", "middle");
-    appendText(svg, x, 416, measure, "axis-label", "middle");
+    const pitch = measures.length > 1 ? (right - left) / (measures.length - 1) : right - left;
+    appendText(svg, x, 416, truncateToWidth(measure, pitch - 8), "axis-label", "middle");
   });
 
+  const entityLabels = [];
   profiles.forEach((profile, recordIndex) => {
     const points = measures.map((measure, index) => {
       const measurement = profileValue(profile, measure);
@@ -443,8 +467,35 @@ function renderProfile(root, dataset, selectedId) {
       }));
     });
     const firstPoint = points.find(Boolean);
-    if (firstPoint) appendText(svg, firstPoint.x - 12, firstPoint.y + 4, profile.entity, recordIndex > 3 ? "muted-label" : undefined, "end");
+    if (firstPoint) {
+      entityLabels.push({
+        entity: profile.entity,
+        x: firstPoint.x,
+        y: firstPoint.y + 4,
+        className: recordIndex > 3 ? "muted-label" : undefined,
+      });
+    }
   });
+
+  const byAxis = new Map();
+  for (const entry of entityLabels) {
+    if (!byAxis.has(entry.x)) byAxis.set(entry.x, []);
+    byAxis.get(entry.x).push(entry);
+  }
+  for (const group of byAxis.values()) {
+    group.sort((a, b) => a.y - b.y);
+    for (let index = 1; index < group.length; index += 1) {
+      group[index].y = Math.max(group[index].y, group[index - 1].y + 14);
+    }
+    const overflow = group.at(-1).y - 378;
+    if (overflow > 0) {
+      const lift = Math.min(overflow, Math.max(0, group[0].y - 54));
+      for (const entry of group) entry.y -= lift;
+    }
+    for (const entry of group) {
+      appendText(svg, entry.x - 12, entry.y, truncateToWidth(entry.entity, entry.x - 17), entry.className, "end");
+    }
+  }
 }
 
 function renderPassageComparison(root, dataset, selectedId) {
@@ -564,16 +615,34 @@ function renderTrend(root, dataset, selectedId) {
   );
   svg.setAttribute("data-value-domain", `${yDomain[0]},${yDomain[1]}`);
 
-  for (const tick of observedTicksWithZero(yDomain)) {
+  for (const tick of niceTicks(yDomain, { maxTicks: 5 })) {
     svg.append(element("line", { x1: 90, x2: 890, y1: y(tick), y2: y(tick), class: "grid-line" }));
-    appendText(svg, 75, y(tick) + 4, formatNumber(tick), "axis-label", "end");
+    appendText(svg, clampedLabelX(75, formatNumber(tick), { anchor: "end" }), y(tick) + 4, formatNumber(tick), "axis-label", "end");
   }
+  const keptDates = thinLabels(dates.map((date, index) => ({ position: x(index), text: String(date) })));
   dates.forEach((date, index) => {
-    if (index % 2 === 0 || dates.length < 7) appendText(svg, x(index), 405, String(date), "axis-label", "middle");
+    if (keptDates.has(index)) appendText(svg, clampedLabelX(x(index), String(date), { anchor: "middle" }), 405, String(date), "axis-label", "middle");
   });
 
+  const seriesRecords = (name) => records
+    .filter((record) => seriesName(record) === name)
+    .sort((a, b) => compareTime(a[xField], b[xField]));
+  // Invisible halos widen each dot's pointer target well beyond its 5px paint.
+  // They render before every painted element so visible marks win the hit test.
+  series.forEach((name) => {
+    seriesRecords(name).forEach((record) => {
+      svg.append(element("circle", {
+        cx: x(dateIndex.get(String(record[xField]))),
+        cy: y(numericValue(record, yField)),
+        r: 12,
+        class: "mark-hit",
+        "data-mark-hit": id(record, dataset),
+      }));
+    });
+  });
+  const endLabels = [];
   series.forEach((name, seriesIndex) => {
-    const lineRecords = records.filter((record) => seriesName(record) === name).sort((a, b) => compareTime(a[xField], b[xField]));
+    const lineRecords = seriesRecords(name);
     const points = lineRecords.map((record) => `${x(dateIndex.get(String(record[xField])))},${y(numericValue(record, yField))}`).join(" ");
     svg.append(element("polyline", { points, fill: "none", class: `${seriesClass(seriesIndex)} trend-line`, "aria-label": `${name} observed trend` }));
     lineRecords.forEach((record) => {
@@ -588,8 +657,18 @@ function renderTrend(root, dataset, selectedId) {
       }));
     });
     const last = lineRecords.at(-1);
-    appendText(svg, 901, y(numericValue(last, yField)) + 4, name, undefined);
+    endLabels.push({ name, desiredY: y(numericValue(last, yField)) + 4 });
   });
+  endLabels.sort((left, right) => left.desiredY - right.desiredY);
+  let previousY = Number.NEGATIVE_INFINITY;
+  for (const entry of endLabels) {
+    entry.y = Math.max(entry.desiredY, previousY + 14);
+    previousY = entry.y;
+  }
+  const overflow = endLabels.length ? endLabels.at(-1).y - 434 : 0;
+  for (const entry of endLabels) {
+    appendText(svg, 901, overflow > 0 ? entry.y - overflow : entry.y, truncateToWidth(entry.name, 54), undefined);
+  }
 }
 
 function renderTimeline(root, dataset, selectedId) {
@@ -600,15 +679,20 @@ function renderTimeline(root, dataset, selectedId) {
   const starts = records.map((record) => new Date(record[startField]).valueOf());
   const ends = records.map((record) => new Date(record[endField] ?? record[startField]).valueOf());
   const x = linear([Math.min(...starts), Math.max(...ends)], [220, 900]);
-  const svg = canvas(root, dataset.title, `${records.length} intervals aligned on one time axis.`);
-  const rowHeight = Math.min(46, 330 / records.length);
+  const rowHeight = Math.min(46, Math.max(24, 330 / records.length));
+  const svg = canvas(
+    root,
+    dataset.title,
+    `${records.length} intervals aligned on one time axis.`,
+    Math.max(HEIGHT, 72 + records.length * rowHeight),
+  );
 
   records.forEach((record, index) => {
     const y = 42 + index * rowHeight;
     const markId = id(record, dataset);
     const start = new Date(record[startField]).valueOf();
     const end = new Date(record[endField] ?? record[startField]).valueOf();
-    appendText(svg, 205, y + 8, label(record, dataset), undefined, "end");
+    appendText(svg, 205, y + 8, truncateToWidth(label(record, dataset), 200), undefined, "end");
     svg.append(element("line", { x1: 220, x2: 900, y1: y + 4, y2: y + 4, class: "grid-line" }));
     const width = Math.max(9, x(end) - x(start));
     svg.append(element("rect", {
@@ -621,7 +705,7 @@ function renderTimeline(root, dataset, selectedId) {
       "data-mark-id": markId,
       "aria-label": `${label(record, dataset)}, ${record[startField]} to ${record[endField] ?? record[startField]}`,
     }));
-    appendText(svg, 915, y + 8, record[groupField], "axis-label");
+    appendText(svg, 955, y + 8, truncateToWidth(record[groupField] ?? "", 50), "axis-label", "end");
   });
 }
 
@@ -655,7 +739,7 @@ function renderSequence(root, dataset, selectedId) {
       "aria-label": `Step ${index + 1}: ${label(record, dataset)}`,
     }));
     appendText(svg, x + 14, y + 28, `Step ${index + 1}`, "axis-label");
-    appendText(svg, x + 14, y + 52, label(record, dataset));
+    appendText(svg, x + 14, y + 52, truncateToWidth(label(record, dataset), tileWidth - 28));
     if (column < columns - 1 && index < records.length - 1) {
       svg.append(element("line", { x1: x + tileWidth + 7, x2: x + tileWidth + 18, y1: y + tileHeight / 2, y2: y + tileHeight / 2, class: "sequence-arrow" }));
     }
@@ -678,15 +762,17 @@ function renderRelationship(root, dataset, selectedId) {
   svg.setAttribute("data-x-domain", `${xDomain[0]},${xDomain[1]}`);
   svg.setAttribute("data-y-domain", `${yDomain[0]},${yDomain[1]}`);
 
-  for (const tick of observedTicksWithZero(xDomain)) {
+  const xTicks = niceTicks(xDomain, { maxTicks: 5, pixels: Math.abs(x(xDomain[1]) - x(xDomain[0])), format: formatNumber });
+  const keptXTicks = thinLabels(xTicks.map((tick) => ({ position: x(tick), text: formatNumber(tick) })), { minGap: 6 });
+  xTicks.forEach((tick, index) => {
     const px = x(tick);
     svg.append(element("line", { x1: px, x2: px, y1: 40, y2: 370, class: "grid-line" }));
-    appendText(svg, px, 400, formatNumber(tick), "axis-label", "middle");
-  }
-  for (const tick of observedTicksWithZero(yDomain)) {
+    if (keptXTicks.has(index)) appendText(svg, clampedLabelX(px, formatNumber(tick), { anchor: "middle" }), 400, formatNumber(tick), "axis-label", "middle");
+  });
+  for (const tick of niceTicks(yDomain, { maxTicks: 5 })) {
     const py = y(tick);
     svg.append(element("line", { x1: 100, x2: 890, y1: py, y2: py, class: "grid-line" }));
-    appendText(svg, 84, py + 4, formatNumber(tick), "axis-label", "end");
+    appendText(svg, clampedLabelX(84, formatNumber(tick), { anchor: "end" }), py + 4, formatNumber(tick), "axis-label", "end");
   }
   appendText(svg, 890, 430, xField, "axis-label", "end");
   appendText(svg, 100, 24, yField, "axis-label");
@@ -704,9 +790,20 @@ function renderRelationship(root, dataset, selectedId) {
       "aria-label": `${label(record, dataset)}: ${xField} ${formatNumber(xValue)}, ${yField} ${formatNumber(yValue)}`,
     }));
     if (index === 0 || index === records.length - 1 || isSelected(markId, selectedId)) {
-      appendText(svg, x(xValue) + 12, y(yValue) - 10, label(record, dataset), undefined);
+      const pointLabel = truncateToWidth(label(record, dataset), 200);
+      appendText(svg, clampedLabelX(x(xValue) + 12, pointLabel), y(yValue) - 10, pointLabel, undefined);
     }
   });
+}
+
+function orderedCategories(declared, observed) {
+  if (!Array.isArray(declared)) return observed;
+  const remaining = new Set(observed);
+  const ordered = [];
+  for (const category of declared) {
+    if (remaining.delete(String(category))) ordered.push(String(category));
+  }
+  return [...ordered, ...observed.filter((category) => remaining.has(category))];
 }
 
 function renderMatrix(root, dataset, selectedId) {
@@ -714,20 +811,34 @@ function renderMatrix(root, dataset, selectedId) {
   const rowField = role(dataset, "row", "row");
   const columnField = role(dataset, "column", "column");
   const valueField = role(dataset, "value", "value");
-  const rows = [...new Set(records.map((record) => String(record[rowField])))];
-  const columns = [...new Set(records.map((record) => String(record[columnField])))];
+  const rows = orderedCategories(dataset.payload?.rows, [...new Set(records.map((record) => String(record[rowField])))]);
+  const columns = orderedCategories(dataset.payload?.columns, [...new Set(records.map((record) => String(record[columnField])))]);
+  const recordByCell = new Map(records.map((record) => [
+    `${String(record[rowField])}\u0000${String(record[columnField])}`,
+    record,
+  ]));
   const max = Math.max(...records.map((record) => value(record, valueField)), 1);
   const svg = canvas(root, dataset.title, `${rows.length} by ${columns.length} evidence matrix with directly labeled values.`);
   const left = 190;
   const top = 70;
   const cellWidth = Math.min(120, 700 / columns.length);
   const cellHeight = Math.min(62, 310 / rows.length);
+  const headerText = columns.map((column) => truncateToWidth(column, Math.max(cellWidth, 120)));
+  const rowText = rows.map((row) => truncateToWidth(row, left - 20));
+  const columnCenter = (index) => left + index * cellWidth + cellWidth / 2;
+  const rowCenter = (index) => top + index * cellHeight + cellHeight / 2;
 
-  columns.forEach((column, index) => appendText(svg, left + index * cellWidth + cellWidth / 2, 48, column, "axis-label", "middle"));
+  const keptHeaders = thinLabels(headerText.map((text, index) => ({ position: columnCenter(index), text })), { minGap: 4 });
+  headerText.forEach((text, index) => {
+    if (keptHeaders.has(index) && text) appendText(svg, clampedLabelX(columnCenter(index), text, { anchor: "middle" }), 48, text, "axis-label", "middle");
+  });
+  const keptRows = cellHeight >= 14
+    ? new Set(rows.map((_, index) => index))
+    : thinLabels(rowText.map((_, index) => ({ position: rowCenter(index), size: 12 })), { minGap: 2 });
   rows.forEach((row, rowIndex) => {
-    appendText(svg, left - 14, top + rowIndex * cellHeight + cellHeight / 2 + 4, row, undefined, "end");
+    if (keptRows.has(rowIndex) && rowText[rowIndex]) appendText(svg, left - 14, rowCenter(rowIndex) + 4, rowText[rowIndex], undefined, "end");
     columns.forEach((column, columnIndex) => {
-      const record = records.find((candidate) => candidate[rowField] === row && candidate[columnField] === column);
+      const record = recordByCell.get(`${row}\u0000${column}`);
       if (!record) return;
       const markId = id(record, dataset);
       const level = Math.max(1, Math.ceil((value(record, valueField) / max) * 5));
@@ -740,7 +851,10 @@ function renderMatrix(root, dataset, selectedId) {
         class: markClass(markId, selectedId, `matrix-cell level-${level}`),
         "data-mark-id": markId,
       }));
-      appendText(svg, left + columnIndex * cellWidth + cellWidth / 2, top + rowIndex * cellHeight + cellHeight / 2 + 4, value(record, valueField), "matrix-value", "middle");
+      const cellText = String(value(record, valueField));
+      if (cellHeight >= 14 && estimateTextWidth(cellText) + 4 <= cellWidth) {
+        appendText(svg, columnCenter(columnIndex), rowCenter(rowIndex) + 4, cellText, "matrix-value", "middle");
+      }
     });
   });
 }
@@ -754,8 +868,14 @@ function renderHierarchy(root, dataset, selectedId) {
     .id((record) => String(record[nodeIdField] ?? record.id))
     .parentId((record) => record[parentField]);
   const hierarchy = stratify(dataset.records);
-  d3.tree().size([360, 690])(hierarchy);
-  const svg = canvas(root, dataset.title, `A tree of ${dataset.records.length} nested collection sections.`);
+  const treeHeight = Math.max(360, hierarchy.leaves().length * 22);
+  d3.tree().size([treeHeight, 690])(hierarchy);
+  const svg = canvas(
+    root,
+    dataset.title,
+    `A tree of ${dataset.records.length} nested collection sections.`,
+    Math.max(HEIGHT, treeHeight + 84),
+  );
   const group = element("g", { transform: "translate(185 42)" });
   svg.append(group);
 
@@ -775,7 +895,7 @@ function renderHierarchy(root, dataset, selectedId) {
       class: markClass(markId, selectedId, node.depth === 0 ? "mark-secondary" : "mark-primary"),
       "data-mark-id": markId,
     }));
-    appendText(group, node.y + 12, node.x + 4, label(record, dataset), node.depth > 1 ? "muted-label" : undefined);
+    appendText(group, node.y + 12, node.x + 4, truncateToWidth(label(record, dataset), 943 - (185 + node.y + 12)), node.depth > 1 ? "muted-label" : undefined);
   });
 }
 
@@ -817,6 +937,27 @@ function renderNetwork(root, dataset, selectedId) {
     }));
     svg.append(relationship);
   });
+  const placements = records.map((record) => {
+    const position = positions.get(id(record, dataset));
+    const onLeft = position.x < 480;
+    const x = position.x + (onLeft ? -20 : 20);
+    return {
+      onLeft,
+      x,
+      y: position.y + 4,
+      anchor: onLeft ? "end" : "start",
+      text: truncateToWidth(label(record, dataset), onLeft ? x - 5 : 955 - x),
+      keep: isSelected(id(record, dataset), selectedId),
+    };
+  });
+  const shown = new Set();
+  for (const side of [true, false]) {
+    const column = placements.flatMap((placement, index) => (placement.onLeft === side ? [{ placement, index }] : []));
+    const kept = thinLabels(column.map(({ placement }) => ({ position: placement.y, size: 12, keep: placement.keep })), { minGap: 2 });
+    column.forEach(({ index }, columnIndex) => {
+      if (kept.has(columnIndex)) shown.add(index);
+    });
+  }
   records.forEach((record, index) => {
     const position = positions.get(id(record, dataset));
     const nodeId = id(record, dataset);
@@ -827,31 +968,40 @@ function renderNetwork(root, dataset, selectedId) {
       class: seriesClass(index),
       "data-node-id": nodeId,
     }));
-    const anchor = position.x < 480 ? "end" : "start";
-    appendText(svg, position.x + (position.x < 480 ? -20 : 20), position.y + 4, label(record, dataset), undefined, anchor);
+    const placement = placements[index];
+    if (shown.has(index) && placement.text) appendText(svg, placement.x, placement.y, placement.text, undefined, placement.anchor);
   });
 }
+
+// A flow node occupies a 36-unit card plus two label lines ending 72 units below
+// its top, so stacking any tighter puts one node's balance line inside the next card.
+const FLOW_NODE_PITCH = 72;
 
 function stagePositions(records, dataset) {
   const stageField = role(dataset, "stage", "stage");
   const stages = [...new Set(records.map((record) => value(record, stageField, 0)))].sort((a, b) => a - b);
-  const map = new Map();
+  const positions = new Map();
+  let bottom = 80;
   stages.forEach((stage, stageIndex) => {
     const nodes = records.filter((record) => value(record, stageField) === stage);
+    const pitch = Math.max(FLOW_NODE_PITCH, 290 / Math.max(nodes.length, 1));
     nodes.forEach((record, nodeIndex) => {
-      map.set(id(record, dataset), {
-        x: 85 + stageIndex * (790 / Math.max(stages.length - 1, 1)),
-        y: 80 + nodeIndex * (290 / Math.max(nodes.length, 1)),
+      const y = 80 + nodeIndex * pitch;
+      positions.set(id(record, dataset), {
+        x: stages.length === 1 ? WIDTH / 2 : 85 + stageIndex * (790 / (stages.length - 1)),
+        y,
       });
+      bottom = Math.max(bottom, y);
     });
   });
-  return map;
+  return { positions, bottom };
 }
 
 function renderFlow(root, dataset, selectedId) {
-  const positions = stagePositions(dataset.records, dataset);
+  const { positions, bottom } = stagePositions(dataset.records, dataset);
   const max = Math.max(...dataset.links.map((link) => value(link, "items", value(link, "value", 1))), 1);
   const stages = new Set(dataset.records.map((record) => value(record, role(dataset, "stage", "stage"), 0)));
+  const nodeLabelWidth = stages.size > 1 ? Math.max(108, 790 / (stages.size - 1) - 12) : 400;
   const intermediateGaps = dataset.records.filter((record) => (
     value(record, "inflow", 0) > 0
     && value(record, "outflow", 0) > 0
@@ -861,6 +1011,7 @@ function renderFlow(root, dataset, selectedId) {
     root,
     dataset.title,
     `${countLabel(dataset.links.length, "evidence-bearing directed flow")} cross ${countLabel(stages.size, "derived topological stage")}. Node labels report supplied inflow, outflow, and any intermediate conservation gap.`,
+    Math.max(HEIGHT, bottom + 110),
   );
   svg.setAttribute("data-stage-derivation", "topological-depth");
   svg.setAttribute("data-conservation-gaps", String(intermediateGaps.length));
@@ -899,8 +1050,10 @@ function renderFlow(root, dataset, selectedId) {
       "data-balance-gap": balanceGap,
       "data-node-id": id(record, dataset),
     }));
-    appendText(svg, position.x, position.y + 55, label(record, dataset), undefined, "middle");
-    appendText(svg, position.x, position.y + 72, balanceLabel, "axis-label", "middle");
+    const nodeLabel = truncateToWidth(label(record, dataset), nodeLabelWidth);
+    const nodeBalance = truncateToWidth(balanceLabel, nodeLabelWidth);
+    appendText(svg, clampedLabelX(position.x, nodeLabel, { anchor: "middle" }), position.y + 55, nodeLabel, undefined, "middle");
+    appendText(svg, clampedLabelX(position.x, nodeBalance, { anchor: "middle" }), position.y + 72, nodeBalance, "axis-label", "middle");
   });
 }
 
@@ -979,7 +1132,7 @@ function renderMechanism(root, dataset, selectedId, { selectedNodeId = null } = 
   svg.append(defs);
   layers.forEach((layer, index) => {
     const x = layers.length === 1 ? WIDTH / 2 : 112 + index * horizontalGap;
-    appendText(svg, x, 34, layer, "mechanism-layer-label", "middle");
+    appendText(svg, x, 34, truncateToWidth(layer, horizontalGap ? horizontalGap - 12 : 400, 11), "mechanism-layer-label", "middle");
     if (!wrappedGrid) {
       svg.append(element("line", {
         x1: x,
@@ -1195,7 +1348,8 @@ async function renderRegionMap(root, dataset, selectedId) {
       }));
       if (record) {
         const centroid = path.centroid(feature);
-        appendText(svg, centroid[0], centroid[1] + 4, record[regionLabelField] ?? label(record, dataset), "map-label", "middle");
+        const regionText = truncateToWidth(record[regionLabelField] ?? label(record, dataset), 70);
+        appendText(svg, clampedLabelX(centroid[0], regionText, { anchor: "middle" }), centroid[1] + 4, regionText, "map-label", "middle");
       }
     });
     const legendX = 420;
@@ -1277,12 +1431,16 @@ function renderField(root, dataset, selectedId) {
   const valueField = role(dataset, "value", "value");
   const xs = [...new Set(records.map((record) => numericValue(record, xField)))].sort((a, b) => a - b);
   const ys = [...new Set(records.map((record) => numericValue(record, yField)))].sort((a, b) => a - b);
+  const xIndex = new Map(xs.map((coordinate, index) => [coordinate, index]));
+  const yIndex = new Map(ys.map((coordinate, index) => [coordinate, index]));
   const values = records.map((record) => numericValue(record, valueField));
   const valueDomain = observedDomain(values);
   const left = 155;
   const top = 38;
   const cellWidth = 720 / xs.length;
   const cellHeight = 330 / ys.length;
+  const cellInsetX = Math.min(1, cellWidth * 0.1);
+  const cellInsetY = Math.min(1, cellHeight * 0.1);
   const svg = canvas(
     root,
     dataset.title,
@@ -1293,27 +1451,41 @@ function renderField(root, dataset, selectedId) {
     const xValue = numericValue(record, xField);
     const yValue = numericValue(record, yField);
     const measuredValue = numericValue(record, valueField);
-    const column = xs.indexOf(xValue);
-    const row = ys.indexOf(yValue);
+    const column = xIndex.get(xValue);
+    const row = yIndex.get(yValue);
     const normalized = valueDomain[0] === valueDomain[1]
       ? 0.5
       : (measuredValue - valueDomain[0]) / (valueDomain[1] - valueDomain[0]);
     const level = Math.max(1, Math.min(5, Math.floor(normalized * 5) + 1));
     svg.append(element("rect", {
-      x: left + column * cellWidth + 1,
-      y: top + row * cellHeight + 1,
-      width: cellWidth - 2,
-      height: cellHeight - 2,
+      x: left + column * cellWidth + cellInsetX,
+      y: top + row * cellHeight + cellInsetY,
+      width: Math.max(0.01, cellWidth - 2 * cellInsetX),
+      height: Math.max(0.01, cellHeight - 2 * cellInsetY),
       class: markClass(markId, selectedId, `field-cell level-${level}`),
       "data-mark-id": markId,
       "aria-label": `${label(record, dataset)}: x ${formatNumber(xValue)}, y ${formatNumber(yValue)}, value ${formatNumber(measuredValue)}`,
     }));
   });
-  xs.forEach((coordinate, index) => appendText(svg, left + index * cellWidth + cellWidth / 2, 395, formatNumber(coordinate), "axis-label", "middle"));
-  ys.forEach((coordinate, index) => appendText(svg, left - 14, top + index * cellHeight + cellHeight / 2 + 4, formatNumber(coordinate), undefined, "end"));
-  appendText(svg, 875, 424, xField, "axis-label", "end");
-  appendText(svg, 104, 25, yField, "axis-label", "middle");
-  appendText(svg, 155, 424, `Value ${formatNumber(valueDomain[0])} to ${formatNumber(valueDomain[1])}`, "axis-label");
+  const sampledCoordinates = (coordinates, positionAt, entryExtent, maximum = 16) => {
+    const stride = Math.max(1, Math.ceil(coordinates.length / maximum));
+    const sampled = coordinates.flatMap((coordinate, index) => (
+      index % stride === 0 || index === coordinates.length - 1 ? [{ coordinate, index }] : []
+    ));
+    const kept = thinLabels(
+      sampled.map(({ coordinate, index }) => ({ position: positionAt(index), text: formatNumber(coordinate), ...entryExtent })),
+      { minGap: 6 },
+    );
+    return sampled.filter((_, sampledIndex) => kept.has(sampledIndex));
+  };
+  sampledCoordinates(xs, (index) => left + index * cellWidth + cellWidth / 2, {})
+    .forEach(({ coordinate, index }) => appendText(svg, clampedLabelX(left + index * cellWidth + cellWidth / 2, formatNumber(coordinate), { anchor: "middle" }), 395, formatNumber(coordinate), "axis-label", "middle"));
+  sampledCoordinates(ys, (index) => top + index * cellHeight + cellHeight / 2, { size: 12 })
+    .forEach(({ coordinate, index }) => appendText(svg, left - 14, top + index * cellHeight + cellHeight / 2 + 4, truncateToWidth(formatNumber(coordinate), left - 19), undefined, "end"));
+  const xCaption = truncateToWidth(xField, 300);
+  appendText(svg, 875, 424, xCaption, "axis-label", "end");
+  appendText(svg, 104, 25, truncateToWidth(yField, 190), "axis-label", "middle");
+  appendText(svg, 155, 424, truncateToWidth(`Value ${formatNumber(valueDomain[0])} to ${formatNumber(valueDomain[1])}`, 710 - estimateTextWidth(xCaption)), "axis-label");
 }
 
 function safePreviewUrl(preview) {
@@ -1424,8 +1596,9 @@ function renderCollectionAtlas(root, dataset, selectedId) {
   svg.setAttribute("data-layout", "faceted-strips");
   let facetTop = 26;
   facets.forEach((facet, facetIndex) => {
-    appendText(svg, 45, facetTop, facet.category, "atlas-cluster-label");
-    appendText(svg, 915, facetTop, countLabel(facet.records.length, "item"), "axis-label", "end");
+    const facetCount = countLabel(facet.records.length, "item");
+    appendText(svg, 45, facetTop, truncateToWidth(facet.category, 862 - estimateTextWidth(facetCount), 15), "atlas-cluster-label");
+    appendText(svg, 915, facetTop, facetCount, "axis-label", "end");
     facet.records.forEach((record, recordIndex) => {
       const column = recordIndex % columns;
       const row = Math.floor(recordIndex / columns);
@@ -1444,8 +1617,8 @@ function renderCollectionAtlas(root, dataset, selectedId) {
         "data-mark-id": markId,
         "aria-label": `${label(record, dataset)}; ${facet.category}; ${mediaType}`,
       }));
-      const itemLabel = label(record, dataset);
-      appendText(svg, x + tileWidth / 2, y + tileHeight + 14, itemLabel.length > 18 ? `${itemLabel.slice(0, 17)}…` : itemLabel, "atlas-item-label", "middle");
+      const itemLabel = truncateToWidth(label(record, dataset), tileWidth + columnGap - 4, 11);
+      appendText(svg, x + tileWidth / 2, y + tileHeight + 14, itemLabel, "atlas-item-label", "middle");
     });
     facetTop += 34 + facet.rows * (tileHeight + rowGap);
   });
@@ -1471,6 +1644,27 @@ const RENDERERS = Object.freeze({
   field: renderField,
   "annotated-specimen": renderAnnotatedSpecimen,
   "collection-atlas": renderCollectionAtlas,
+});
+
+const INCUMBENT_RENDERERS = Object.freeze({
+  "rank/bar-list": renderRank,
+  "distribution/strip": renderDistribution,
+  "composition/hundred-bar": renderComposition,
+  "profile/parallel": renderProfile,
+  "passage-comparison/parallel-text": renderPassageComparison,
+  "trend/line": renderTrend,
+  "timeline/interval": renderTimeline,
+  "sequence/step-strip": renderSequence,
+  "relationship/scatter": renderRelationship,
+  "matrix/heatmap": renderMatrix,
+  "hierarchy/tidy": renderHierarchy,
+  "network/local": renderNetwork,
+  "flow/sankey": renderFlow,
+  "mechanism/flowchart": renderMechanism,
+  "region-map/choropleth": renderRegionMap,
+  "point-map/exact-points": renderPointMap,
+  "field/sample-raster": renderField,
+  "collection-atlas/faceted-atlas": renderCollectionAtlas,
 });
 
 export const RENDERER_IDS = Object.freeze(Object.keys(RENDERERS));
@@ -1509,10 +1703,49 @@ function decorateSelectableMarks(root, {
     mark.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
-      if (typeof onSelect === "function") onSelect(markId, event);
+      if (typeof onSelect === "function") onSelect({ kind: "mark", markId }, event);
       else mark.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: globalThis.window }));
     });
-    if (typeof onSelect === "function") mark.addEventListener("click", () => onSelect(markId));
+    if (typeof onSelect === "function") mark.addEventListener("click", () => onSelect({ kind: "mark", markId }));
+  }
+  for (const halo of root.querySelectorAll("[data-mark-hit]")) {
+    const markId = String(halo.getAttribute("data-mark-hit") ?? "");
+    if (!markId || (allowed && !allowed.has(markId))) {
+      halo.remove();
+      continue;
+    }
+    if (typeof onSelect === "function") halo.addEventListener("click", () => onSelect({ kind: "mark", markId }));
+  }
+}
+
+function decorateSelectableTargets(root, {
+  dataset,
+  selectedTargetId = null,
+  onSelect,
+} = {}) {
+  const allowed = new Set(Array.isArray(dataset.selectableTargetIds) ? dataset.selectableTargetIds.map(String) : []);
+  for (const mark of root.querySelectorAll("[data-target-id]")) {
+    const targetId = String(mark.getAttribute("data-target-id") ?? "");
+    if (!targetId || !allowed.has(targetId)) {
+      mark.removeAttribute("data-target-id");
+      mark.removeAttribute("tabindex");
+      mark.removeAttribute("role");
+      mark.removeAttribute("aria-pressed");
+      continue;
+    }
+    const target = dataset.targetById?.[targetId];
+    const selected = targetId === String(selectedTargetId ?? "");
+    mark.setAttribute("tabindex", "-1");
+    mark.setAttribute("role", "button");
+    mark.setAttribute("aria-pressed", String(selected));
+    if (!mark.getAttribute("aria-label")) mark.setAttribute("aria-label", target?.label ?? targetId);
+    const select = () => onSelect?.({ kind: "target", targetId });
+    mark.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      select();
+    });
+    mark.addEventListener("click", select);
   }
 }
 
@@ -1537,11 +1770,9 @@ function decorateSelectableNodes(root, {
     if (relatedMarkIds.length > MAX_NODE_SELECTION_MARKS) {
       node.removeAttribute("data-node-id");
       node.setAttribute("data-inspection-node-id", nodeId);
-      node.setAttribute("tabindex", "-1");
-      node.setAttribute("role", "button");
       node.setAttribute(
         "aria-label",
-        `${inspectionLabel(inspectionIndex, { kind: "node", nodeId }) ?? nodeId}, inspect context only`,
+        `${inspectionLabel(inspectionIndex, { kind: "node", nodeId }) ?? nodeId}, too many connections to select`,
       );
       continue;
     }
@@ -1570,20 +1801,21 @@ function decorateSelectableNodes(root, {
 }
 
 function decorateRovingTargets(root) {
-  const targets = [
+  const targets = [...new Set([
     ...root.querySelectorAll("[data-mark-id]"),
+    ...root.querySelectorAll("[data-target-id]"),
     ...root.querySelectorAll("[data-node-id]"),
-    ...root.querySelectorAll("[data-inspection-node-id]"),
-  ];
+  ])];
   if (targets.length === 0) return;
   let activeIndex = Math.max(0, targets.findIndex((target) => target.getAttribute("aria-pressed") === "true"));
 
   function activate(index, moveFocus = false) {
+    const priorTarget = targets[activeIndex];
     activeIndex = (index + targets.length) % targets.length;
-    targets.forEach((target, targetIndex) => {
-      target.setAttribute("tabindex", targetIndex === activeIndex ? "0" : "-1");
-    });
-    if (moveFocus) targets[activeIndex].focus();
+    const activeTarget = targets[activeIndex];
+    if (priorTarget !== activeTarget) priorTarget?.setAttribute("tabindex", "-1");
+    activeTarget.setAttribute("tabindex", "0");
+    if (moveFocus) activeTarget.focus();
   }
 
   targets.forEach((target, index) => {
@@ -1606,17 +1838,35 @@ export async function renderFamily({
   selectedIds = selectedId === null ? [] : [selectedId],
   selectableMarkIds,
   selectedNodeId = null,
+  selectedTargetId = null,
   onSelect,
+  onClear,
+  loadTargetMembers,
 }) {
   if (!(root instanceof HTMLElement)) throw new TypeError("renderer root must be an HTMLElement");
-  const renderer = RENDERERS[dataset?.familyId];
-  if (!renderer) throw new Error(`No renderer registered for ${String(dataset?.familyId)}`);
+  const catalog = dataset?.catalog;
+  const governedReceipt = catalog ? allowlistedCatalogReceipt(catalog) : null;
+  if (catalog && !governedReceipt) throw new Error(`No renderer receipt is allowlisted for ${String(dataset?.familyId)}/${String(dataset?.memberId)}`);
+  const formKey = `${dataset?.familyId}/${dataset?.memberId ?? catalog?.member}`;
+  const renderer = catalog ? rendererForCatalogReceipt(catalog) : RENDERERS[dataset?.familyId];
+  if (!renderer) throw new Error(`No renderer registered for ${formKey}`);
   const activeSelectedIds = Array.isArray(selectedIds) ? selectedIds : [selectedIds];
   const activeSelectableMarkIds = Array.isArray(selectableMarkIds)
     ? selectableMarkIds
     : dataset.selectableMarkIds;
   const rendererSelection = activeSelectedIds.length > 0 ? activeSelectedIds : selectedId;
-  await renderer(root, dataset, rendererSelection, { selectedNodeId });
+  if (catalog) {
+    await renderCatalogForm({
+      root,
+      dataset,
+      selectedIds: activeSelectedIds,
+      selectedTargetId,
+      selectedNodeId,
+      renderLegacy: INCUMBENT_RENDERERS[formKey] ?? null,
+    });
+  } else {
+    await renderer(root, dataset, rendererSelection, { selectedNodeId });
+  }
   const inspectionIndex = buildVisualizationInspectionIndex(dataset, {
     selectableMarkIds: activeSelectableMarkIds,
   });
@@ -1626,6 +1876,7 @@ export async function renderFamily({
     selectableMarkIds: activeSelectableMarkIds,
     onSelect,
   });
+  decorateSelectableTargets(root, { dataset, selectedTargetId, onSelect });
   decorateSelectableNodes(root, {
     dataset,
     inspectionIndex,
@@ -1634,12 +1885,39 @@ export async function renderFamily({
     onSelect,
   });
   decorateRovingTargets(root);
-  appendVisualizationInspector({
+  const priorPageListener = pageListenerByRoot.get(root);
+  if (priorPageListener && typeof root.removeEventListener === "function") {
+    root.removeEventListener("attend-form-page", priorPageListener);
+  }
+  const decoratePage = () => {
+    decorateSelectableMarks(root, {
+      inspectionIndex,
+      selectedIds: activeSelectedIds,
+      selectableMarkIds: activeSelectableMarkIds,
+      onSelect,
+    });
+    decorateSelectableTargets(root, { dataset, selectedTargetId, onSelect });
+    decorateSelectableNodes(root, {
+      dataset,
+      inspectionIndex,
+      selectedNodeId,
+      selectableMarkIds: activeSelectableMarkIds,
+      onSelect,
+    });
+    decorateRovingTargets(root);
+  };
+  root.addEventListener("attend-form-page", decoratePage);
+  pageListenerByRoot.set(root, decoratePage);
+  appendVisualizationDataList({
     root,
     dataset,
     index: inspectionIndex,
     selectedMarkIds: activeSelectedIds,
     selectedNodeId,
+    selectedTargetId,
+    onSelect,
+    onClear,
+    loadTargetMembers,
   });
   const renderedMarkIds = [...new Set(
     [...root.querySelectorAll("[data-mark-id]")]
@@ -1651,6 +1929,7 @@ export async function renderFamily({
     markCount: renderedMarkIds.length,
     evidenceCount: evidenceCount(dataset),
     selectableMarkIds: renderedMarkIds,
+    selectableTargetIds: [...root.querySelectorAll("[data-target-id]")].map((target) => target.getAttribute("data-target-id")),
     selectableNodeIds: [...root.querySelectorAll("[data-node-id]")].map((node) => node.getAttribute("data-node-id")),
   };
 }

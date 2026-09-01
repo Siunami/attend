@@ -1,7 +1,9 @@
 import {
-  catalogReceiptForFamily,
-  executableMemberIdForFamily,
+  catalogReceiptForMember,
 } from "./package-model.js";
+import { GENERATED_FORM_RUNTIME } from "./form-runtime-generated.js";
+
+const generatedFormByKey = new Map(GENERATED_FORM_RUNTIME.forms.map((form) => [form.key, form]));
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -175,23 +177,103 @@ async function sourceForCompiler(source) {
   });
 }
 
+export function formFixtureDataset(familyId, memberId, familySample = {}) {
+  const form = generatedFormByKey.get(`${familyId}/${memberId}`);
+  if (!form?.fixture || form.fixture.familyId !== familyId || form.fixture.memberId !== memberId) {
+    throw new TypeError(`No generated browser fixture for ${String(familyId)}/${String(memberId)}`);
+  }
+  const memberName = String(memberId).replaceAll("-", " ");
+  return {
+    kind: "attend-generated-form-fixture",
+    fixtureId: form.fixture.id,
+    familyId,
+    memberId,
+    adapter: form.fixture.adapter,
+    roleMapping: form.fixture.roleMapping,
+    records: form.fixture.records,
+    mediaType: form.fixture.adapter === "local-image-set-v1" ? "image" : "structured",
+    title: familySample.title ? `${familySample.title} · ${memberName}` : `${familyId} · ${memberName}`,
+    question: familySample.question ?? `How does the ${memberName} form answer this question?`,
+  };
+}
+
+function generatedFixtureMedia(dataset, record) {
+  if (dataset.adapter !== "local-image-set-v1") return undefined;
+  return {
+    type: "image",
+    mimeType: "image/jpeg",
+    width: record.width,
+    height: record.height,
+    preview: {
+      kind: "image",
+      src: record.previewRoute,
+      aspectRatio: Number(record.width) / Number(record.height),
+    },
+  };
+}
+
+async function generatedFixtureCompilerParts(dataset) {
+  const sourceId = "generated_form_fixture";
+  const displayPath = `fixtures/${dataset.fixtureId}.json`;
+  const identity = canonicalJson({
+    fixtureId: dataset.fixtureId,
+    adapter: dataset.adapter,
+    roleMapping: dataset.roleMapping,
+    records: dataset.records,
+  });
+  const source = {
+    id: sourceId,
+    displayPath,
+    sha256: await sha256Hex(identity),
+    kind: "generated-form-fixture",
+    byteLength: new TextEncoder().encode(identity).byteLength,
+    title: dataset.title,
+    mediaType: dataset.mediaType,
+    ...(dataset.mediaType === "image" ? { mimeType: "image/jpeg" } : {}),
+  };
+  const records = dataset.records.map((record, index) => {
+    const id = `fixture_record_${String(index + 1).padStart(5, "0")}`;
+    return {
+      id,
+      sourceId,
+      fields: { ...record },
+      evidenceRefs: [{
+        sourceId,
+        recordId: id,
+        locator: { kind: "row", path: displayPath, row: index + 1 },
+        quote: canonicalJson(record),
+      }],
+      ...(generatedFixtureMedia(dataset, record) ? { media: generatedFixtureMedia(dataset, record) } : {}),
+    };
+  });
+  return { source, records };
+}
+
 /**
  * Compile-only adapter for the gallery's synthetic source fixtures.
  * Production source adapters hash actual source bytes before producing the same bundle shape.
  */
-export async function toCompilerRequest(dataset, manifest, { availableWidth = 1_200 } = {}) {
+export async function toCompilerRequest(dataset, manifest, { availableWidth = 1_200, memberId } = {}) {
   if (!dataset || dataset.familyId !== manifest?.id) throw new TypeError("dataset and manifest family ids must match");
-  const catalog = catalogReceiptForFamily(dataset.familyId);
-  const executableMember = { id: executableMemberIdForFamily(dataset.familyId) };
-  const records = recordsForFamily(dataset);
+  if (typeof memberId !== "string" || !memberId) throw new TypeError("gallery compilation requires an exact memberId");
+  if (dataset.kind === "attend-generated-form-fixture" && dataset.memberId !== memberId) {
+    throw new TypeError("generated fixture and requested member ids must match exactly");
+  }
+  const catalog = catalogReceiptForMember(dataset.familyId, memberId);
+  const generated = dataset.kind === "attend-generated-form-fixture"
+    ? await generatedFixtureCompilerParts(dataset)
+    : null;
+  const records = generated?.records ?? recordsForFamily(dataset);
   const required = manifest.data.requiredRoles.map((role) => role.id);
   const optional = manifest.data.optionalRoles.map((role) => role.id);
   const presentRoles = new Set(records.flatMap((record) => Object.keys(record.fields)));
-  const roleMapping = Object.fromEntries(
-    [...required, ...optional]
-      .filter((role) => required.includes(role) || presentRoles.has(role))
-      .map((role) => [role, role]),
-  );
+  const roleMapping = generated
+    ? { ...dataset.roleMapping }
+    : Object.fromEntries(
+        [...required, ...optional]
+          .filter((role) => required.includes(role) || presentRoles.has(role))
+          .map((role) => [role, role]),
+      );
   return {
     catalog,
     familyId: dataset.familyId,
@@ -203,17 +285,20 @@ export async function toCompilerRequest(dataset, manifest, { availableWidth = 1_
     sourceBundle: {
       kind: "attend-normalized-source-bundle",
       schemaVersion: 1,
-      adapter: { id: "gallery_fixture", version: 1 },
+      adapter: { id: generated ? dataset.adapter : "gallery_fixture", version: 1 },
       medium: dataset.mediaType,
-      requestedInputs: dataset.sources.map((source) => source.locator?.path ?? source.id),
-      knownOmissions: ["Synthetic demonstration data; source hashes cover fixture metadata, not external files."],
-      sources: await Promise.all(dataset.sources.map(sourceForCompiler)),
+      requestedInputs: generated
+        ? [generated.source.displayPath]
+        : dataset.sources.map((source) => source.locator?.path ?? source.id),
+      knownOmissions: [generated && dataset.adapter === "local-image-set-v1"
+        ? "Generated contact-atlas fixture: staged image previews are intentionally unavailable in Family Lab."
+        : "Synthetic demonstration data; source hashes cover fixture metadata, not external files."],
+      sources: generated ? [generated.source] : await Promise.all(dataset.sources.map(sourceForCompiler)),
       records,
     },
     roleMapping,
     options: {
       availableWidth,
-      variant: catalog.rendererVariantId,
     },
   };
 }

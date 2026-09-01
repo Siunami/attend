@@ -6,6 +6,15 @@ import {
   requireMapFamily,
 } from "../map-families/registry.js";
 import { canonicalUsStateFips } from "../geography.js";
+import { CATALOG_VERSION, catalogReceiptForMember } from "../catalog/index.js";
+import {
+  compareCategoryValues,
+  evaluateFormEligibility,
+  evaluateFormSourcePolicy,
+  isLegacyExecutableForm,
+  projectFormPayload,
+  requireExecutableForm,
+} from "../forms/index.js";
 import {
   DataPackageContractError,
   canonicalJson,
@@ -22,6 +31,7 @@ export const PIPELINE_VERSION = 1;
 const SAFE_ID = /^[a-z][a-z0-9_-]{1,127}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ROLE_PATH = /^(?:record\.|fields\.|media\.)?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$/u;
+const ROLE_NAME = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const SOURCE_PUBLIC_FIELDS = [
   "id",
   "displayPath",
@@ -101,12 +111,13 @@ function comparableTime(value) {
 function roleValueMatches(value, type) {
   if (type === "string") return typeof value === "string" && value.trim().length > 0 && value.length <= 16_384;
   if (type === "number") return typeof value === "number" && Number.isFinite(value);
-  if (type === "time") return Number.isFinite(comparableTime(value));
+  if (type === "time") return (typeof value === "number" || (typeof value === "string" && value.length <= 16_384))
+    && Number.isFinite(comparableTime(value));
   if (type === "identifier") return (typeof value === "string" && value.trim().length > 0 && value.length <= 1_024) || (typeof value === "number" && Number.isFinite(value));
   if (type === "latitude") return typeof value === "number" && Number.isFinite(value) && value >= -90 && value <= 90;
   if (type === "longitude") return typeof value === "number" && Number.isFinite(value) && value >= -180 && value <= 180;
   if (type === "ratio") return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
-  if (type === "media") return isPlainObject(value) || (typeof value === "string" && value.trim().length > 0);
+  if (type === "media") return isPlainObject(value) || (typeof value === "string" && value.trim().length > 0 && value.length <= 16_384);
   return false;
 }
 
@@ -196,13 +207,13 @@ export function validateNormalizedSourceBundle(bundle) {
   return bundle;
 }
 
-function validateRoleMapping(roleMapping, manifest) {
+function validateRoleMapping(roleMapping, manifest, form) {
   if (!isPlainObject(roleMapping)) fail("INVALID_ROLE_MAPPING", "must be an object", "roleMapping");
   const allowed = new Set([
-    ...manifest.data.requiredRoles.map((item) => item.id),
-    ...manifest.data.optionalRoles.map((item) => item.id),
+    ...form.roles.required.map((item) => item.id),
+    ...form.roles.optional.map((item) => item.id),
   ]);
-  for (const item of manifest.data.requiredRoles) {
+  for (const item of form.roles.required) {
     if (typeof roleMapping[item.id] !== "string") fail("MISSING_REQUIRED_ROLE", `required role ${item.id} is not mapped`, `roleMapping.${item.id}`);
   }
   for (const [role, path] of Object.entries(roleMapping)) {
@@ -212,15 +223,18 @@ function validateRoleMapping(roleMapping, manifest) {
   return canonicalize(roleMapping);
 }
 
-function projectRecord(record, roleMapping, manifest, index) {
+function projectRecord(record, roleMapping, form, index) {
   const projected = {};
-  const roles = [...manifest.data.requiredRoles, ...manifest.data.optionalRoles];
+  const roles = [
+    ...form.roles.required,
+    ...form.roles.optional,
+  ];
   for (const role of roles) {
     const mapping = roleMapping[role.id];
     if (mapping === undefined) continue;
     const value = resolvePath(record, mapping);
     if (value === undefined || value === null || value === "") {
-      if (manifest.data.requiredRoles.some((required) => required.id === role.id)) fail("MISSING_ROLE_VALUE", `record ${record.id} has no value for required role ${role.id}`, `sourceBundle.records[${index}].${mapping}`);
+      if (form.roles.required.some((required) => required.id === role.id)) fail("MISSING_ROLE_VALUE", `record ${record.id} has no value for required role ${role.id}`, `sourceBundle.records[${index}].${mapping}`);
       continue;
     }
     if (!role.types.some((type) => roleValueMatches(value, type))) fail("INVALID_ROLE_VALUE", `record ${record.id} value for ${role.id} does not match ${role.types.join(" or ")}`, `sourceBundle.records[${index}].${mapping}`);
@@ -237,21 +251,43 @@ function valueForSort(value, roleTypes) {
 
 function compareValues(left, right) {
   if (typeof left === "number" && typeof right === "number") return left - right;
-  return compareText(String(left), String(right));
+  return compareCategoryValues(String(left), String(right));
 }
 
-function entryComparator(manifest) {
+function compareDeclared(indexes, left, right) {
+  const leftIndex = indexes.get(String(left)) ?? indexes.size;
+  const rightIndex = indexes.get(String(right)) ?? indexes.size;
+  return leftIndex - rightIndex || compareValues(left, right);
+}
+
+function entryComparator(manifest, form, categoryOrder = {}) {
+  if (form.key === "collection-atlas/contact-atlas") {
+    return (left, right) =>
+      compareText(String(left.roles.captureTime), String(right.roles.captureTime))
+      || compareValues(left.roles.order ?? 0, right.roles.order ?? 0)
+      || compareText(String(left.roles.label), String(right.roles.label))
+      || compareText(left.record.id, right.record.id);
+  }
   const typesByRole = new Map(
-    [...manifest.data.requiredRoles, ...manifest.data.optionalRoles]
+    [...form.roles.required, ...form.roles.optional]
       .map((item) => [item.id, item.types]),
   );
+  const orderBy = {
+    "rank/slopegraph": [{ role: "stateOrder", direction: "asc" }, { role: "value", direction: "desc" }, { role: "label", direction: "asc" }],
+    "hierarchy/outline": [{ role: "parentId", direction: "asc" }, { role: "order", direction: "asc" }, { role: "label", direction: "asc" }],
+  }[form.key] ?? manifest.transformation.orderBy;
+  const declaredByRole = new Map(Object.entries(categoryOrder)
+    .map(([role, categories]) => [role, new Map(categories.map((category, index) => [category, index]))]));
   return (left, right) => {
-    for (const rule of manifest.transformation.orderBy) {
+    for (const rule of orderBy) {
       const leftValue = valueForSort(left.roles[rule.role], typesByRole.get(rule.role));
       const rightValue = valueForSort(right.roles[rule.role], typesByRole.get(rule.role));
       if (leftValue.missing !== rightValue.missing) return leftValue.missing ? 1 : -1;
       if (leftValue.missing) continue;
-      const compared = compareValues(leftValue.value, rightValue.value);
+      const declared = declaredByRole.get(rule.role);
+      const compared = declared
+        ? compareDeclared(declared, leftValue.value, rightValue.value)
+        : compareValues(leftValue.value, rightValue.value);
       if (compared !== 0) return rule.direction === "desc" ? -compared : compared;
     }
     return compareText(left.record.id, right.record.id);
@@ -357,7 +393,7 @@ function markSummary(roles) {
 }
 
 function unique(values) {
-  return [...new Set(values.filter((value) => value !== undefined && value !== null).map(String))].sort(compareText);
+  return [...new Set(values.filter((value) => value !== undefined && value !== null).map(String))].sort(compareCategoryValues);
 }
 
 function numericExtent(entries, role) {
@@ -559,19 +595,35 @@ function validateQuestionInput(question, manifest) {
   });
 }
 
-function validateOptions(options, manifest) {
+function validateCategoryOrder(value) {
+  if (!isPlainObject(value)) fail("INVALID_OPTIONS", "must be an object mapping a role to its category order", "options.categoryOrder");
+  for (const [role, categories] of Object.entries(value)) {
+    const path = `options.categoryOrder.${role}`;
+    if (!ROLE_NAME.test(role)) fail("INVALID_OPTIONS", "must be a role name", path);
+    if (!Array.isArray(categories) || categories.length === 0) fail("INVALID_OPTIONS", "must be a non-empty array of category strings", path);
+    const seen = new Set();
+    categories.forEach((category, index) => {
+      if (typeof category !== "string" || category.trim().length === 0) fail("INVALID_OPTIONS", "must be a non-empty string", `${path}[${index}]`);
+      if (seen.has(category)) fail("INVALID_OPTIONS", `duplicate category ${category}`, `${path}[${index}]`);
+      seen.add(category);
+    });
+  }
+  return canonicalize(value);
+}
+
+function validateOptions(options, derivedVariant) {
   if (!isPlainObject(options)) fail("INVALID_OPTIONS", "must be an object", "options");
-  const allowed = new Set(["availableWidth", "mediaType", "variant"]);
+  const allowed = new Set(["availableWidth", "categoryOrder", "mediaType"]);
   for (const key of Object.keys(options)) {
+    if (key === "variant") fail("CALLER_VARIANT_FORBIDDEN", "presentation.variant is derived from the exact catalog receipt", "options.variant");
     if (!allowed.has(key)) fail("INVALID_OPTIONS", `unknown option ${key}`, `options.${key}`);
   }
   const availableWidth = options.availableWidth ?? 1_200;
   if (typeof availableWidth !== "number" || !Number.isFinite(availableWidth) || availableWidth <= 0) fail("INVALID_OPTIONS", "availableWidth must be positive", "options.availableWidth");
-  const variant = options.variant ?? manifest.variants[0].id;
-  if (!manifest.variants.some((candidate) => candidate.id === variant)) fail("INVALID_OPTIONS", `unknown ${manifest.id} variant ${String(variant)}`, "options.variant");
   return {
     availableWidth,
-    variant,
+    variant: derivedVariant,
+    ...(options.categoryOrder === undefined ? {} : { categoryOrder: validateCategoryOrder(options.categoryOrder) }),
     ...(options.mediaType === undefined ? {} : { mediaType: options.mediaType }),
   };
 }
@@ -666,20 +718,48 @@ export async function compileMapWithEvidence({
   if (!catalog || catalog.family !== manifest.id || catalog.rendererId !== manifest.renderer.id || typeof catalog.member !== "string" || !catalog.member) {
     fail("INVALID_CATALOG", "catalog family/member/renderer receipt is required", "catalog");
   }
+  let form;
+  let expectedCatalog;
+  try {
+    form = requireExecutableForm(manifest.id, catalog.member);
+    expectedCatalog = catalogReceiptForMember(manifest.id, catalog.member);
+  } catch (cause) {
+    fail("INVALID_CATALOG", cause.message, "catalog");
+  }
+  if (catalog.version !== CATALOG_VERSION || canonicalJson(catalog) !== canonicalJson(expectedCatalog)) {
+    fail("INVALID_CATALOG", "catalog receipt is stale, forged, or cross-wired", "catalog");
+  }
   validateNormalizedSourceBundle(sourceBundle);
+  const sourceEligibility = evaluateFormSourcePolicy(form, {
+    adapter: sourceBundle.adapter,
+    medium: sourceBundle.medium,
+  });
+  if (!sourceEligibility.eligible) {
+    const failed = sourceEligibility.failedRequirements.map((requirement) => requirement.id).join(", ");
+    const error = new PipelineContractError(
+      "INELIGIBLE_REQUESTED_FORM",
+      `${manifest.id}/${form.memberId} failed: ${failed}`,
+      "sourceBundle",
+    );
+    error.familyId = manifest.id;
+    error.memberId = form.memberId;
+    error.failedRequirements = sourceEligibility.failedRequirements;
+    throw error;
+  }
   const mediaAdapter = manifest.mediaAdapters.find((adapter) => adapter.medium === sourceBundle.medium);
   if (mediaAdapter.decision === "abstain") fail("FAMILY_ABSTAINS", `${manifest.id} abstains from ${sourceBundle.medium} input: ${mediaAdapter.reason}`, "sourceBundle.medium");
-  const mapping = validateRoleMapping(roleMapping, manifest);
+  const mapping = validateRoleMapping(roleMapping, manifest, form);
   const normalizedQuestion = validateQuestionInput(question, manifest);
-  const normalizedOptions = validateOptions(options, manifest);
+  const normalizedOptions = validateOptions(options, form.renderer.variant);
   const sourceIds = new Set(sourceBundle.sources.map((source) => source.id));
   const sourcesById = new Map(sourceBundle.sources.map((source) => [source.id, source]));
   const orderedRecords = [...sourceBundle.records].sort((left, right) => compareText(left.id, right.id));
   const entries = orderedRecords.map((record, index) => ({
     record,
-    roles: projectRecord(record, mapping, manifest, index),
-  })).sort(entryComparator(manifest));
-  validateFamilyEntries(manifest, entries);
+    roles: projectRecord(record, mapping, form, index),
+  })).sort(entryComparator(manifest, form, normalizedOptions.categoryOrder));
+  const legacyForm = isLegacyExecutableForm(form);
+  if (legacyForm) validateFamilyEntries(manifest, entries);
 
   const privateEvidenceRefsById = new Map();
   await Promise.all(entries.map(async (entry) => {
@@ -705,6 +785,30 @@ export async function compileMapWithEvidence({
   }));
 
   const marks = entries.map((entry) => entry.mark);
+  const observations = entries.map((entry) => canonicalize({
+    id: entry.record.id,
+    markId: entry.mark.id,
+    sourceId: entry.record.sourceId,
+    roles: entry.roles,
+    evidenceRefs: entry.mark.evidenceRefs,
+    media: entry.mark.media,
+  }));
+  const eligibility = evaluateFormEligibility(form, observations, {
+    adapter: sourceBundle.adapter,
+    medium: sourceBundle.medium,
+  });
+  if (!eligibility.eligible) {
+    const failed = eligibility.failedRequirements.map((requirement) => requirement.id).join(", ");
+    const error = new PipelineContractError(
+      "INELIGIBLE_REQUESTED_FORM",
+      `${manifest.id}/${form.memberId} failed: ${failed}`,
+      "sourceBundle.records",
+    );
+    error.familyId = manifest.id;
+    error.memberId = form.memberId;
+    error.failedRequirements = eligibility.failedRequirements;
+    throw error;
+  }
   const privateEvidenceRefs = [...privateEvidenceRefsById.values()]
     .sort((left, right) => compareText(left.id, right.id));
   const enrichmentReceipts = await applyEnrichments(
@@ -713,7 +817,7 @@ export async function compileMapWithEvidence({
     manifest,
     new Set(privateEvidenceRefs.map((reference) => reference.id)),
   );
-  const payload = buildPayload(manifest, entries);
+  const payload = await projectFormPayload(form, observations);
   const repeatMedia = presentationMediaType(marks, manifest, normalizedOptions.mediaType);
   const multiples = multiplesPolicy({
     mediaType: repeatMedia,
@@ -732,9 +836,9 @@ export async function compileMapWithEvidence({
   for (const mark of marks) mediaCounts[mark.media.type] = (mediaCounts[mark.media.type] ?? 0) + 1;
   const validationReceipts = [
     { id: "source-bundle", status: "pass", checked: sourceBundle.sources.length + sourceBundle.records.length },
-    { id: "family-roles", status: "pass", checked: entries.length },
+    { id: "form-roles", status: "pass", checked: entries.length },
     { id: "mark-evidence", status: "pass", checked: evidenceRefCount },
-    { id: "family-payload", status: "pass", checked: marks.length },
+    { id: "form-payload", status: "pass", checked: marks.length },
   ];
   const provenance = canonicalize({
     pipeline: { id: PIPELINE_ID, version: PIPELINE_VERSION },
@@ -747,8 +851,8 @@ export async function compileMapWithEvidence({
       sourceIds: publicSources.map((source) => source.id),
     },
     transformations: [{
-      id: manifest.transformation.id,
-      version: manifest.transformation.version,
+      id: form.projector.id,
+      version: form.projector.version,
       deterministic: true,
       roleMapping: mapping,
       optionsHash,
@@ -778,7 +882,7 @@ export async function compileMapWithEvidence({
   });
   const presentation = canonicalize({
     renderer: { id: manifest.renderer.id, version: manifest.renderer.version },
-    variant: normalizedOptions.variant,
+    variant: form.renderer.variant,
     grammarVersion: manifest.grammar.version,
     multiples,
     ...(manifest.renderer.geography ? { geography: GEOGRAPHY_RENDERER_POLICY } : {}),
